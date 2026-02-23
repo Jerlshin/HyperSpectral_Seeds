@@ -40,7 +40,7 @@ CONFIG: dict = {
     "num_classes":    90,
 
     # Stage 1 — Heavy aug + Mixup/CutMix
-    "s1_epochs":      150,
+    "s1_epochs":      200,
     "s1_batch":       64,
     "s1_max_lr":      8e-4,
     "s1_dropout":     0.30,
@@ -49,20 +49,20 @@ CONFIG: dict = {
     "s1_accum":       2,      # gradient accumulation steps → effective batch=128
 
     # Stage 2 — ArcFace + ProtoNCE + balanced batches
-    "s2_epochs":      80,
+    "s2_epochs":      100,
     "s2_batch":       64,
     "s2_warmup_ep":   5,      # linear warmup epochs
-    "s2_peak_lr":     1.2e-4, # peak LR after warmup
+    "s2_peak_lr":     3e-4, # peak LR after warmup
     "s2_min_lr":      1e-7,
     "s2_dropout":     0.10,
     "s2_patience":    25,
     "s2_arcface_s":   20.0,
-    "s2_arcface_m":   0.40,   # final margin (warmed up from 0.05)
-    "s2_arcface_m0":  0.05,   # initial margin
-    "s2_margin_warmup_ep": 30, # epochs to ramp margin to s2_arcface_m
+    "s2_arcface_m":   0.30,   # final margin (warmed up from 0.05)
+    "s2_arcface_m0":  0.02,   # initial margin
+    "s2_margin_warmup_ep": 60, # epochs to ramp margin to s2_arcface_m
 
     # ProtoNCE (Stage 2)
-    "proto_weight":   0.30,   # α: ProtoNCE contribution  (CE is 1-α)
+    "proto_weight":   0.15,   # α: ProtoNCE contribution  (CE is 1-α)
     "proto_temp":     0.07,
 
     # Class-balanced sampler (Stage 2)
@@ -70,7 +70,7 @@ CONFIG: dict = {
     "bal_n_spc":      4,      # batch = 16×4 = 64
 
     # Stage 3 — Manual SWA
-    "s3_epochs":      25,
+    "s3_epochs":      40,
     "s3_swa_lr":      8e-5,
     "s3_cycle_len":   5,
 
@@ -945,9 +945,33 @@ class BranchCrossAttention(nn.Module):
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  MAIN MODEL — SpectralQuadNet v8
+#  MAIN MODEL
 # ══════════════════════════════════════════════════════════════════════
 
+def init_arcface_from_linear(model: nn.Module) -> None:
+    """
+    Initialise ArcFace class weights from trained linear classifier.
+
+    Copies linear_head weights → arcface_head weights
+    and L2-normalises them (ArcFace expects unit vectors).
+    """
+
+    linear = model.linear_head[-1]   # nn.Linear(256 → num_classes)
+    arc    = model.arcface_head      # ArcFaceHead
+
+    if not isinstance(linear, nn.Linear):
+        raise RuntimeError("Expected last layer of linear_head to be nn.Linear")
+
+    with torch.no_grad():
+        w = linear.weight.data.clone()          # (C, D)
+
+        # Normalise (important for cosine geometry)
+        w = F.normalize(w, dim=1)
+
+        arc.weight.data.copy_(w)
+
+    print("[INFO] ArcFace weights initialised from linear head.")
+    
 class SpectralQuadNet(nn.Module):
     """
     Four-branch HSI classification network with cross-branch fusion.
@@ -1000,7 +1024,6 @@ class SpectralQuadNet(nn.Module):
             dropout    = cfg["specf_drop"],
         )
 
-        # [NEW] Cross-branch attention fusion before MLP
         self.cross_attn = BranchCrossAttention(
             d       = 256,
             n_heads = cfg["fusion_heads"],
@@ -1217,7 +1240,7 @@ def arcface_margin_schedule(
     """
     if epoch >= warmup_ep:
         return m_target
-    frac = epoch / max(warmup_ep, 1)
+    frac = min(epoch / max(warmup_ep, 1), 1.0)
     # Cosine ramp: smooth and avoids discontinuities
     cos_val = 0.5 * (1.0 - math.cos(math.pi * frac))
     return m0 + (m_target - m0) * cos_val
@@ -1405,6 +1428,37 @@ def load_ckpt(path, model, ema, device):
     ema.shadow.use_arcface(use_af)      # ← critical: fixes final_evaluation
     return ckpt
 
+def stage_ckpt_path(stage: int) -> str:
+    """
+    Returns checkpoint path for each stage.
+    """
+    return os.path.join(
+        CONFIG["output_dir"],
+        f"best_stage{stage}.pth"
+    )
+
+
+def stage_exists(stage: int) -> bool:
+    """
+    Check if a stage checkpoint exists.
+    """
+    return os.path.isfile(stage_ckpt_path(stage))
+
+
+def latest_completed_stage() -> int:
+    """
+    Detect latest completed stage on disk.
+
+    Returns:
+        0 → nothing trained
+        1 → Stage1 done
+        2 → Stage2 done
+        3 → Stage3 done
+    """
+    for s in (3, 2, 1):
+        if stage_exists(s):
+            return s
+    return 0
 
 # ══════════════════════════════════════════════════════════════════════
 #  BN UPDATE (for SWA)
@@ -1516,45 +1570,76 @@ def run_stage2(
     """
     Stage 2: ArcFace CE + ProtoNCE + class-balanced batches.
     """
+
     model.set_dropout(CONFIG["s2_dropout"])
     model.use_arcface(True)
-    model.freeze_head("linear")         # ← BUG 3 FIX
+    model.freeze_head("linear")
     model.unfreeze_head("arcface")
 
     ema.reinit_from(model)
     ema.set_dropout(CONFIG["s2_dropout"])
-    ema.shadow.use_arcface(True)        # ← BUG 2 FIX (shadow also uses arcface)
+    ema.shadow.use_arcface(True)
 
-    proto   = ProtoNCELoss(temperature=CONFIG["proto_temp"])
-    optimizer = build_optimizer(model, lr=1e-5)   # warmup starts near 0
+    proto = ProtoNCELoss(temperature=CONFIG["proto_temp"])
 
-    # Linear warmup + cosine decay
+    peak_lr = CONFIG["s2_peak_lr"]
+
+    # Optimizer: base lr = peak lr (LambdaLR handles warmup)
+    optimizer = build_optimizer(model, lr=peak_lr)
+
+    # LR schedule
     warmup_steps = CONFIG["s2_warmup_ep"] * len(train_ldr)
     total_steps  = CONFIG["s2_epochs"]   * len(train_ldr)
-    peak_lr      = CONFIG["s2_peak_lr"]
     min_lr       = CONFIG["s2_min_lr"]
 
     def lr_lambda(step):
         if step < warmup_steps:
             return step / max(warmup_steps, 1)
+
         t = (step - warmup_steps) / max(total_steps - warmup_steps, 1)
+
         return (min_lr / peak_lr) + 0.5 * (1 - min_lr / peak_lr) * (
             1 + math.cos(math.pi * t)
         )
 
-    scheduler  = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
-    # Override base LR so lambda is relative to peak_lr
-    for pg in optimizer.param_groups:
-        pg["lr"] = peak_lr
+    scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
-    scaler     = GradScaler()
+    # Disable AMP
+    scaler = None
+
     best_acc   = 0.0
     no_improve = 0
 
-    _hdr("Stage 2 — ArcFace + ProtoNCE + Balanced Batches", CONFIG["s2_epochs"])
+
+    # ── Freeze backbone for stability ───────────────────────────────
+    def freeze_backbone(model):
+        for name, p in model.named_parameters():
+            if "linear_head" in name or "arcface_head" in name:
+                continue
+            p.requires_grad_(False)
+
+    def unfreeze_all(model):
+        for p in model.parameters():
+            p.requires_grad_(True)
+
+    freeze_backbone(model)
+
+
+    _hdr("Stage 2 — ArcFace + ProtoNCE + Balanced Batches",
+         CONFIG["s2_epochs"])
+
 
     for ep in range(1, CONFIG["s2_epochs"] + 1):
-        # ArcFace margin warmup
+
+        # Unfreeze after warmup
+        if ep == 10:
+            print("[INFO] Unfreezing backbone")
+            unfreeze_all(model)
+            optimizer = build_optimizer(model, lr=peak_lr * 0.5)
+            scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
+
+        # Margin warmup
         m_now = arcface_margin_schedule(
             ep - 1,
             CONFIG["s2_arcface_m0"],
@@ -1562,20 +1647,36 @@ def run_stage2(
             CONFIG["s2_margin_warmup_ep"],
         )
 
+        # ProtoNCE ramp
+        proto_w = min(
+            CONFIG["proto_weight"],
+            ep / 20 * CONFIG["proto_weight"]
+        )
+
+
         tl, ta = train_one_epoch(
-            model, train_ldr, optimizer, criterion, scaler,
-            ema=ema, device=device, scheduler=scheduler,
+            model,
+            train_ldr,
+            optimizer,
+            criterion,
+            scaler,
+            ema=ema,
+            device=device,
+            scheduler=scheduler,
             use_mixup=False,
             supcon=proto,
-            supcon_weight=CONFIG["proto_weight"],
+            supcon_weight=proto_w,
             arc_m=m_now,
         )
 
+
         _,   va_live = evaluate(model,      val_ldr, device)
         vf1, va_ema  = evaluate(ema.shadow, val_ldr, device)
-        va_best      = max(va_live, va_ema)
-        lr_now       = optimizer.param_groups[0]["lr"]
-        saved        = ""
+
+        va_best = max(va_live, va_ema)
+        lr_now  = optimizer.param_groups[0]["lr"]
+
+        saved = ""
 
         if va_best > best_acc:
             best_acc, no_improve = va_best, 0
@@ -1584,6 +1685,7 @@ def run_stage2(
         else:
             no_improve += 1
 
+
         print(
             f"Ep {ep:03d}/{CONFIG['s2_epochs']} │ "
             f"Loss {tl:.4f}  Train {ta:.1%} │ "
@@ -1591,14 +1693,14 @@ def run_stage2(
             f"LR {lr_now:.2e}  m={m_now:.3f}{saved}"
         )
 
+
         if no_improve >= CONFIG["s2_patience"]:
             print(f"\nEarly stopping at epoch {ep}.")
             break
 
-    # Unfreeze linear_head for Stage 3 (SWA evaluates both)
+
     model.unfreeze_head("linear")
     return best_acc
-
 
 # ── Stage 3 (SWA) ─────────────────────────────────────────────────────
 
@@ -1739,71 +1841,143 @@ def final_evaluation(model, ema, test_ldr, device, best_ckpt) -> None:
 # ══════════════════════════════════════════════════════════════════════
 #  MAIN
 # ══════════════════════════════════════════════════════════════════════
-
 def main() -> None:
-    device    = CONFIG["device"]
-    best_ckpt = os.path.join(CONFIG["output_dir"], "best_model.pth")
 
+    device = CONFIG["device"]
+
+    # Stage-specific checkpoints
+    ckpt_s1 = stage_ckpt_path(1)
+    ckpt_s2 = stage_ckpt_path(2)
+    ckpt_s3 = stage_ckpt_path(3)
+    
+    # Detect resume stage    
+    done_stage = latest_completed_stage()
+    print(f"\n[INFO] Latest completed stage: {done_stage}")
+
+    # Data
     all_labels, train_idx, val_idx, test_idx = build_splits()
-    print(f"Train: {len(train_idx):,}  Val: {len(val_idx):,}  Test: {len(test_idx):,}")
-    print(f"Samples/class (train): ~{len(train_idx) // CONFIG['num_classes']}")
 
+    print(f"Train: {len(train_idx):,}  Val: {len(val_idx):,}  Test: {len(test_idx):,}")
+    print(f"Samples/class (train): ~{len(train_idx)//CONFIG['num_classes']}")
+    
+    # Model + EMA 
     model = SpectralQuadNet(
-        num_classes  = CONFIG["num_classes"],
-        num_bands    = CONFIG["num_bands"],
-        dropout      = CONFIG["s1_dropout"],
-        wl_embed_dim = CONFIG["wl_embed_dim"],
-        cfg          = CONFIG,
+        num_classes=CONFIG["num_classes"],
+        num_bands=CONFIG["num_bands"],
+        dropout=CONFIG["s1_dropout"],
+        wl_embed_dim=CONFIG["wl_embed_dim"],
+        cfg=CONFIG,
     ).to(device)
 
-    ema   = ModelEMA(model, decay=CONFIG["ema_decay"])
+    ema = ModelEMA(model, decay=CONFIG["ema_decay"])
+
     n_par = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     print(f"\nModel  : SpectralQuadNet v8")
-    print(f"Params : {n_par / 1e6:.2f}M")
-    print(f"Device : {device}  |  EMA adaptive → max {CONFIG['ema_decay']}")
-    print(f"Stage 1: {CONFIG['s1_epochs']} ep | Mixup+CutMix | linear head "
-          f"| drop={CONFIG['s1_dropout']} | accum={CONFIG['s1_accum']}")
-    print(f"Stage 2: {CONFIG['s2_epochs']} ep | ArcFace+ProtoNCE | balanced smp "
-          f"| drop={CONFIG['s2_dropout']} | m warmup {CONFIG['s2_arcface_m0']}→{CONFIG['s2_arcface_m']}")
-    print(f"Stage 3: {CONFIG['s3_epochs']} ep | SWA ({CONFIG['s3_cycle_len']}-ep cycles)")
+    print(f"Params : {n_par/1e6:.2f}M")
+    print(f"Device : {device}")
+    print(f"EMA max: {CONFIG['ema_decay']}")
 
-    criterion = nn.CrossEntropyLoss(label_smoothing=CONFIG["label_smoothing"])
-
-    # ── Stage 1: random sampler, Mixup, linear head ───────────────────
-    train_ldr1, val_ldr, test_ldr = build_loaders(
-        train_idx, val_idx, test_idx, CONFIG["s1_batch"]
+    criterion = nn.CrossEntropyLoss(
+        label_smoothing=CONFIG["label_smoothing"]
     )
-    run_stage1(model, ema, train_ldr1, val_ldr, device, criterion, best_ckpt)
 
-    # ── Load Stage 1 best → Stage 2 ──────────────────────────────────
-    print("\nLoading Stage 1 best checkpoint for Stage 2 ...")
-    ckpt = load_ckpt(best_ckpt, model, ema, device)
-    print(f"  epoch={ckpt['epoch']}  val={ckpt['val_acc']:.1%}  ({ckpt['stage']})")
-    print(f"  Dropout: {CONFIG['s1_dropout']} → {CONFIG['s2_dropout']}")
+    
+    # Stage 1
+    if done_stage < 1:
 
-    # ── Stage 2: balanced sampler, ArcFace, ProtoNCE ─────────────────
-    train_ldr2, val_ldr2, _ = build_loaders(
-        train_idx, val_idx, test_idx, CONFIG["s2_batch"],
-        balanced=True, all_labels=all_labels,
+        print("\n[RUN] Stage 1")
+
+        train_ldr1, val_ldr, _ = build_loaders(
+            train_idx, val_idx, test_idx,
+            CONFIG["s1_batch"]
+        )
+        run_stage1(
+            model, ema,
+            train_ldr1, val_ldr,
+            device, criterion,
+            ckpt_s1
+        )
+    else:
+        print("\n[SKIP] Stage 1 → loading checkpoint")
+
+        load_ckpt(ckpt_s1, model, ema, device)
+
+    # Prepare for Stage 2
+    if done_stage < 2:
+
+        print("\n[INFO] Initialising ArcFace from linear head")
+
+        init_arcface_from_linear(model)
+        init_arcface_from_linear(ema.shadow)
+
+        print("\n[RUN] Stage 2")
+
+        train_ldr2, val_ldr2, _ = build_loaders(
+            train_idx, val_idx, test_idx,
+            CONFIG["s2_batch"],
+            balanced=True,
+            all_labels=all_labels,
+        )
+
+        run_stage2(
+            model, ema,
+            train_ldr2, val_ldr2,
+            device, criterion,
+            ckpt_s2
+        )
+
+    else:
+        print("\n[SKIP] Stage 2 → loading checkpoint")
+
+        load_ckpt(ckpt_s2, model, ema, device)
+
+    
+    # Stage 3 (SWA)
+    
+    if done_stage < 3:
+
+        print("\n[RUN] Stage 3 (SWA)")
+
+        train_ldr3, val_ldr3, _ = build_loaders(
+            train_idx, val_idx, test_idx,
+            CONFIG["s2_batch"]
+        )
+
+        run_stage3_swa(
+            model, ema,
+            train_ldr3, val_ldr3,
+            device, criterion,
+            ckpt_s3
+        )
+
+    else:
+        print("\n[SKIP] Stage 3 → loading checkpoint")
+
+        load_ckpt(ckpt_s3, model, ema, device)
+
+    
+    # Final Evaluation (always from Stage3 if exists)
+    
+    print("\n[INFO] Final Evaluation")
+
+    final_ckpt = (
+        ckpt_s3 if stage_exists(3)
+        else ckpt_s2 if stage_exists(2)
+        else ckpt_s1
     )
-    run_stage2(model, ema, train_ldr2, val_ldr2, device, criterion, best_ckpt)
 
-    # ── Load Stage 2 best → Stage 3 ──────────────────────────────────
-    print("\nLoading Stage 2 best checkpoint for Stage 3 (SWA) ...")
-    ckpt = load_ckpt(best_ckpt, model, ema, device)
-    print(f"  epoch={ckpt['epoch']}  val={ckpt['val_acc']:.1%}  ({ckpt['stage']})")
-
-    # ── Stage 3: SWA ─────────────────────────────────────────────────
-    train_ldr3, val_ldr3, _ = build_loaders(
-        train_idx, val_idx, test_idx, CONFIG["s2_batch"]
+    _, _, test_ldr_final = build_loaders(
+        train_idx, val_idx, test_idx, 64
     )
-    run_stage3_swa(model, ema, train_ldr3, val_ldr3, device, criterion, best_ckpt)
 
-    # ── Final evaluation ──────────────────────────────────────────────
-    _, _, test_ldr_final = build_loaders(train_idx, val_idx, test_idx, 64)
-    final_evaluation(model, ema, test_ldr_final, device, best_ckpt)
-
+    final_evaluation(
+        model,
+        ema,
+        test_ldr_final,
+        device,
+        final_ckpt
+    )
 
 # ══════════════════════════════════════════════════════════════════════
 #  ENTRY
