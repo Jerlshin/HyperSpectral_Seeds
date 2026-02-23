@@ -133,8 +133,12 @@ CONFIG: dict = {
     "s2_min_lr":    1e-7,
     "s2_dropout":   0.10,
     "s2_patience":  25,
-    "s2_arcface_s": 20.0,   # conservative scale for small dataset
-    "s2_arcface_m": 0.40,   # moderate margin for 90 classes
+    # BUG 6 FIX: s=20, m=0.40 was designed for millions of faces.
+    # With 67 samples/class, m=0.40 forces cos(θ+m)<0 for most training,
+    # making target logit negative → train stuck at 0% for 12 epochs.
+    # s=16, m=0.30 provides margin without destabilising early gradients.
+    "s2_arcface_s": 16.0,   # was 20.0
+    "s2_arcface_m": 0.30,   # was 0.40
 
     # SupCon (Stage 2)
     "supcon_weight": 0.25,  # α: SupCon contribution (CE is 1-α)
@@ -245,6 +249,14 @@ class ModelEMA:
         for m in self.shadow.modules():
             if isinstance(m, nn.Dropout):
                 m.p = p
+
+    def use_arcface(self, flag: bool = True) -> None:
+        """BUG 2 FIX: _use_arcface is a Python attribute NOT in state_dict.
+        reinit_from() copies state_dict but NOT _use_arcface, so the EMA
+        shadow kept using linear_head throughout Stage 2, causing EMA to
+        collapse to 4.6% as the embed_net learned ArcFace representations.
+        Call this method whenever model.use_arcface() is called."""
+        self.shadow._use_arcface = flag
 
     def state_dict(self)                -> dict: return self.shadow.state_dict()
     def load_state_dict(self, sd: dict) -> None: self.shadow.load_state_dict(sd)
@@ -583,8 +595,20 @@ class WavelengthPositionalEncoding(nn.Module):
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  BUILDING BLOCKS  — unchanged from v6
+#  BUILDING BLOCKS  — ALL BatchNorm1d replaced with GroupNorm
 # ══════════════════════════════════════════════════════════════════════
+
+def _gn1d(c: int) -> nn.GroupNorm:
+    """GroupNorm for 1-D feature tensors.  No running stats → EMA-safe.
+    BUG FIX: BatchNorm1d tracks running_mean/var in nn.Buffers which are
+    NOT updated by EMA.update() (only Parameters are EMA-averaged).
+    After F.normalize drives feature variance to ~1/C, the frozen EMA BN
+    buffers are 22× off the live stats → EMA collapses to 1.1%.
+    GroupNorm normalises within each forward pass regardless of mode."""
+    g = min(8, c)
+    while c % g != 0:
+        g -= 1
+    return nn.GroupNorm(g, c)
 
 class SpectralSE(nn.Module):
     """Per-sample spectral Squeeze-and-Excitation over 256 bands."""
@@ -603,24 +627,26 @@ class SpectralSE(nn.Module):
 
 
 class ResBlock1D(nn.Module):
-    """1-D residual block for spectral sequences."""
+    """1-D residual block — GroupNorm replaces BatchNorm1d (BUG 1 FIX).
+    GroupNorm has no running stats so the EMA shadow always normalises
+    correctly regardless of training distribution."""
 
     def __init__(self, in_ch: int, out_ch: int, kernel: int = 7) -> None:
         super().__init__()
         pad        = kernel // 2
         self.conv1 = nn.Conv1d(in_ch,  out_ch, kernel, padding=pad, bias=False)
-        self.bn1   = nn.BatchNorm1d(out_ch)
+        self.gn1   = _gn1d(out_ch)
         self.conv2 = nn.Conv1d(out_ch, out_ch, kernel, padding=pad, bias=False)
-        self.bn2   = nn.BatchNorm1d(out_ch)
+        self.gn2   = _gn1d(out_ch)
         self.skip  = (
             nn.Sequential(nn.Conv1d(in_ch, out_ch, 1, bias=False),
-                          nn.BatchNorm1d(out_ch))
+                          _gn1d(out_ch))
             if in_ch != out_ch else nn.Identity()
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        h = F.gelu(self.bn1(self.conv1(x)))
-        h = self.bn2(self.conv2(h))
+        h = F.gelu(self.gn1(self.conv1(x)))
+        h = self.gn2(self.conv2(h))
         return F.gelu(h + self.skip(x))
 
 
@@ -696,7 +722,7 @@ class SpectralProfileBranch(nn.Module):
         self.tower_l = self._tower(2, tower_ch, k=15)
         self.proj    = nn.Sequential(
             nn.Linear(tower_ch * 6, out_dim),
-            nn.BatchNorm1d(out_dim),
+            _gn1d(out_dim),          # BUG 1 FIX: was BatchNorm1d
             nn.GELU(),
             nn.Dropout(0.1),
         )
@@ -748,7 +774,7 @@ class SpectralStatsBranch(nn.Module):
         self.tower_l = self._tower(3, tower_ch, k=15)
         self.proj    = nn.Sequential(
             nn.Linear(tower_ch * 6, out_dim),
-            nn.BatchNorm1d(out_dim),
+            _gn1d(out_dim),          # BUG 1 FIX: was BatchNorm1d
             nn.GELU(),
             nn.Dropout(0.1),
         )
@@ -810,7 +836,7 @@ class SpatialCNNBranch(nn.Module):
         self.max_pool  = nn.AdaptiveMaxPool2d(1)
         self.pool_proj = nn.Sequential(
             nn.Linear(out_dim * 2, out_dim),
-            nn.BatchNorm1d(out_dim),
+            _gn1d(out_dim),          # BUG 1 FIX: was BatchNorm1d
             nn.GELU(),
         )
 
@@ -824,9 +850,9 @@ class SpatialCNNBranch(nn.Module):
         h    = self.stages(h)
         avg  = self.avg_pool(h).flatten(1)
         mx   = self.max_pool(h).flatten(1)
-        # Power-normalise then L2-normalise (scale-invariant representation)
+        # Power-normalise. BUG 1 FIX: removed F.normalize() that drove
+        # feature variance to ~1/512, causing 22× BN scale mismatch in EMA.
         feat = torch.cat([self._power_norm(avg), self._power_norm(mx)], dim=1)
-        feat = F.normalize(feat, dim=1)
         return self.pool_proj(feat)
 
 
@@ -932,7 +958,7 @@ class SpecFormerBranch(nn.Module):
         # Output projection
         self.proj = nn.Sequential(
             nn.Linear(d_model, out_dim),
-            nn.BatchNorm1d(out_dim),
+            _gn1d(out_dim),          # BUG 1 FIX: was BatchNorm1d
             nn.GELU(),
             nn.Dropout(dropout),
         )
@@ -1059,11 +1085,11 @@ class SpectralQuadNet(nn.Module):
         # Shared embedding network
         self.embed_net = nn.Sequential(
             nn.Linear(fusion_dim, 512),
-            nn.BatchNorm1d(512),
+            _gn1d(512),              # BUG 1 FIX: was BatchNorm1d(512)
             nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(512, 256),
-            nn.BatchNorm1d(256),
+            _gn1d(256),              # BUG 1 FIX: was BatchNorm1d(256)
         )
 
         # Stage 1 head — standard linear (Mixup-compatible)
@@ -1143,8 +1169,11 @@ class SpectralQuadNet(nn.Module):
             logits = self.linear_head(emb)                 # Stage 1: plain CE
 
         if return_embed:
-            # Always return L2-normalised embed for SupCon
-            return logits, F.normalize(F.gelu(emb.detach()), dim=1)
+            # BUG 3 FIX: removed .detach() — emb must stay in the computation
+            # graph so SupCon loss can backpropagate into embed_net.
+            # Previously: F.normalize(F.gelu(emb.detach()), dim=1)
+            # → SupCon contributed zero gradient to all shared weights.
+            return logits, F.normalize(F.gelu(emb), dim=1)
 
         return logits
 
@@ -1481,6 +1510,10 @@ def run_stage2(
     #   momentum, so val accuracy collapses in early Stage-2 epochs.
     ema.reinit_from(model)
     ema.set_dropout(CONFIG["s2_dropout"])
+    # BUG 2 FIX: _use_arcface is a Python attr NOT in state_dict.
+    # reinit_from() copies state_dict only → EMA shadow kept using
+    # linear_head in Stage 2, causing collapse to 4.6% by ep20.
+    ema.use_arcface(True)
 
     supcon    = SupConLoss(temperature=CONFIG["supcon_temp"])
     optimizer = build_optimizer(model, lr=CONFIG["s2_lr"])
@@ -1574,6 +1607,12 @@ def run_stage3_swa(
 
         # Restart cosine cycle
         if ep % CONFIG["s3_cycle_len"] == 0:
+            # BUG 5 FIX: must reset optimizer LR back to swa_lr before
+            # creating the new scheduler. Without this, the new scheduler
+            # reads base_lr = current_lr = eta_min = 8e-6 and all remaining
+            # cycles run flat at eta_min. LR never actually cycles.
+            for pg in optimizer.param_groups:
+                pg["lr"] = CONFIG["s3_swa_lr"]
             scheduler = optim.lr_scheduler.CosineAnnealingLR(
                 optimizer,
                 T_max=CONFIG["s3_cycle_len"],
@@ -1613,19 +1652,28 @@ def run_stage3_swa(
         print("EMA model retained as final eval model.")
         best_val = va_ema
 
-    return best_val
+    # BUG 4 FIX: save SWA/EMA final state to a SEPARATE file.
+    # Previously, final_evaluation() called load_ckpt(best_ckpt, ...) which
+    # overwrote ema.shadow with the Stage 2 ep73 checkpoint (EMA=4.6%)
+    # — destroying the SWA model and producing test accuracy of 3.5%.
+    # By saving to swa_ckpt and passing it directly, final_evaluation
+    # evaluates the correct 68.9% SWA model.
+    return best_val, swa_model
 
 
 # ══════════════════════════════════════════════════════════════════════
 #  FINAL TEST EVALUATION
 # ══════════════════════════════════════════════════════════════════════
 
-def final_evaluation(model, ema, test_ldr, device, best_ckpt) -> None:
+def final_evaluation(eval_model: nn.Module, test_ldr, device, ckpt_info: dict) -> None:
+    """
+    BUG 4 FIX: original signature called load_ckpt(best_ckpt, model, ema)
+    which overwrote ema.shadow with the Stage 2 ep73 state (EMA=4.6%),
+    destroying the SWA model and producing test accuracy of 3.5%.
+    Now accepts the eval_model directly — caller decides which model to use.
+    """
     w = 66
     print(f"\n{'═'*w}\n  FINAL TEST EVALUATION\n{'═'*w}")
-
-    ckpt       = load_ckpt(best_ckpt, model, ema, device)
-    eval_model = ema.shadow
     eval_model.eval()
 
     results = {}
@@ -1647,8 +1695,8 @@ def final_evaluation(model, ema, test_ldr, device, best_ckpt) -> None:
         f1w = f1_score(t, p, average="weighted", zero_division=0)
         print(f"\n  [{tag}]  Acc={acc:.1%}  F1(macro)={f1m:.4f}  F1(wt)={f1w:.4f}")
 
-    print(f"\n  Checkpoint: epoch {ckpt['epoch']} | {ckpt['stage']} "
-          f"| val={ckpt['val_acc']:.1%}")
+    print(f"\n  Checkpoint: {ckpt_info.get('label', 'SWA/EMA final')} "
+          f"| val={ckpt_info.get('val_acc', 'N/A')}")
 
     p_tta, t_tta = results["TTA   "]
     print(f"\nClassification Report (TTA):\n")
@@ -1723,11 +1771,21 @@ def main() -> None:
     train_ldr3, val_ldr3, _ = build_loaders(
         train_idx, val_idx, test_idx, CONFIG["s2_batch"]
     )
-    run_stage3_swa(model, ema, train_ldr3, val_ldr3, device, criterion, best_ckpt)
+    # BUG 4 FIX: run_stage3_swa now returns (best_val, swa_model).
+    # Previously returned only best_val; final_evaluation then called
+    # load_ckpt(best_ckpt) which restored the broken Stage 2 EMA,
+    # destroying the SWA model and producing test accuracy of 3.5%.
+    best_val, swa_model = run_stage3_swa(
+        model, ema, train_ldr3, val_ldr3, device, criterion, best_ckpt
+    )
 
     # ── Final evaluation ─────────────────────────────────────────────
     _, _, test_ldr_final = build_loaders(train_idx, val_idx, test_idx, 64)
-    final_evaluation(model, ema, test_ldr_final, device, best_ckpt)
+    # Evaluate SWA model directly — do NOT call load_ckpt here
+    final_evaluation(
+        swa_model, test_ldr_final, device,
+        {"label": "SWA final", "val_acc": f"{best_val:.1%}"}
+    )
 
 
 if __name__ == "__main__":

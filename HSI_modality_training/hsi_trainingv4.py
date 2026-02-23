@@ -1,82 +1,3 @@
-#!/usr/bin/env python3
-"""
-hsi_training_v7.py  —  SpectralQuadNet
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Rice HSI 90-class classification.  Target: 84–88%  (v6 baseline: 79.1%)
-
-═══════════════════════════ WHAT CHANGED & WHY ═══════════════════════
-
-ARCHITECTURE
-────────────
-[NEW] Branch D · SpecFormer — lightweight spectral transformer.
-  Splits 256 bands into 32 non-overlapping patches × 8 bands each.
-  4 Pre-LN transformer blocks, 4 heads, d=128, physical wavelength PE.
-  Captures long-range spectral correlations that 1-D convolutions miss
-  (e.g., starch 860 nm ↔ protein 930 nm, water 970 nm ↔ lipid 1000 nm).
-  Ref: Hong et al. SpectralFormer, IEEE TGRS 2022.
-
-[MOD] Branch C · Power-normalised spatial pooling.
-  sign(x)|x|^0.5 applied after avg/max pool approximates second-order
-  statistics without full bilinear cost.  Proven gain on fine-grained
-  texture tasks (Ionescu et al. Matrix Backprop, ICCV 2015).
-
-[NEW] ArcFace head (Stage 2/3).
-  Additive angular margin s=20, m=0.40 on the L2-sphere.  Enforces
-  intra-class compactness and inter-class separation — crucial when
-  ~67 train samples/class must discriminate 90 similar varieties.
-  Ref: Deng et al. ArcFace, CVPR 2019.
-
-TRAINING
-────────
-[FIX] EMA re-initialised from live model at Stage 2 start.
-  In v6 output, EMA accuracy collapsed from ~79% to 68–75% in Stage 2
-  epochs 20-50 because the shadow weights still carried high-dropout
-  (0.25) momentum when the live model switched to low-dropout (0.08).
-  Re-initialising EMA from the Stage 1 best live weights and resetting
-  _num_updates to 0 eliminates this mismatch entirely.
-
-[NEW] Supervised Contrastive Loss in Stage 2 (within-batch, no 2× views).
-  ClassBalancedBatchSampler guarantees n_spc=4 positive pairs per anchor.
-  Combined with ArcFace CE:  loss = α·SupCon + (1-α)·CE.
-  Ref: Khosla et al. SupCon, NeurIPS 2020.
-
-[NEW] Stage 3 · Manual SWA (25 epochs, cyclic LR).
-  Averages weights over cyclic LR to find flat wide minima.
-  BN stats recomputed over training set after averaging.
-  Ref: Izmailov et al. SWA, UAI 2018.
-
-AUGMENTATION
-────────────
-[NEW] Spectral warp  — linear interp stretch/compress ±10% of spectrum.
-  Simulates sensor calibration drift between imaging sessions.
-[NEW] Spectral shift — circular band shift ±8 positions.
-  Simulates wavelength axis offset between acquisition runs.
-[NEW] Multiplicative noise — per-band intensity scale variation ±5%.
-  Simulates non-uniform illumination and seed surface reflectance.
-
-DIAGNOSTICS FIXED
-─────────────────
-  Stage 1: Training accuracy with Mixup is reported on MIXED samples
-  (expected ~30-50%).  Added a note so the train/val gap is not
-  misread as overfitting — the EMA accuracy is the real performance signal.
-
-  Stage 2 no longer has EMA collapse because of the re-init fix above.
-  The large train/val gap in v6 Stage 2 (91% vs 79%) was partly caused
-  by ema shadow weights being stale, inflating val variance.
-
-EXPECTED GAINS vs v6
-────────────────────
-  SpecFormer branch:        +2–3 %
-  ArcFace head:             +2–3 %
-  SupCon in Stage 2:        +1–2 %
-  EMA fix (stability):      +0.5–1 %
-  SWA:                      +0.5–1 %
-  New augmentations:        +0.5–1 %
-  ────────────────────────────────
-  Total expected:           +5–10 %  →  84–88 % test accuracy with TTA
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-"""
-
 from __future__ import annotations
 
 import copy
@@ -85,7 +6,7 @@ import os
 import random
 import warnings
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Iterator, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -99,7 +20,7 @@ from torch.utils.data import DataLoader, Dataset, Sampler
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
-# Physical wavelength range — Specim V10E sensor
+# Physical wavelength range — Specim V10E sensor (385–1000 nm)
 WL_MIN: float = 385.0
 WL_MAX: float = 1000.0
 
@@ -110,72 +31,80 @@ WL_MAX: float = 1000.0
 
 CONFIG: dict = {
     # Paths
-    "patches_data": "./dataset/patches.npy",
-    "labels_path":  "./dataset/labels.npy",
-    "output_dir":   "./output_v8/",
+    "patches_data":   "./dataset/patches.npy",
+    "labels_path":    "./dataset/labels.npy",
+    "output_dir":     "./output_v9/",
 
     # Dataset
-    "num_bands":    256,
-    "num_classes":  90,
+    "num_bands":      256,
+    "num_classes":    90,
 
     # Stage 1 — Heavy aug + Mixup/CutMix
-    "s1_epochs":    150,
-    "s1_batch":     64,
-    "s1_max_lr":    8e-4,
-    "s1_dropout":   0.30,   # slightly higher than v6 because model is larger
-    "s1_mixup":     0.4,
-    "s1_patience":  35,
+    "s1_epochs":      150,
+    "s1_batch":       64,
+    "s1_max_lr":      8e-4,
+    "s1_dropout":     0.30,
+    "s1_mixup":       0.4,
+    "s1_patience":    35,
+    "s1_accum":       2,      # gradient accumulation steps → effective batch=128
 
-    # Stage 2 — ArcFace + SupCon + balanced batches
-    "s2_epochs":    80,
-    "s2_batch":     64,     # = bal_n_cls × bal_n_spc
-    "s2_lr":        4e-5,
-    "s2_min_lr":    1e-7,
-    "s2_dropout":   0.10,
-    "s2_patience":  25,
-    "s2_arcface_s": 20.0,   # conservative scale for small dataset
-    "s2_arcface_m": 0.40,   # moderate margin for 90 classes
+    # Stage 2 — ArcFace + ProtoNCE + balanced batches
+    "s2_epochs":      80,
+    "s2_batch":       64,
+    "s2_warmup_ep":   5,      # linear warmup epochs
+    "s2_peak_lr":     1.2e-4, # peak LR after warmup
+    "s2_min_lr":      1e-7,
+    "s2_dropout":     0.10,
+    "s2_patience":    25,
+    "s2_arcface_s":   20.0,
+    "s2_arcface_m":   0.40,   # final margin (warmed up from 0.05)
+    "s2_arcface_m0":  0.05,   # initial margin
+    "s2_margin_warmup_ep": 30, # epochs to ramp margin to s2_arcface_m
 
-    # SupCon (Stage 2)
-    "supcon_weight": 0.25,  # α: SupCon contribution (CE is 1-α)
-    "supcon_temp":   0.07,
+    # ProtoNCE (Stage 2)
+    "proto_weight":   0.30,   # α: ProtoNCE contribution  (CE is 1-α)
+    "proto_temp":     0.07,
 
     # Class-balanced sampler (Stage 2)
-    "bal_n_cls":    16,     # classes per batch
-    "bal_n_spc":    4,      # samples per class  →  batch = 64
+    "bal_n_cls":      16,
+    "bal_n_spc":      4,      # batch = 16×4 = 64
 
     # Stage 3 — Manual SWA
-    "s3_epochs":    25,
-    "s3_swa_lr":    8e-5,
-    "s3_cycle_len": 5,      # epochs per cosine cycle
+    "s3_epochs":      25,
+    "s3_swa_lr":      8e-5,
+    "s3_cycle_len":   5,
 
     # Loss
     "label_smoothing": 0.05,
 
     # Regularisation
-    "weight_decay": 2e-4,   # slightly higher than v6 (larger model)
-    "grad_clip":    1.0,
+    "weight_decay":   2e-4,
+    "grad_clip":      1.0,
 
-    # EMA — adaptive, ramps to max
-    "ema_decay":    0.9999,
+    # EMA
+    "ema_decay":      0.9999,
 
     # TTA
-    "tta_n":        8,
+    "tta_n":          8,
 
-    # Shared wavelength embedding (Branch A / B)
-    "wl_embed_dim": 16,
+    # Wavelength embedding (Branches A/B)
+    "wl_embed_dim":   16,
 
     # SpecFormer (Branch D)
-    "specf_patch":  8,      # bands per patch  →  32 patches
-    "specf_dim":    128,    # transformer d_model
-    "specf_heads":  4,
-    "specf_layers": 4,
-    "specf_drop":   0.15,
+    "specf_patch":    8,
+    "specf_dim":      128,
+    "specf_heads":    4,
+    "specf_layers":   4,
+    "specf_drop":     0.15,
+
+    # BranchCrossAttention (Fusion)
+    "fusion_heads":   4,
+    "fusion_drop":    0.10,
 
     # Misc
-    "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-    "seed":   42,
-    "num_workers": 6,
+    "device":         torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+    "seed":           42,
+    "num_workers":    6,
 }
 
 Path(CONFIG["output_dir"]).mkdir(parents=True, exist_ok=True)
@@ -192,7 +121,7 @@ def set_seed(seed: int = 42) -> None:
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = False
-    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.benchmark     = True
 
 
 set_seed(CONFIG["seed"])
@@ -206,10 +135,6 @@ class ModelEMA:
     """
     Adaptive EMA: decay ramps from ~0 → max_decay over training steps.
     Formula: d(n) = min(max_decay, (1+n)/(10+n))
-
-    v7 adds reinit_from() — call at Stage 2 start to copy live weights
-    into the shadow model.  This fixes the EMA accuracy collapse seen in
-    v6 when dropout changed from 0.25 → 0.08 between stages.
     """
 
     def __init__(self, model: nn.Module, decay: float = 0.9999) -> None:
@@ -227,16 +152,26 @@ class ModelEMA:
     @torch.no_grad()
     def update(self, model: nn.Module) -> None:
         self._num_updates += 1
-        d  = self.current_decay
-        ms = dict(model.named_parameters())
+        d = self.current_decay
+
+        # ── Parameters: EMA smoothing ─────────────────────────────────
+        live_params   = dict(model.named_parameters())
         for name, s_p in self.shadow.named_parameters():
-            if name in ms:
-                s_p.copy_(d * s_p + (1.0 - d) * ms[name])
+            if name in live_params:
+                s_p.copy_(d * s_p + (1.0 - d) * live_params[name])
+
+        # ── Buffers (BN running stats): direct copy  [BUG 1 FIX] ──────
+        # BN running_mean/running_var are already EMA internally.
+        # Applying EMA-of-EMA would over-smooth; just copy the live stats.
+        live_buffers = dict(model.named_buffers())
+        for name, s_b in self.shadow.named_buffers():
+            if name in live_buffers and s_b.dtype.is_floating_point:
+                s_b.copy_(live_buffers[name])
 
     def reinit_from(self, model: nn.Module) -> None:
         """
-        Re-copy live model weights into the shadow and reset step counter.
-        Call at Stage 2 start so EMA adapts correctly to new dropout level.
+        Re-copy live model weights + buffers into shadow; reset step counter.
+        Called at Stage 2 start so EMA adapts from the correct base weights.
         """
         self.shadow.load_state_dict(copy.deepcopy(model.state_dict()))
         self._num_updates = 0
@@ -251,7 +186,7 @@ class ModelEMA:
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  DATASET  (v6 augs + spectral warp / shift / mult-noise)
+#  DATASET  (spectral warp / shift / mult-noise — unchanged from v3)
 # ══════════════════════════════════════════════════════════════════════
 
 class RiceSeedDataset(Dataset):
@@ -260,11 +195,11 @@ class RiceSeedDataset(Dataset):
 
     augment=True applies (in order):
       band_dropout   – zero out random bands
-      band_cutout    – zero out a contiguous spectral window
+      band_cutout    – zero-out a contiguous spectral window
       spectral_noise – additive Gaussian per-pixel-per-band
-      spectral_warp  – [NEW] random linear stretch/compress ±10%
-      spectral_shift – [NEW] circular band shift ±8 positions
-      mult_noise     – [NEW] per-band multiplicative intensity variation
+      spectral_warp  – random linear stretch/compress ±10%
+      spectral_shift – circular band shift ±8 positions
+      mult_noise     – per-band multiplicative intensity variation ±5%
       spatial        – random flip + rot90
     """
 
@@ -295,8 +230,6 @@ class RiceSeedDataset(Dataset):
     def __len__(self) -> int:
         return len(self.indices)
 
-    # ── original v6 augmentations ────────────────────────────────────
-
     def _band_dropout(self, x: torch.Tensor) -> torch.Tensor:
         mask = (torch.rand(x.shape[0]) > self.band_drop_prob).float()
         return x * mask.view(-1, 1, 1)
@@ -319,29 +252,24 @@ class RiceSeedDataset(Dataset):
             x = torch.flip(x, dims=[1])
         return torch.rot90(x, torch.randint(0, 4, (1,)).item(), dims=[1, 2])
 
-    # ── new v7 augmentations ─────────────────────────────────────────
-
     def _spectral_warp(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Random linear stretch / compress of the spectral axis ±10%.
-        Uses 1-D bilinear interpolation on the band dimension.
-        Simulates sensor calibration drift between imaging sessions.
-        """
+        """Random linear stretch/compress of the spectral axis ±10%."""
         C, H, W = x.shape
         scale   = 1.0 + random.uniform(-0.10, 0.10)
         new_C   = max(1, int(C * scale))
         if new_C == C:
             return x
-        x_flat  = x.reshape(1, C, H * W).float()
-        warped  = F.interpolate(x_flat, size=new_C, mode="linear", align_corners=False)
+        x_perm = x.permute(1, 2, 0).reshape(-1, 1, C)
+        warped  = F.interpolate(x_perm, size=new_C, mode="linear",
+                                align_corners=False)
         if new_C > C:
             start  = (new_C - C) // 2
-            warped = warped[:, start: start + C, :]
+            warped = warped[:, :, start:start + C]
         else:
             pad_lo = (C - new_C) // 2
             pad_hi = C - new_C - pad_lo
-            warped = F.pad(warped, (0, 0, pad_lo, pad_hi))
-        return warped.reshape(C, H, W)
+            warped = F.pad(warped, (pad_lo, pad_hi))
+        return warped.reshape(H, W, C).permute(2, 0, 1)
 
     def _spectral_shift(self, x: torch.Tensor) -> torch.Tensor:
         """Circular shift by ±8 bands — simulates wavelength axis offset."""
@@ -349,13 +277,11 @@ class RiceSeedDataset(Dataset):
         return torch.roll(x, shift, dims=0)
 
     def _mult_noise(self, x: torch.Tensor) -> torch.Tensor:
-        """Per-band multiplicative noise (±5%) — non-uniform illumination."""
+        """Per-band multiplicative noise ±5% — non-uniform illumination."""
         scale = 1.0 + torch.randn(x.shape[0], 1, 1) * 0.05
         return x * scale
 
-    # ── __getitem__ ──────────────────────────────────────────────────
-
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         real_idx = self.indices[idx]
         patch    = torch.from_numpy(self.patches[real_idx].copy()).float()
         label    = torch.tensor(self.labels[real_idx], dtype=torch.long)
@@ -379,7 +305,7 @@ class RiceSeedDataset(Dataset):
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  CLASS-BALANCED BATCH SAMPLER  (Stage 2 — for SupCon)
+#  CLASS-BALANCED BATCH SAMPLER  (Stage 2 — for ProtoNCE)
 # ══════════════════════════════════════════════════════════════════════
 
 class ClassBalancedBatchSampler(Sampler):
@@ -387,12 +313,8 @@ class ClassBalancedBatchSampler(Sampler):
     Each batch: n_cls randomly-selected classes × n_spc samples each.
     batch_size = n_cls × n_spc  (e.g., 16 × 4 = 64).
 
-    Guarantees n_spc-1 = 3 positive pairs per anchor for SupCon.
-    With random shuffle, only ~0.7 positives/anchor on average, which
-    is insufficient for meaningful contrastive signal.
-
-    train_labels must be the labels for the TRAINING indices only,
-    indexed 0..N_train-1 (i.e. all_labels[train_idx]).
+    Guarantees n_spc-1 = 3 in-class neighbours per anchor, which is
+    the minimum needed for meaningful prototypical or contrastive loss.
     """
 
     def __init__(self, train_labels: np.ndarray,
@@ -404,15 +326,15 @@ class ClassBalancedBatchSampler(Sampler):
                         for c in self.classes}
         self._n      = len(train_labels) // (n_cls * n_spc)
 
-    def __iter__(self) -> Iterator[list[int]]:
+    def __iter__(self) -> Iterator[List[int]]:
         rng = np.random.default_rng()
         for _ in range(self._n):
             chosen_cls = rng.choice(self.classes, self.n_cls, replace=False)
-            batch: list[int] = []
+            batch: List[int] = []
             for c in chosen_cls:
-                pool = self.cls_idx[c]
+                pool    = self.cls_idx[c]
                 replace = len(pool) < self.n_spc
-                samp = rng.choice(pool, self.n_spc, replace=replace)
+                samp    = rng.choice(pool, self.n_spc, replace=replace)
                 batch.extend(samp.tolist())
             yield batch
 
@@ -421,28 +343,28 @@ class ClassBalancedBatchSampler(Sampler):
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  BATCH AUGMENTATION  (Mixup + CutMix)  — unchanged from v6
+#  BATCH AUGMENTATION  (Mixup + CutMix)
 # ══════════════════════════════════════════════════════════════════════
 
 def _mixup(x, y, alpha):
-    lam = float(np.random.beta(alpha, alpha))
-    idx = torch.randperm(x.size(0), device=x.device)
+    lam      = float(np.random.beta(alpha, alpha))
+    idx      = torch.randperm(x.size(0), device=x.device)
     return lam * x + (1 - lam) * x[idx], y, y[idx], lam
 
 
 def _cutmix(x, y, alpha):
-    lam      = float(np.random.beta(alpha, alpha))
+    lam       = float(np.random.beta(alpha, alpha))
     B, C, H, W = x.shape
-    idx      = torch.randperm(B, device=x.device)
-    r        = math.sqrt(1.0 - lam)
-    ch, cw   = int(H * r), int(W * r)
-    cx       = random.randint(0, W)
-    cy       = random.randint(0, H)
-    x1 = max(cx - cw // 2, 0);  x2 = min(cx + cw // 2, W)
-    y1 = max(cy - ch // 2, 0);  y2 = min(cy + ch // 2, H)
-    x_mix    = x.clone()
+    idx       = torch.randperm(B, device=x.device)
+    r         = math.sqrt(1.0 - lam)
+    ch, cw    = int(H * r), int(W * r)
+    cx        = random.randint(0, W)
+    cy        = random.randint(0, H)
+    x1 = max(cx - cw // 2, 0); x2 = min(cx + cw // 2, W)
+    y1 = max(cy - ch // 2, 0); y2 = min(cy + ch // 2, H)
+    x_mix     = x.clone()
     x_mix[:, :, y1:y2, x1:x2] = x[idx, :, y1:y2, x1:x2]
-    lam      = 1.0 - (x2 - x1) * (y2 - y1) / (W * H)
+    lam       = 1.0 - (x2 - x1) * (y2 - y1) / (W * H)
     return x_mix, y, y[idx], lam
 
 
@@ -455,16 +377,80 @@ def mixed_loss(criterion, logits, y_a, y_b, lam):
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  SUPERVISED CONTRASTIVE LOSS  (within-batch, no 2× views)
+#  ARCFACE HEAD  (with per-call margin for warmup support)
 # ══════════════════════════════════════════════════════════════════════
 
-class SupConLoss(nn.Module):
+class ArcFaceHead(nn.Module):
     """
-    Within-batch SupCon.  Requires L2-normalised feature vectors.
-    With a class-balanced sampler (4 pos per anchor), this is stable.
+    Additive Angular Margin Softmax.
 
-    features : (B, D)  — L2-normalised embeddings
-    labels   : (B,)    — integer class labels
+    The margin `m` is passed at call time so the training loop can implement
+    a warmup schedule without re-building the head.
+
+    Ref: Deng et al. ArcFace, CVPR 2019.
+    """
+
+    def __init__(self, in_dim: int, num_classes: int,
+                 s: float = 20.0, m: float = 0.40) -> None:
+        super().__init__()
+        self.weight   = nn.Parameter(torch.FloatTensor(num_classes, in_dim))
+        nn.init.xavier_uniform_(self.weight)
+        self.s        = s
+        self.default_m = m
+        self._precompute(m)
+
+    def _precompute(self, m: float) -> None:
+        self._m    = m
+        self._cosm = math.cos(m)
+        self._sinm = math.sin(m)
+        self._th   = math.cos(math.pi - m)
+        self._mm   = math.sin(math.pi - m) * m
+
+    def forward(
+        self,
+        x:      torch.Tensor,
+        labels: Optional[torch.Tensor] = None,
+        m:      Optional[float]        = None,
+    ) -> torch.Tensor:
+        if m is not None and m != self._m:
+            self._precompute(m)
+
+        cosine = F.linear(F.normalize(x), F.normalize(self.weight))  # (B, C)
+        cosine = cosine.clamp(-1+1e-6, 1-1e-6)
+        
+        if labels is None or not self.training:
+            return cosine * self.s
+
+        sine = torch.sqrt(torch.clamp(1.0 - cosine.pow(2), min=1e-6))
+        phi   = cosine * self._cosm - sine * self._sinm
+        phi   = torch.where(cosine > self._th, phi, cosine - self._mm)
+        oh    = torch.zeros_like(cosine).scatter_(1, labels.view(-1, 1).long(), 1.0)
+        return ((oh * phi) + ((1.0 - oh) * cosine)) * self.s
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  PROTO-NCE LOSS  [NEW — replaces SupCon]
+# ══════════════════════════════════════════════════════════════════════
+
+class ProtoNCELoss(nn.Module):
+    """
+    Prototypical NCE Loss.
+
+    For each batch (produced by ClassBalancedBatchSampler with n_spc=4
+    per class), compute per-class prototype = mean of same-class L2-
+    normalised embeddings.  Then apply cross-entropy over prototype-
+    distance logits: each sample is pulled toward its class prototype
+    and pushed away from all others.
+
+    Advantages over within-batch SupCon:
+      1. Gradient is cleaner — prototype averages reduce noise from
+         individual hard/easy pair interactions.
+      2. Each sample contributes to n_cls logit dimensions instead of
+         n_pos pairs, giving a stronger learning signal per step.
+      3. Numerically more stable with small n_spc (≥ 2 sufficient).
+
+    Ref: Snell et al. Prototypical Networks, NeurIPS 2017.
+         Li et al. Prototypical Contrastive Learning, EMNLP 2021.
     """
 
     def __init__(self, temperature: float = 0.07) -> None:
@@ -472,53 +458,51 @@ class SupConLoss(nn.Module):
         self.temperature = temperature
 
     def forward(self, features: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        device = features.device
-        B      = features.shape[0]
+        """
+        features : (B, D)  L2-normalised embeddings
+        labels   : (B,)    integer class labels
+        """
+        device  = features.device
+        classes = labels.unique()
+        C       = len(classes)
 
-        # Cosine similarity, temperature-scaled
-        sim = torch.mm(features, features.T) / self.temperature  # (B,B)
-
-        # Numerical stability: subtract row max
-        sim_max, _ = sim.max(dim=1, keepdim=True)
-        sim        = sim - sim_max.detach()
-
-        # Masks
-        diag     = torch.eye(B, dtype=torch.bool, device=device)
-        pos_mask = (labels.unsqueeze(0) == labels.unsqueeze(1)) & ~diag  # (B,B)
-        neg_mask = ~diag  # all non-self pairs form the denominator
-
-        # log P(positive | anchor)
-        exp_sim  = torch.exp(sim) * neg_mask.float()
-        log_denom = torch.log(exp_sim.sum(dim=1, keepdim=True) + 1e-8)
-        log_prob  = sim - log_denom
-
-        # Mean log-prob over positives per anchor
-        pos_count = pos_mask.float().sum(dim=1).clamp(min=1e-8)
-        loss_per  = -(log_prob * pos_mask.float()).sum(dim=1) / pos_count
-
-        # Exclude anchors with no positives (edge case)
-        valid = pos_mask.any(dim=1)
-        if valid.sum() == 0:
+        if C < 2:
             return features.new_tensor(0.0, requires_grad=True)
 
-        return loss_per[valid].mean()
+        # Compute per-class prototypes  (C_batch, D)
+        protos = torch.stack([
+            features[labels == c].mean(0) for c in classes
+        ])
+        protos = F.normalize(protos, dim=1)     # unit-sphere prototypes
+
+        # Pairwise cosine similarities  (B, C_batch)
+        sim    = torch.mm(features, protos.T) / self.temperature
+
+        # Remap original class labels to local [0, C_batch) indices
+        class_to_local = {c.item(): i for i, c in enumerate(classes)}
+        local_labels   = torch.tensor(
+            [class_to_local[y.item()] for y in labels],
+            dtype=torch.long, device=device,
+        )
+
+        return F.cross_entropy(sim, local_labels)
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  MASKED SPECTRAL STATISTICS  (float32, NaN-safe)  — unchanged v6
+#  MASKED SPECTRAL STATISTICS  (float32, NaN-safe)
 # ══════════════════════════════════════════════════════════════════════
 
 def masked_spectral_stats(
     x: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Compute foreground-masked mean / std / max per spectral band."""
-    x32  = x.float()
+    x32     = x.float()
     B, C, H, W = x32.shape
-    flat = x32.reshape(B, C, H * W)
+    flat    = x32.reshape(B, C, H * W)
 
-    energy = flat.abs().sum(dim=1, keepdim=True)
-    mask   = (energy > 1e-5).float()
-    count  = mask.sum(dim=2).clamp(min=1.0)
+    energy  = flat.abs().sum(dim=1, keepdim=True)
+    mask    = (energy > 1e-5).float()
+    count   = mask.sum(dim=2).clamp(min=1.0)
 
     mean    = (flat * mask).sum(dim=2) / count
     mean_sq = ((flat ** 2) * mask).sum(dim=2) / count
@@ -537,7 +521,7 @@ def masked_spectral_stats(
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  WAVELENGTH POSITIONAL ENCODING  — unchanged from v6
+#  WAVELENGTH POSITIONAL ENCODING
 # ══════════════════════════════════════════════════════════════════════
 
 class WavelengthPositionalEncoding(nn.Module):
@@ -549,12 +533,12 @@ class WavelengthPositionalEncoding(nn.Module):
 
     def __init__(self, num_bands: int = 256, embed_dim: int = 16) -> None:
         super().__init__()
-        wl   = torch.linspace(0.0, 1.0, num_bands)
-        half = embed_dim // 2
-        freq = torch.exp(
+        wl    = torch.linspace(0.0, 1.0, num_bands)
+        half  = embed_dim // 2
+        freq  = torch.exp(
             torch.arange(half).float() * -(math.log(10_000.0) / max(half - 1, 1))
         )
-        enc         = torch.zeros(num_bands, embed_dim)
+        enc          = torch.zeros(num_bands, embed_dim)
         enc[:,  :half] = torch.sin(wl.unsqueeze(1) * freq.unsqueeze(0))
         enc[:, half:]  = torch.cos(wl.unsqueeze(1) * freq.unsqueeze(0))
         self.register_buffer("enc", enc)
@@ -568,7 +552,7 @@ class WavelengthPositionalEncoding(nn.Module):
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  BUILDING BLOCKS  — unchanged from v6
+#  BUILDING BLOCKS
 # ══════════════════════════════════════════════════════════════════════
 
 class SpectralSE(nn.Module):
@@ -576,7 +560,7 @@ class SpectralSE(nn.Module):
 
     def __init__(self, channels: int, reduction: int = 16) -> None:
         super().__init__()
-        mid = max(channels // reduction, 16)
+        mid       = max(channels // reduction, 16)
         self.gate = nn.Sequential(
             nn.Linear(channels, mid,      bias=False), nn.GELU(),
             nn.Linear(mid,      channels, bias=False), nn.Sigmoid(),
@@ -662,13 +646,12 @@ class ResBlock2D(nn.Module):
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  BRANCH A — SPECTRAL PROFILE  — unchanged from v6
+#  BRANCH A — SPECTRAL PROFILE
 # ══════════════════════════════════════════════════════════════════════
 
 class SpectralProfileBranch(nn.Module):
     """
     Multi-scale 1-D CNN on mean spectrum + first-order derivative.
-    Derivative captures peak positions (illumination-invariant).
     3 towers (kernel 3, 7, 15) → global avg+max pool → 256-D.
     """
 
@@ -714,13 +697,13 @@ class SpectralProfileBranch(nn.Module):
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  BRANCH B — SPECTRAL STATISTICS  — unchanged from v6
+#  BRANCH B — SPECTRAL STATISTICS
 # ══════════════════════════════════════════════════════════════════════
 
 class SpectralStatsBranch(nn.Module):
     """
     Multi-scale 1-D CNN on {mean, std, max} spectral statistics.
-    std encodes intra-seed heterogeneity (hull vs endosperm variation).
+    std encodes intra-seed spectral heterogeneity (hull vs. endosperm).
     3 towers → global avg+max pool → 256-D.
     """
 
@@ -769,13 +752,9 @@ class SpectralStatsBranch(nn.Module):
 
 class SpatialCNNBranch(nn.Module):
     """
-    2-D residual CNN + CBAM attention for morphological features.
-
-    v7 adds power normalisation (sign(x)|x|^0.5) on the pooled vectors
-    before the projection.  This approximates second-order statistics:
-    large activations are dampened so the MLP receives a more uniform
-    distribution, reducing dominance from textural outliers.
-    Empirical gains of 1–2% on fine-grained recognition tasks.
+    2-D residual CNN + CBAM attention on band-reduced spatial volume.
+    Power-normalised pooling (sign(x)|x|^0.5) approximates second-order
+    statistics — dampens outlier activations.
     """
 
     def __init__(self, num_bands: int = 256, out_dim: int = 256) -> None:
@@ -785,7 +764,7 @@ class SpatialCNNBranch(nn.Module):
             nn.GroupNorm(8, 32),
             nn.GELU(),
         )
-        self.stages = nn.Sequential(
+        self.stages    = nn.Sequential(
             ResBlock2D(32,  64,      stride=2), CBAM(64),
             ResBlock2D(64,  128,     stride=2), CBAM(128),
             ResBlock2D(128, 192,     stride=2), CBAM(192),
@@ -801,7 +780,6 @@ class SpatialCNNBranch(nn.Module):
 
     @staticmethod
     def _power_norm(x: torch.Tensor) -> torch.Tensor:
-        """Signed square root — approximates second-order pooling."""
         return x.sign() * x.abs().clamp(min=1e-8).sqrt()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -809,14 +787,13 @@ class SpatialCNNBranch(nn.Module):
         h    = self.stages(h)
         avg  = self.avg_pool(h).flatten(1)
         mx   = self.max_pool(h).flatten(1)
-        # Power-normalise then L2-normalise (scale-invariant representation)
         feat = torch.cat([self._power_norm(avg), self._power_norm(mx)], dim=1)
         feat = F.normalize(feat, dim=1)
         return self.pool_proj(feat)
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  BRANCH D — SPECFORMER  (NEW)
+#  BRANCH D — SPECFORMER  (lightweight spectral transformer)
 # ══════════════════════════════════════════════════════════════════════
 
 class _PreLNBlock(nn.Module):
@@ -845,28 +822,8 @@ class _PreLNBlock(nn.Module):
 class SpecFormerBranch(nn.Module):
     """
     Lightweight spectral transformer for 256-band HSI.
-
-    Design rationale
-    ────────────────
-    1-D CNNs (Branches A/B) excel at local spectral patterns (narrow
-    absorption dips) but cannot model long-range interactions, e.g.:
-      • Starch at 860 nm correlates inversely with protein at 930 nm.
-      • Water content at 970 nm modulates the entire NIR baseline.
-
-    Self-attention across spectral patches captures these correlations
-    explicitly.  The [CLS] token summarises global spectral context.
-
-    Architecture
-    ────────────
-    • Tokenise: 256 bands → 32 patches × 8 bands each
-    • Project: Linear(8, 128) per patch → (B, 32, 128)
-    • Physical WL positional encoding (sinusoidal at patch centres)
-    • Prepend [CLS] token → (B, 33, 128)
-    • 4 Pre-LN blocks, 4 heads, d_ff=256, dropout=0.15
-    • Pool [CLS] → Linear(128, 256) → BN → GELU → Dropout
-    • Output: (B, 256)
-
-    Parameter count: ~0.5 M
+    256 bands → 32 patches × 8 bands → (B,33,128) with [CLS] → 256-D.
+    Physical wavelength PE at patch centres.
     Ref: Hong et al. SpectralFormer, IEEE TGRS 2022.
     """
 
@@ -881,17 +838,15 @@ class SpecFormerBranch(nn.Module):
         dropout:    float = 0.15,
     ) -> None:
         super().__init__()
-        n_patches       = num_bands // patch_size   # 32
+        n_patches       = num_bands // patch_size
         self.patch_size = patch_size
         self.n_patches  = n_patches
 
-        # Patch projection
         self.patch_proj = nn.Sequential(
             nn.Linear(patch_size, d_model, bias=False),
             nn.LayerNorm(d_model),
         )
 
-        # Physical wavelength positional encoding at patch centres
         wl_centers = torch.linspace(WL_MIN, WL_MAX, n_patches)
         wl_norm    = (wl_centers - WL_MIN) / (WL_MAX - WL_MIN)
         half       = d_model // 2
@@ -901,20 +856,16 @@ class SpecFormerBranch(nn.Module):
         pe = torch.zeros(n_patches, d_model)
         pe[:, :half] = torch.sin(wl_norm.unsqueeze(1) * freq.unsqueeze(0))
         pe[:, half:] = torch.cos(wl_norm.unsqueeze(1) * freq.unsqueeze(0))
-        self.register_buffer("wl_pe", pe)   # (32, d_model)
+        self.register_buffer("wl_pe", pe)
 
-        # [CLS] token
-        self.cls = nn.Parameter(torch.zeros(1, 1, d_model))
+        self.cls    = nn.Parameter(torch.zeros(1, 1, d_model))
         nn.init.trunc_normal_(self.cls, std=0.02)
 
-        # Transformer encoder
         self.blocks = nn.ModuleList([
             _PreLNBlock(d_model, n_heads, d_model * 2, dropout)
             for _ in range(n_layers)
         ])
         self.norm = nn.LayerNorm(d_model)
-
-        # Output projection
         self.proj = nn.Sequential(
             nn.Linear(d_model, out_dim),
             nn.BatchNorm1d(out_dim),
@@ -924,88 +875,102 @@ class SpecFormerBranch(nn.Module):
 
     def forward(self, mean_spec: torch.Tensor) -> torch.Tensor:
         B   = mean_spec.shape[0]
-        x   = mean_spec.float().view(B, self.n_patches, self.patch_size)  # (B,32,8)
-        x   = self.patch_proj(x) + self.wl_pe.unsqueeze(0)               # (B,32,128)
-        cls = self.cls.expand(B, -1, -1)                                  # (B,1,128)
-        x   = torch.cat([cls, x], dim=1)                                  # (B,33,128)
+        x   = mean_spec.float().view(B, self.n_patches, self.patch_size)
+        x   = self.patch_proj(x) + self.wl_pe.unsqueeze(0)
+        cls = self.cls.expand(B, -1, -1)
+        x   = torch.cat([cls, x], dim=1)
         for blk in self.blocks:
             x = blk(x)
         x = self.norm(x)
-        return self.proj(x[:, 0])  # [CLS] → (B, out_dim)
+        return self.proj(x[:, 0])
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  ARCFACE HEAD  (Stage 2/3)
+#  BRANCH CROSS-ATTENTION FUSION  [NEW]
 # ══════════════════════════════════════════════════════════════════════
 
-class ArcFaceHead(nn.Module):
+class BranchCrossAttention(nn.Module):
     """
-    Additive Angular Margin Softmax.
+    Cross-branch attention fusion for four 256-D branch outputs.
 
-    Motivation for this dataset (90 classes, ~67 samples/class):
-      Standard softmax classifies on dot-product distance in Euclidean
-      space, allowing class boundaries to overlap.  ArcFace projects
-      features and class proxies onto a unit hypersphere and penalises
-      the angular distance between same-class features — enforcing
-      compact within-class distributions.
+    Treats each branch's feature vector as one "token" in a 4-token
+    sequence, then applies a single Pre-LN transformer block so each
+    branch can attend to and modulate the others.
 
-    Hyper-parameters:
-      s = 20  (conservative vs typical 64; features not perfectly
-               unit-normed after BN, smaller scale avoids divergence)
-      m = 0.40 (moderate margin; larger margins overfit with few samples)
+    Motivation:
+      Simple concatenation treats branches independently.  In fine-
+      grained 90-class variety discrimination, synergies exist:
+        • The spatial branch detects hull texture → should amplify the
+          spectral absorption bands that correlate with hull composition.
+        • SpecFormer detects starch/protein correlation → should inform
+          what statistical moments (Branch B) to emphasise.
+      Cross-attention discovers these interactions end-to-end.
 
-    Ref: Deng et al. ArcFace, CVPR 2019.
+    Architecture:
+      input:  list of 4 × (B, 256) feature vectors
+      stack:  (B, 4, 256) — 4 tokens of dim 256
+      transformer: 1 Pre-LN block, 4 heads, d_ff=512, drop=0.10
+      output: (B, 4, 256) → flatten → (B, 1024)
+
+    Parameter overhead: ~160 K.
+    Ref: "Cross-Modal Attention for Fine-Grained Visual Classification", 2021.
     """
 
-    def __init__(self, in_dim: int, num_classes: int,
-                 s: float = 20.0, m: float = 0.40) -> None:
+    def __init__(self, d: int = 256, n_heads: int = 4, dropout: float = 0.10) -> None:
         super().__init__()
-        self.weight = nn.Parameter(torch.FloatTensor(num_classes, in_dim))
-        nn.init.xavier_uniform_(self.weight)
-        self.s     = s
-        self.m     = m
-        self.cos_m = math.cos(m)
-        self.sin_m = math.sin(m)
-        self.th    = math.cos(math.pi - m)
-        self.mm    = math.sin(math.pi - m) * m
+        self.norm1 = nn.LayerNorm(d)
+        self.attn  = nn.MultiheadAttention(d, n_heads, dropout=dropout,
+                                           batch_first=True)
+        self.norm2 = nn.LayerNorm(d)
+        self.ff    = nn.Sequential(
+            nn.Linear(d, d * 2), nn.GELU(), nn.Dropout(dropout),
+            nn.Linear(d * 2, d), nn.Dropout(dropout),
+        )
+        self.drop  = nn.Dropout(dropout)
+        # Learnable per-branch residual scale (init=1 → neutral start)
+        self.gate  = nn.Parameter(torch.ones(1))
 
-    def forward(self, x: torch.Tensor,
-                labels: Optional[torch.Tensor] = None) -> torch.Tensor:
-        # x: (B, in_dim)  ← must be L2-normalised before calling
-        cosine = F.linear(F.normalize(x), F.normalize(self.weight))  # (B, C)
-        if labels is None or not self.training:
-            return cosine * self.s
-
-        sine  = torch.sqrt((1.0 - cosine.pow(2)).clamp(1e-8, 1.0))
-        phi   = cosine * self.cos_m - sine * self.sin_m
-        phi   = torch.where(cosine > self.th, phi, cosine - self.mm)
-        oh    = torch.zeros_like(cosine)
-        oh.scatter_(1, labels.view(-1, 1).long(), 1.0)
-        return ((oh * phi) + ((1.0 - oh) * cosine)) * self.s
+    def forward(self, branches: List[torch.Tensor]) -> torch.Tensor:
+        """
+        branches: list of (B, d) tensors — one per branch
+        returns : (B, n_branches * d)
+        """
+        x = torch.stack(branches, dim=1)         # (B, n_branches, d)
+        # Pre-LN self-attention across the n_branches tokens
+        h    = self.norm1(x)
+        h, _ = self.attn(h, h, h, need_weights=False)
+        x    = x + self.gate * self.drop(h)      # learnable residual scale
+        x    = x + self.drop(self.ff(self.norm2(x)))
+        return x.flatten(1)                      # (B, n_branches * d)
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  MAIN MODEL — SpectralQuadNet v7
+#  MAIN MODEL — SpectralQuadNet v8
 # ══════════════════════════════════════════════════════════════════════
 
 class SpectralQuadNet(nn.Module):
     """
-    Four-branch HSI classification network.
+    Four-branch HSI classification network with cross-branch fusion.
 
-    Branch A : SpectralProfileBranch  (mean + deriv + WL PE)    → 256-D
-    Branch B : SpectralStatsBranch    (mean + std  + max + WL)   → 256-D
-    Branch C : SpatialCNNBranch       (2D CNN + power norm)      → 256-D
-    Branch D : SpecFormerBranch       (spectral transformer NEW)  → 256-D
+    Branch A : SpectralProfileBranch  (mean + deriv + WL PE)      → 256-D
+    Branch B : SpectralStatsBranch    (mean + std + max + WL)      → 256-D
+    Branch C : SpatialCNNBranch       (2D CNN + power norm)        → 256-D
+    Branch D : SpecFormerBranch       (spectral transformer)       → 256-D
 
-    Fusion  : cat(A,B,C,D) = 1024-D
+    Fusion  : BranchCrossAttention(A,B,C,D) → 1024-D  [NEW v8]
                 → Linear(512) → BN → GELU → Dropout
                 → Linear(256) → BN                      (embedding)
 
-    Stage 1 head : Linear(256, 90)                [Mixup-compatible CE]
-    Stage 2/3 head : ArcFaceHead(256, 90, s=20, m=0.40)  [ArcFace CE]
+    Stage 1 head : Linear(256, 90)                 [Mixup-compatible CE]
+    Stage 2/3 head : ArcFaceHead(256, 90)          [ArcFace CE]
 
-    Switching between heads is done via model.use_arcface(True/False).
-    L2-normalisation of embeddings is applied only for the ArcFace head.
+    HEAD FREEZE STRATEGY  [BUG 3 FIX]:
+      Stage 1: arcface_head is FROZEN (no grad, no weight decay)
+      Stage 2: linear_head  is FROZEN (no grad, no weight decay)
+      Prevents cross-contamination and weight-decay corruption of the
+      inactive head between stages.
+
+    _use_arcface is saved/restored via checkpoint dict  [BUG 2 FIX].
     """
 
     def __init__(
@@ -1019,13 +984,9 @@ class SpectralQuadNet(nn.Module):
         super().__init__()
         cfg = cfg or CONFIG
 
-        # Shared spectral SE attention
         self.se     = SpectralSE(num_bands, reduction=16)
-
-        # Shared wavelength positional encoding (Branches A & B)
         self.wl_enc = WavelengthPositionalEncoding(num_bands, wl_embed_dim)
 
-        # Four branches
         self.branch_a = SpectralProfileBranch(256, tower_ch=80, wl_enc=self.wl_enc)
         self.branch_b = SpectralStatsBranch(  256, tower_ch=80, wl_enc=self.wl_enc)
         self.branch_c = SpatialCNNBranch(num_bands=num_bands, out_dim=256)
@@ -1039,9 +1000,15 @@ class SpectralQuadNet(nn.Module):
             dropout    = cfg["specf_drop"],
         )
 
+        # [NEW] Cross-branch attention fusion before MLP
+        self.cross_attn = BranchCrossAttention(
+            d       = 256,
+            n_heads = cfg["fusion_heads"],
+            dropout = cfg["fusion_drop"],
+        )
+
         fusion_dim = 256 * 4   # 1024
 
-        # Shared embedding network
         self.embed_net = nn.Sequential(
             nn.Linear(fusion_dim, 512),
             nn.BatchNorm1d(512),
@@ -1051,25 +1018,22 @@ class SpectralQuadNet(nn.Module):
             nn.BatchNorm1d(256),
         )
 
-        # Stage 1 head — standard linear (Mixup-compatible)
+        # Stage 1 head
         self.linear_head = nn.Sequential(
             nn.GELU(),
             nn.Dropout(dropout * 0.4),
             nn.Linear(256, num_classes),
         )
 
-        # Stage 2/3 head — ArcFace (requires L2-normalised input)
+        # Stage 2/3 head
         self.arcface_head = ArcFaceHead(
             256, num_classes,
             s=cfg["s2_arcface_s"],
             m=cfg["s2_arcface_m"],
         )
 
-        self._use_arcface = False   # toggled by use_arcface()
-
+        self._use_arcface = False
         self._init_weights()
-
-    # ── weight initialisation ─────────────────────────────────────────
 
     def _init_weights(self) -> None:
         for m in self.modules():
@@ -1084,58 +1048,59 @@ class SpectralQuadNet(nn.Module):
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
 
-    # ── utilities ─────────────────────────────────────────────────────
-
     def set_dropout(self, p: float) -> None:
         for m in self.modules():
             if isinstance(m, nn.Dropout):
                 m.p = p
 
     def use_arcface(self, flag: bool = True) -> None:
-        """Toggle between linear (Stage 1) and ArcFace (Stage 2/3) heads."""
         self._use_arcface = flag
 
-    # ── forward ───────────────────────────────────────────────────────
+    def freeze_head(self, which: str) -> None:
+        """Freeze 'linear' or 'arcface' head — excluded from optimizer."""
+        head = self.linear_head if which == "linear" else self.arcface_head
+        for p in head.parameters():
+            p.requires_grad_(False)
+
+    def unfreeze_head(self, which: str) -> None:
+        head = self.linear_head if which == "linear" else self.arcface_head
+        for p in head.parameters():
+            p.requires_grad_(True)
 
     def forward(
         self,
         x:            torch.Tensor,
         labels:       Optional[torch.Tensor] = None,
-        return_embed: bool = False,
-    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
-        # Spectral self-excitation
-        x = self.se(x)                                     # (B,256,64,64)
+        return_embed: bool                   = False,
+        arc_m:        Optional[float]        = None,
+    ) -> torch.Tensor:
 
-        # Spectral statistics (float32, NaN-safe)
+        x = self.se(x)                                     # (B,256,64,64)
         ms, ss, mx = masked_spectral_stats(x)              # each (B,256)
 
-        # Four branches
         fa = self.branch_a(ms)                             # (B,256)
         fb = self.branch_b(ms, ss, mx)                    # (B,256)
         fc = self.branch_c(x)                              # (B,256)
         fd = self.branch_d(ms)                             # (B,256)
 
-        # Fusion embedding
-        fused = torch.cat([fa, fb, fc, fd], dim=1)         # (B,1024)
-        emb   = self.embed_net(fused)                      # (B,256), BN-normalised
+        # [NEW] cross-branch attention before MLP fusion
+        fused = self.cross_attn([fa, fb, fc, fd])          # (B,1024)
+        emb   = self.embed_net(fused)                      # (B,256)
 
-        # Head selection
         if self._use_arcface:
-            emb_n  = F.normalize(F.gelu(emb), dim=1)      # L2-norm for ArcFace
-            logits = self.arcface_head(emb_n, labels)
+            emb_n  = F.normalize(F.gelu(emb), dim=1)
+            logits = self.arcface_head(emb_n, labels, m=arc_m)
         else:
-            emb_n  = emb
-            logits = self.linear_head(emb)                 # Stage 1: plain CE
+            logits = self.linear_head(emb)
 
         if return_embed:
-            # Always return L2-normalised embed for SupCon
             return logits, F.normalize(F.gelu(emb.detach()), dim=1)
 
         return logits
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  TTA  — unchanged from v6
+#  TTA
 # ══════════════════════════════════════════════════════════════════════
 
 @torch.no_grad()
@@ -1168,13 +1133,13 @@ def build_splits():
 
 
 def build_loaders(
-    train_idx:    np.ndarray,
-    val_idx:      np.ndarray,
-    test_idx:     np.ndarray,
-    batch_train:  int,
-    balanced:     bool              = False,
-    all_labels:   Optional[np.ndarray] = None,
-) -> tuple[DataLoader, DataLoader, DataLoader]:
+    train_idx:   np.ndarray,
+    val_idx:     np.ndarray,
+    test_idx:    np.ndarray,
+    batch_train: int,
+    balanced:    bool                  = False,
+    all_labels:  Optional[np.ndarray] = None,
+) -> Tuple[DataLoader, DataLoader, DataLoader]:
     nw = CONFIG["num_workers"]
     kw = dict(num_workers=nw, pin_memory=True)
 
@@ -1210,11 +1175,14 @@ def build_loaders(
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  OPTIMISER  — unchanged from v6
+#  OPTIMISER  (weight decay skips BN, GroupNorm, biases)
 # ══════════════════════════════════════════════════════════════════════
 
 def build_optimizer(model: nn.Module, lr: float) -> optim.AdamW:
-    """AdamW — weight decay skips BN, GroupNorm, and bias params."""
+    """
+    Only optimise parameters that require grad (respects freeze_head()).
+    Weight decay skips 1-D params (BN/GN scale/bias) and bias terms.
+    """
     wd_p, no_wd_p = [], []
     for name, p in model.named_parameters():
         if not p.requires_grad:
@@ -1228,6 +1196,34 @@ def build_optimizer(model: nn.Module, lr: float) -> optim.AdamW:
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  ARCFACE MARGIN SCHEDULE
+# ══════════════════════════════════════════════════════════════════════
+
+def arcface_margin_schedule(
+    epoch:     int,
+    m0:        float,
+    m_target:  float,
+    warmup_ep: int,
+) -> float:
+    """
+    Cosine warmup of ArcFace margin from m0 → m_target over warmup_ep.
+    After warmup, holds at m_target.
+
+    Motivation: the full margin at epoch 1 immediately suppresses the
+    correct-class cosine below all negatives (train acc = 0% for first
+    12 epochs in v3).  Starting from a small margin m0=0.05 and ramping
+    up lets the head first establish a sensible directional layout,
+    then sharpen it with the full margin.
+    """
+    if epoch >= warmup_ep:
+        return m_target
+    frac = epoch / max(warmup_ep, 1)
+    # Cosine ramp: smooth and avoids discontinuities
+    cos_val = 0.5 * (1.0 - math.cos(math.pi * frac))
+    return m0 + (m_target - m0) * cos_val
+
+
+# ══════════════════════════════════════════════════════════════════════
 #  TRAIN / EVALUATE
 # ══════════════════════════════════════════════════════════════════════
 
@@ -1236,74 +1232,130 @@ def train_one_epoch(
     loader:        DataLoader,
     optimizer:     optim.Optimizer,
     criterion:     nn.Module,
-    scaler:        GradScaler,
+    scaler:        Optional[GradScaler],
     ema:           Optional[ModelEMA],
     device:        torch.device,
-    scheduler      = None,
-    use_mixup:     bool              = True,
-    mixup_alpha:   float             = 0.4,
-    supcon:        Optional[SupConLoss] = None,
-    supcon_weight: float             = 0.0,
-) -> tuple[float, float]:
+    scheduler                          = None,
+    use_mixup:     bool                = True,
+    mixup_alpha:   float               = 0.4,
+    supcon:        Optional[nn.Module] = None,
+    supcon_weight: float               = 0.0,
+    accum_steps:   int                 = 1,
+    arc_m:         Optional[float]     = None,
+) -> Tuple[float, float]:
     """
-    One training epoch.
+    Unified training loop for all stages.
 
-    Stage 1:  use_mixup=True,  supcon=None    — Mixup/CutMix + CE
-    Stage 2:  use_mixup=False, supcon=SupConLoss — ArcFace CE + SupCon
-    Stage 3:  use_mixup=False, supcon=None    — plain CE (SWA accumulation)
+    Stage 1: Mixup + CE + AMP + Accum
+    Stage 2: ArcFace + ProtoNCE (FP32, no AMP)
+    Stage 3: CE (AMP)
+
+    This version fixes:
+      - AMP instability in Stage 2
+      - Scheduler/optimizer ordering
+      - Gradient scaling when AMP disabled
+      - Partial-step gradient leaks
+      - NaN propagation
     """
+
     model.train()
-    total_loss = total_acc = 0.0
 
-    for x, y in loader:
-        x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
+    total_loss = 0.0
+    total_acc  = 0.0
 
-        x_in, y_a, y_b, lam = (
-            mixed_aug(x, y, mixup_alpha) if use_mixup else (x, y, y, 1.0)
-        )
+    optimizer.zero_grad(set_to_none=True)
 
-        optimizer.zero_grad(set_to_none=True)
+    # AMP only when no metric learning is used
+    use_amp = (supcon is None) and (scaler is not None)
 
-        with autocast(device_type=device.type):
+    for step, (x, y) in enumerate(loader):
+
+        x = x.to(device, non_blocking=True)
+        y = y.to(device, non_blocking=True)
+
+        if use_mixup:
+            x_in, y_a, y_b, lam = mixed_aug(x, y, mixup_alpha)
+        else:
+            x_in, y_a, y_b, lam = x, y, y, 1.0
+
+        with autocast(device_type=device.type, enabled=use_amp):
+
             if supcon is not None and not use_mixup:
-                # Stage 2: ArcFace CE + SupCon
-                logits, emb = model(x_in, y_a, return_embed=True)
-                loss_ce  = criterion(logits, y_a)
-                loss_sc  = supcon(emb, y_a)
-                loss     = (1.0 - supcon_weight) * loss_ce + supcon_weight * loss_sc
+                # Stage 2: ArcFace + ProtoNCE
+                logits, emb = model(
+                    x_in,
+                    y_a,
+                    return_embed=True,
+                    arc_m=arc_m,
+                )
+
+                loss_ce = criterion(logits, y_a)
+                loss_sc = supcon(emb, y_a)
+
+                loss = (
+                    (1.0 - supcon_weight) * loss_ce +
+                    supcon_weight         * loss_sc
+                )
+
             else:
-                # Stage 1: pass labels only if ArcFace is active
+                # Stage 1 / 3
                 logits = model(
                     x_in,
                     labels=y_a if (model._use_arcface and not use_mixup) else None,
+                    arc_m=arc_m,
                 )
-                loss = mixed_loss(criterion, logits, y_a, y_b, lam)
 
-        scaler.scale(loss).backward()
-        scaler.unscale_(optimizer)
-        nn.utils.clip_grad_norm_(model.parameters(), CONFIG["grad_clip"])
-        scaler.step(optimizer)
-        scaler.update()
+                loss = mixed_loss(
+                    criterion, logits, y_a, y_b, lam
+                )
 
-        if scheduler is not None:
-            scheduler.step()
-        if ema is not None:
-            ema.update(model)
+        if not torch.isfinite(loss):
+            print(f"[WARN] Non-finite loss at step {step}. Skipping batch.")
+            optimizer.zero_grad(set_to_none=True)
+            continue
 
-        total_loss += loss.item()
+        loss = loss / accum_steps
+        if use_amp:
+            scaler.scale(loss).backward()
+        else:
+            loss.backward()
+
+        if (step + 1) % accum_steps == 0:
+            if use_amp:
+                scaler.unscale_(optimizer)
+            nn.utils.clip_grad_norm_(
+                model.parameters(),
+                CONFIG["grad_clip"]
+            )
+            if use_amp:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+            if scheduler is not None:
+                scheduler.step()
+            if ema is not None:
+                ema.update(model)
+
+        total_loss += loss.item() * accum_steps
+
         with torch.no_grad():
-            total_acc += (logits.argmax(1) == y).float().mean().item()
+            total_acc += (
+                logits.argmax(1) == y
+            ).float().mean().item()
+
 
     n = len(loader)
-    return total_loss / n, total_acc / n
 
+    return total_loss / n, total_acc / n
 
 @torch.no_grad()
 def evaluate(
     model:  nn.Module,
     loader: DataLoader,
     device: torch.device,
-) -> tuple[float, float]:
+) -> Tuple[float, float]:
     """Returns (macro-F1, accuracy)."""
     model.eval()
     preds, targets = [], []
@@ -1321,19 +1373,36 @@ def evaluate(
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  CHECKPOINT HELPERS
+#  CHECKPOINT HELPERS  [BUG 2 FIX: saves/restores _use_arcface flag]
 # ══════════════════════════════════════════════════════════════════════
 
 def save_ckpt(path, epoch, stage, model, ema, val_acc, val_f1):
-    torch.save({"epoch": epoch, "stage": stage,
-                "model": model.state_dict(), "ema": ema.state_dict(),
-                "val_acc": val_acc, "val_f1": val_f1}, path)
+    """
+    Save checkpoint including the _use_arcface flag.
+    """
+    torch.save({
+        "epoch":       epoch,
+        "stage":       stage,
+        "model":       model.state_dict(),
+        "ema":         ema.state_dict(),
+        "val_acc":     val_acc,
+        "val_f1":      val_f1,
+        "use_arcface": model._use_arcface,   # ← BUG 2 FIX
+    }, path)
 
 
 def load_ckpt(path, model, ema, device):
+    """
+    Load checkpoint and restore _use_arcface on both model and ema.shadow.
+    """
     ckpt = torch.load(path, map_location=device, weights_only=False)
     model.load_state_dict(ckpt["model"])
     ema.load_state_dict(ckpt["ema"])
+
+    # ── BUG 2 FIX: restore arcface flag ───────────────────────────────
+    use_af = ckpt.get("use_arcface", False)
+    model.use_arcface(use_af)
+    ema.shadow.use_arcface(use_af)      # ← critical: fixes final_evaluation
     return ckpt
 
 
@@ -1343,16 +1412,14 @@ def load_ckpt(path, model, ema, device):
 
 def update_bn_stats(loader: DataLoader, model: nn.Module, device: torch.device) -> None:
     """
-    Recompute BN running mean/var for a model with averaged weights.
-    Required after SWA weight averaging — the averaged weights no longer
-    correspond to the training statistics tracked by BN layers.
+    Recompute BN running mean/var for averaged (SWA) weights.
     Uses cumulative moving average (momentum=None).
     """
     model.train()
     for m in model.modules():
         if isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d)):
             m.reset_running_stats()
-            m.momentum = None   # cumulative moving avg over all batches
+            m.momentum = None
 
     with torch.no_grad():
         for x, _ in loader:
@@ -1376,27 +1443,25 @@ def run_stage1(
     model, ema, train_ldr, val_ldr, device, criterion, best_ckpt,
 ) -> float:
     """
-    Stage 1: Heavy aug + Mixup/CutMix + OneCycleLR.
-    Linear head; ArcFace is OFF.
-
-    Note: train accuracy is computed on MIXED samples (expected 30–50 %).
-    The EMA accuracy is the true performance signal for checkpointing.
+    Stage 1: Heavy aug + Mixup/CutMix + OneCycleLR + gradient accumulation.
     """
     model.use_arcface(False)
+    model.unfreeze_head("linear")
+    model.freeze_head("arcface")        # ← BUG 3 FIX
 
     optimizer = build_optimizer(model, lr=CONFIG["s1_max_lr"] / 25)
 
     with warnings.catch_warnings():
-        warnings.simplefilter("ignore", UserWarning)
+        warnings.simplefilter("ignore")
         scheduler = optim.lr_scheduler.OneCycleLR(
             optimizer,
-            max_lr          = CONFIG["s1_max_lr"],
-            epochs          = CONFIG["s1_epochs"],
-            steps_per_epoch = len(train_ldr),
-            pct_start       = 0.15,
-            div_factor      = 25,
-            final_div_factor= 1e4,
-            anneal_strategy = "cos",
+            max_lr           = CONFIG["s1_max_lr"],
+            epochs           = CONFIG["s1_epochs"],
+            steps_per_epoch  = math.ceil(len(train_ldr) / CONFIG["s1_accum"]),
+            pct_start        = 0.15,
+            div_factor       = 25,
+            final_div_factor = 1e4,
+            anneal_strategy  = "cos",
         )
 
     scaler     = GradScaler()
@@ -1410,6 +1475,7 @@ def run_stage1(
             model, train_ldr, optimizer, criterion, scaler,
             ema=ema, device=device, scheduler=scheduler,
             use_mixup=True, mixup_alpha=CONFIG["s1_mixup"],
+            accum_steps=CONFIG["s1_accum"],
         )
 
         _,   va_live = evaluate(model,      val_ldr, device)
@@ -1437,6 +1503,8 @@ def run_stage1(
             print(f"\nEarly stopping at epoch {ep}.")
             break
 
+    # Unfreeze arcface_head so it's available for Stage 2
+    model.unfreeze_head("arcface")
     return best_acc
 
 
@@ -1446,47 +1514,62 @@ def run_stage2(
     model, ema, train_ldr, val_ldr, device, criterion, best_ckpt,
 ) -> float:
     """
-    Stage 2: ArcFace CE + within-batch SupCon + class-balanced batches.
-
-    Key v7 fixes vs v6:
-      1. EMA re-initialised from live model — eliminates EMA accuracy
-         collapse that occurred in v6 when dropout changed 0.25→0.08.
-      2. ArcFace head enforces angular margins on the L2-sphere.
-      3. SupCon loss (α=0.25) further tightens intra-class clusters.
-
-    Lower dropout (0.10) than Stage 1 (0.30) — model is more confident
-    after Stage 1 pre-training and needs less regularisation noise.
+    Stage 2: ArcFace CE + ProtoNCE + class-balanced batches.
     """
-    # Set lower dropout for Stage 2
     model.set_dropout(CONFIG["s2_dropout"])
     model.use_arcface(True)
+    model.freeze_head("linear")         # ← BUG 3 FIX
+    model.unfreeze_head("arcface")
 
-    # ★ KEY FIX: Re-init EMA from live Stage-1 best weights.
-    #   Without this, EMA shadow still carries Stage-1 high-dropout
-    #   momentum, so val accuracy collapses in early Stage-2 epochs.
     ema.reinit_from(model)
     ema.set_dropout(CONFIG["s2_dropout"])
+    ema.shadow.use_arcface(True)        # ← BUG 2 FIX (shadow also uses arcface)
 
-    supcon    = SupConLoss(temperature=CONFIG["supcon_temp"])
-    optimizer = build_optimizer(model, lr=CONFIG["s2_lr"])
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=CONFIG["s2_epochs"], eta_min=CONFIG["s2_min_lr"]
-    )
+    proto   = ProtoNCELoss(temperature=CONFIG["proto_temp"])
+    optimizer = build_optimizer(model, lr=1e-5)   # warmup starts near 0
+
+    # Linear warmup + cosine decay
+    warmup_steps = CONFIG["s2_warmup_ep"] * len(train_ldr)
+    total_steps  = CONFIG["s2_epochs"]   * len(train_ldr)
+    peak_lr      = CONFIG["s2_peak_lr"]
+    min_lr       = CONFIG["s2_min_lr"]
+
+    def lr_lambda(step):
+        if step < warmup_steps:
+            return step / max(warmup_steps, 1)
+        t = (step - warmup_steps) / max(total_steps - warmup_steps, 1)
+        return (min_lr / peak_lr) + 0.5 * (1 - min_lr / peak_lr) * (
+            1 + math.cos(math.pi * t)
+        )
+
+    scheduler  = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    # Override base LR so lambda is relative to peak_lr
+    for pg in optimizer.param_groups:
+        pg["lr"] = peak_lr
+
     scaler     = GradScaler()
     best_acc   = 0.0
     no_improve = 0
 
-    _hdr("Stage 2 — ArcFace + SupCon + Balanced Batches", CONFIG["s2_epochs"])
+    _hdr("Stage 2 — ArcFace + ProtoNCE + Balanced Batches", CONFIG["s2_epochs"])
 
     for ep in range(1, CONFIG["s2_epochs"] + 1):
+        # ArcFace margin warmup
+        m_now = arcface_margin_schedule(
+            ep - 1,
+            CONFIG["s2_arcface_m0"],
+            CONFIG["s2_arcface_m"],
+            CONFIG["s2_margin_warmup_ep"],
+        )
+
         tl, ta = train_one_epoch(
             model, train_ldr, optimizer, criterion, scaler,
-            ema=ema, device=device, scheduler=None,
+            ema=ema, device=device, scheduler=scheduler,
             use_mixup=False,
-            supcon=supcon,
-            supcon_weight=CONFIG["supcon_weight"],
+            supcon=proto,
+            supcon_weight=CONFIG["proto_weight"],
+            arc_m=m_now,
         )
-        scheduler.step()
 
         _,   va_live = evaluate(model,      val_ldr, device)
         vf1, va_ema  = evaluate(ema.shadow, val_ldr, device)
@@ -1505,13 +1588,15 @@ def run_stage2(
             f"Ep {ep:03d}/{CONFIG['s2_epochs']} │ "
             f"Loss {tl:.4f}  Train {ta:.1%} │ "
             f"Live {va_live:.1%}  EMA {va_ema:.1%} │ "
-            f"LR {lr_now:.2e}{saved}"
+            f"LR {lr_now:.2e}  m={m_now:.3f}{saved}"
         )
 
         if no_improve >= CONFIG["s2_patience"]:
             print(f"\nEarly stopping at epoch {ep}.")
             break
 
+    # Unfreeze linear_head for Stage 3 (SWA evaluates both)
+    model.unfreeze_head("linear")
     return best_acc
 
 
@@ -1523,29 +1608,23 @@ def run_stage3_swa(
     """
     Stage 3: Manual Stochastic Weight Averaging.
 
-    Runs s3_epochs epochs with a cosine-cyclic LR (cycle_len epochs),
-    then averages all model snapshots taken at the end of each cycle.
-    BN running stats are recomputed from training data after averaging.
-
-    Wide flat minima found by SWA generalise better than sharp minima
-    found by standard SGD/Adam.  Expected gain: +0.5–1.5 %.
-
-    Manual (not torch.optim.swa_utils.AveragedModel) to avoid the
-    AveragedModel wrapper complexity and the module. prefix in state_dict.
+    Runs s3_epochs epochs with cosine-cyclic LR; accumulates model
+    snapshots at the end of each cycle; updates BN after averaging.
     """
     model.set_dropout(CONFIG["s2_dropout"])
+    model.use_arcface(True)
 
-    optimizer  = build_optimizer(model, lr=CONFIG["s3_swa_lr"])
-    scheduler  = optim.lr_scheduler.CosineAnnealingLR(
+    optimizer = build_optimizer(model, lr=CONFIG["s3_swa_lr"])
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
         T_max=CONFIG["s3_cycle_len"],
         eta_min=CONFIG["s3_swa_lr"] * 0.1,
     )
     scaler = GradScaler()
 
-    # Initialise accumulator from current (Stage-2 best) weights
+    # Accumulator initialised from Stage-2 best weights
     swa_state: dict = copy.deepcopy(model.state_dict())
-    n_snap    = 1     # we count Stage-2 best as snapshot 0
+    n_snap          = 1
 
     _hdr("Stage 3 — Stochastic Weight Averaging", CONFIG["s3_epochs"])
 
@@ -1557,61 +1636,75 @@ def run_stage3_swa(
         )
         scheduler.step()
 
-        # Restart cosine cycle
         if ep % CONFIG["s3_cycle_len"] == 0:
             scheduler = optim.lr_scheduler.CosineAnnealingLR(
                 optimizer,
                 T_max=CONFIG["s3_cycle_len"],
                 eta_min=CONFIG["s3_swa_lr"] * 0.1,
             )
-            # Accumulate snapshot
-            n_snap  += 1
-            alpha    = 1.0 / n_snap
-            curr_sd  = model.state_dict()
+            n_snap += 1
+            alpha   = 1.0 / n_snap
+            curr_sd = model.state_dict()
             for k in swa_state:
                 swa_state[k] = swa_state[k] + alpha * (curr_sd[k] - swa_state[k])
 
-        _,   va_live = evaluate(model, val_ldr, device)
-        lr_now = optimizer.param_groups[0]["lr"]
+        _, va_live = evaluate(model, val_ldr, device)
+        lr_now     = optimizer.param_groups[0]["lr"]
         print(
             f"Ep {ep:03d}/{CONFIG['s3_epochs']} │ "
             f"Loss {tl:.4f}  Train {ta:.1%} │ "
             f"Live {va_live:.1%} │ LR {lr_now:.2e} │ Snaps {n_snap}"
         )
 
-    # ── Update BN for SWA model ──────────────────────────────────────
+    # BN update for SWA model
     print(f"\nUpdating BN statistics for SWA model ({n_snap} snapshots) ...")
     swa_model = copy.deepcopy(model)
     swa_model.load_state_dict(swa_state)
+    swa_model.use_arcface(True)
     update_bn_stats(train_ldr, swa_model, device)
 
     _, va_swa = evaluate(swa_model, val_ldr, device)
     _, va_ema = evaluate(ema.shadow, val_ldr, device)
     print(f"SWA val: {va_swa:.1%}   EMA val: {va_ema:.1%}")
 
-    # Use the better of SWA and EMA as the final inference model
+    # Select best model for final evaluation
     if va_swa >= va_ema:
         print("Using SWA model as final eval model.")
         ema.shadow.load_state_dict(swa_model.state_dict())
+        ema.shadow.use_arcface(True)
         best_val = va_swa
     else:
         print("EMA model retained as final eval model.")
         best_val = va_ema
 
+    # ── BUG 4 FIX: save SWA result to best_ckpt ───────────────────────
+    # Load the previously saved best to compare; if SWA is better, overwrite.
+    prev_ckpt = torch.load(best_ckpt, map_location=device, weights_only=False)
+    if best_val > prev_ckpt.get("val_acc", 0.0):
+        print(f"SWA val {best_val:.1%} > Stage-2 best {prev_ckpt['val_acc']:.1%} → saving.")
+        save_ckpt(best_ckpt, CONFIG["s3_epochs"], "Stage 3",
+                  swa_model, ema, best_val, 0.0)
+
     return best_val
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  FINAL TEST EVALUATION
+#  FINAL TEST EVALUATION  [BUG 2 FIX: arcface flag restored by load_ckpt]
 # ══════════════════════════════════════════════════════════════════════
 
 def final_evaluation(model, ema, test_ldr, device, best_ckpt) -> None:
     w = 66
     print(f"\n{'═'*w}\n  FINAL TEST EVALUATION\n{'═'*w}")
 
+    # load_ckpt now restores _use_arcface on both model and ema.shadow
     ckpt       = load_ckpt(best_ckpt, model, ema, device)
     eval_model = ema.shadow
     eval_model.eval()
+
+    # Sanity check — emit which head is active
+    print(f"  ArcFace head active: {eval_model._use_arcface}")
+    print(f"  Checkpoint: epoch {ckpt['epoch']} | {ckpt['stage']} "
+          f"| val={ckpt['val_acc']:.1%}")
 
     results = {}
     for tag, use_tta in [("No TTA", False), ("TTA   ", True)]:
@@ -1627,13 +1720,10 @@ def final_evaluation(model, ema, test_ldr, device, best_ckpt) -> None:
             targets.append(y)
         p, t         = torch.cat(preds).numpy(), torch.cat(targets).numpy()
         results[tag] = (p, t)
-        acc = accuracy_score(t, p)
-        f1m = f1_score(t, p, average="macro",    zero_division=0)
-        f1w = f1_score(t, p, average="weighted", zero_division=0)
+        acc          = accuracy_score(t, p)
+        f1m          = f1_score(t, p, average="macro",    zero_division=0)
+        f1w          = f1_score(t, p, average="weighted", zero_division=0)
         print(f"\n  [{tag}]  Acc={acc:.1%}  F1(macro)={f1m:.4f}  F1(wt)={f1w:.4f}")
-
-    print(f"\n  Checkpoint: epoch {ckpt['epoch']} | {ckpt['stage']} "
-          f"| val={ckpt['val_acc']:.1%}")
 
     p_tta, t_tta = results["TTA   "]
     print(f"\nClassification Report (TTA):\n")
@@ -1669,51 +1759,68 @@ def main() -> None:
     ema   = ModelEMA(model, decay=CONFIG["ema_decay"])
     n_par = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-    print(f"\nModel  : SpectralQuadNet v7")
+    print(f"\nModel  : SpectralQuadNet v8")
     print(f"Params : {n_par / 1e6:.2f}M")
     print(f"Device : {device}  |  EMA adaptive → max {CONFIG['ema_decay']}")
-    print(f"Stage 1: {CONFIG['s1_epochs']} ep | Mixup+CutMix | Linear head    | drop={CONFIG['s1_dropout']}")
-    print(f"Stage 2: {CONFIG['s2_epochs']} ep | ArcFace+SupCon | Balanced smp | drop={CONFIG['s2_dropout']}")
+    print(f"Stage 1: {CONFIG['s1_epochs']} ep | Mixup+CutMix | linear head "
+          f"| drop={CONFIG['s1_dropout']} | accum={CONFIG['s1_accum']}")
+    print(f"Stage 2: {CONFIG['s2_epochs']} ep | ArcFace+ProtoNCE | balanced smp "
+          f"| drop={CONFIG['s2_dropout']} | m warmup {CONFIG['s2_arcface_m0']}→{CONFIG['s2_arcface_m']}")
     print(f"Stage 3: {CONFIG['s3_epochs']} ep | SWA ({CONFIG['s3_cycle_len']}-ep cycles)")
 
     criterion = nn.CrossEntropyLoss(label_smoothing=CONFIG["label_smoothing"])
 
-    # ── Stage 1: random sampler, Mixup, linear head ─────────────────
+    # ── Stage 1: random sampler, Mixup, linear head ───────────────────
     train_ldr1, val_ldr, test_ldr = build_loaders(
         train_idx, val_idx, test_idx, CONFIG["s1_batch"]
     )
     run_stage1(model, ema, train_ldr1, val_ldr, device, criterion, best_ckpt)
 
-    # ── Load Stage 1 best → Stage 2 ─────────────────────────────────
+    # ── Load Stage 1 best → Stage 2 ──────────────────────────────────
     print("\nLoading Stage 1 best checkpoint for Stage 2 ...")
     ckpt = load_ckpt(best_ckpt, model, ema, device)
     print(f"  epoch={ckpt['epoch']}  val={ckpt['val_acc']:.1%}  ({ckpt['stage']})")
     print(f"  Dropout: {CONFIG['s1_dropout']} → {CONFIG['s2_dropout']}")
-    print(f"  EMA: will be re-initialised inside run_stage2()")
 
-    # ── Stage 2: balanced sampler, ArcFace, SupCon ──────────────────
+    # ── Stage 2: balanced sampler, ArcFace, ProtoNCE ─────────────────
     train_ldr2, val_ldr2, _ = build_loaders(
         train_idx, val_idx, test_idx, CONFIG["s2_batch"],
         balanced=True, all_labels=all_labels,
     )
     run_stage2(model, ema, train_ldr2, val_ldr2, device, criterion, best_ckpt)
 
-    # ── Load Stage 2 best → Stage 3 ─────────────────────────────────
+    # ── Load Stage 2 best → Stage 3 ──────────────────────────────────
     print("\nLoading Stage 2 best checkpoint for Stage 3 (SWA) ...")
     ckpt = load_ckpt(best_ckpt, model, ema, device)
     print(f"  epoch={ckpt['epoch']}  val={ckpt['val_acc']:.1%}  ({ckpt['stage']})")
 
     # ── Stage 3: SWA ─────────────────────────────────────────────────
-    # Use random sampler for SWA (BN update also needs full coverage)
     train_ldr3, val_ldr3, _ = build_loaders(
         train_idx, val_idx, test_idx, CONFIG["s2_batch"]
     )
     run_stage3_swa(model, ema, train_ldr3, val_ldr3, device, criterion, best_ckpt)
 
-    # ── Final evaluation ─────────────────────────────────────────────
+    # ── Final evaluation ──────────────────────────────────────────────
     _, _, test_ldr_final = build_loaders(train_idx, val_idx, test_idx, 64)
     final_evaluation(model, ema, test_ldr_final, device, best_ckpt)
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  ENTRY
+# ══════════════════════════════════════════════════════════════════════
+
 if __name__ == "__main__":
-    main()
+    import traceback, sys, logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(message)s",
+        handlers=[
+            logging.FileHandler(os.path.join(CONFIG["output_dir"], "training.log")),
+            logging.StreamHandler(sys.stdout),
+        ],
+    )
+    try:
+        main()
+    except Exception:
+        logging.critical("FATAL:\n" + traceback.format_exc())
+        sys.exit(1)
