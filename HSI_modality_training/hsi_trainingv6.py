@@ -41,7 +41,7 @@ CONFIG: dict = {
 
     # ── Stage 1 ────────────────────────────────────────────────────────
     "s1_epochs":      250,
-    "s1_fade_out":    40,
+    "s1_fade_out":    60,
     "s1_batch":       64,
     "s1_max_lr":      8e-4,
     "s1_dropout":     0.30,
