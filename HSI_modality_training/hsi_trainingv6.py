@@ -40,12 +40,13 @@ CONFIG: dict = {
     "num_classes":    90,
 
     # ── Stage 1 ────────────────────────────────────────────────────────
-    "s1_epochs":      200,
+    "s1_epochs":      250,
+    "s1_fade_out":    40,
     "s1_batch":       64,
     "s1_max_lr":      8e-4,
     "s1_dropout":     0.30,
     "s1_mixup":       0.4,
-    "s1_patience":    40,        # v6: 35 → 40 (model still improving at end)
+    "s1_patience":    40,
     "s1_accum":       2,
 
     # ── Stage 2 ────────────────────────────────────────────────────────
@@ -171,9 +172,9 @@ class ModelEMA:
 
 class RiceSeedDataset(Dataset):
     _AUG_PROFILES = {
-        "heavy": dict(band_drop=0.70, cutout=0.50, noise=0.40,
+        "heavy": dict(band_drop=0.60, cutout=0.50, noise=0.30,
                       warp=0.35, shift=0.30, mult=0.30),
-        "light": dict(band_drop=0.30, cutout=0.20, noise=0.20,
+        "light": dict(band_drop=0.30, cutout=0.20, noise=0.10,
                       warp=0.15, shift=0.15, mult=0.15),
         "none":  None,
     }
@@ -977,7 +978,7 @@ def run_stage1(model, ema, train_ldr, val_ldr, device, criterion, best_ckpt):
             optimizer, max_lr=CONFIG["s1_max_lr"],
             epochs=CONFIG["s1_epochs"],
             steps_per_epoch=math.ceil(len(train_ldr)/CONFIG["s1_accum"]),
-            pct_start=0.15, div_factor=25, final_div_factor=1e4, anneal_strategy="cos")
+            pct_start=0.30, div_factor=25, final_div_factor=1e4, anneal_strategy="cos")
 
     scaler     = GradScaler()
     best_acc   = 0.0
@@ -986,8 +987,12 @@ def run_stage1(model, ema, train_ldr, val_ldr, device, criterion, best_ckpt):
     _hdr("Stage 1 — Heavy Aug + Mixup/CutMix", CONFIG["s1_epochs"])
 
     for ep in range(1, CONFIG["s1_epochs"]+1):
+        
+        is_fade_out = ep > (CONFIG["s1_epochs"] - CONFIG["s1_fade_out"])
+        current_mixup = False if is_fade_out else True
+        
         tl, ta = train_one_epoch(model, train_ldr, optimizer, criterion, scaler, ema,
-                                 device, scheduler=scheduler, use_mixup=True,
+                                 device, scheduler=scheduler, use_mixup=current_mixup,
                                  mixup_alpha=CONFIG["s1_mixup"], accum_steps=CONFIG["s1_accum"])
         _, va_live = evaluate(model,      val_ldr, device)
         vf1,va_ema = evaluate(ema.shadow, val_ldr, device)
@@ -1002,9 +1007,10 @@ def run_stage1(model, ema, train_ldr, val_ldr, device, criterion, best_ckpt):
         else:
             no_improve += 1
 
+        fade_str = " [FADE-OUT]" if is_fade_out else ""
         print(f"Ep {ep:03d}/{CONFIG['s1_epochs']} │ Loss {tl:.4f}  Train {ta:.1%} │ "
               f"Live {va_live:.1%}  EMA {va_ema:.1%} │ LR {lr_now:.2e}  "
-              f"EMA_d {ema.current_decay:.4f}{saved}")
+              f"EMA_d {ema.current_decay:.4f}{fade_str}{saved}")
 
         if no_improve >= CONFIG["s1_patience"]:
             print(f"\nEarly stopping at epoch {ep}."); break
