@@ -44,7 +44,7 @@ CONFIG: dict = {
     "s1_phase1_frac":     0.40,   # heavy aug + mixup
     "s1_phase2_frac":     0.30,   # medium aug + mixup
     # phase 3 = remaining 30%: light aug, NO mixup, focal ON
-    "s1_batch":           64,
+    "s1_batch":            64,
     "s1_max_lr":           8e-4,
     "s1_dropout":          0.30,
     "s1_mixup":            0.40,
@@ -61,7 +61,7 @@ CONFIG: dict = {
 
     # ── Stage 2 ───────────────────────────────────────────────────────
     "s2_epochs":           120,
-    "s2_batch":            64,   # ← was 64; A100 80GB can handle 256+ easily
+    "s2_batch":             64,
     "s2_head_lr":          1.5e-4,
     "s2_back_lr":          1.5e-5,
     "s2_min_lr":           1e-7,
@@ -116,214 +116,11 @@ CONFIG: dict = {
 
     "device":    torch.device("cuda" if torch.cuda.is_available() else "cpu"),
     "seed":      42,
-    "num_workers": 12,            # ← was 8; more workers feed A100 faster
-    "prefetch_factor": 4,         # ← was 8; 8 was excessive and wasted CPU memory
-
-    # ── mmap fallback settings (used when RAM < file size) ────────────
-    # block_size: contiguous index block size for BlockSortedSampler.
-    # Larger = more sequential I/O; smaller = more randomness. 64 is good.
-    "mmap_block_size": 64,
-
-    # ── Data loading strategy overrides ──────────────────────────────
-    # force_mmap=True    → always use mmap  (debug/benchmark)
-    # force_cpu_ram=True → skip GPU mode, use CPU RAM or mmap
-    # Default: GPU mode auto-selected when VRAM is sufficient (A100: yes)
-    "force_mmap":      False,
-    "force_cpu_ram":   False,
+    "num_workers": 16,
 }
 
 Path(CONFIG["output_dir"]).mkdir(parents=True, exist_ok=True)
 torch.cuda.empty_cache()
-
-# ── A100 / Ampere performance flags ───────────────────────────────────────
-# TF32 matmul: uses A100's 3rd-gen Tensor Cores for GEMM ops with FP32
-# precision that is more than sufficient for DNN training.
-# Speedup: ~2-3× for conv/linear vs default FP32 on Ampere GPUs.
-torch.set_float32_matmul_precision("high")   # enables TF32 on A100
-torch.backends.cuda.matmul.allow_tf32  = True
-torch.backends.cudnn.allow_tf32        = True
-
-_GLOBAL_PATCHES: Optional[np.ndarray]   = None   # numpy (RAM or mmap mode)
-_GLOBAL_LABELS:  Optional[np.ndarray]   = None
-_GPU_PATCHES:    Optional[torch.Tensor] = None   # CUDA tensor (GPU mode) — fastest
-_USING_MMAP:     bool = False   # True when fell back to mmap
-_DATA_ON_GPU:    bool = False   # True when full dataset lives on GPU VRAM
-
-
-def _load_data_into_ram(patches_path: str, labels_path: str) -> None:
-    """
-    3-Strategy data loader — chosen automatically at startup.
-    =========================================================
-
-    STRATEGY 0 — GPU VRAM  (FASTEST — used by default on A100):
-      The full dataset is loaded as a float32 CUDA tensor that lives
-      permanently on the GPU.  __getitem__ does a GPU tensor index + clone
-      (microseconds, no CPU involvement).  Augmentation runs on GPU.
-      DataLoader uses num_workers=0 (no worker processes needed; all data
-      is already on-device).  Zero CPU→GPU transfers during training.
-      Requirement: free VRAM ≥ float32_size × 1.10.
-
-    STRATEGY A — CPU RAM  (fallback when GPU VRAM is insufficient):
-      PREVIOUS BUG: np.load() + .astype(float32) could require up to 3×
-      the file size in RAM if the source dtype is float64 (load=36 GB,
-      cast=18 GB, peak=54 GB → OOM-kill even with 35 GB free RAM).
-      FIX: probe dtype via a zero-cost mmap peek, compute true float32
-      size, compare against available RAM with 1.2× safety headroom,
-      then load in chunks (512 rows at a time) so peak RAM overhead is
-      only one extra chunk (~MB) rather than a full second copy.
-      Requirement: free RAM ≥ float32_bytes × 1.20.
-
-    STRATEGY B — mmap + BlockSortedSampler  (last-resort fallback):
-      Memory-maps the file without copying it to RAM.  Pure random access
-      on 18 GB mmap = constant OS page-faults = disk I/O bottleneck.
-      Mitigated by BlockSortedSampler which converts random → block-
-      sequential access, reducing page-faults 10–30×.
-
-    CONFIG overrides:
-      "force_mmap"   = True  → skip to Strategy B (debug/test)
-      "force_cpu_ram"= True  → skip GPU, use Strategy A/B
-    """
-    global _GLOBAL_PATCHES, _GLOBAL_LABELS, _GPU_PATCHES, _USING_MMAP, _DATA_ON_GPU
-    if _GLOBAL_PATCHES is not None or _GPU_PATCHES is not None:
-        return  # already loaded
-
-    import time
-
-    patches_path = str(patches_path)
-    labels_path  = str(labels_path)
-    if not os.path.isfile(patches_path):
-        raise FileNotFoundError(f"patches file not found: {patches_path}")
-
-    # ── Probe dtype and shape cheaply via mmap (no RAM cost) ─────────
-    _probe       = np.load(patches_path, mmap_mode="r")
-    probe_dtype  = _probe.dtype
-    probe_shape  = _probe.shape
-    n_elements   = int(np.prod(probe_shape))
-    float32_bytes = n_elements * 4          # size of the float32 output
-    disk_bytes    = os.path.getsize(patches_path)
-    disk_gb       = disk_bytes / 1e9
-    f32_gb        = float32_bytes / 1e9
-    del _probe   # release mmap handle immediately
-
-    force_mmap    = CONFIG.get("force_mmap",    False)
-    force_cpu_ram = CONFIG.get("force_cpu_ram", False)
-
-    print(f"[DATA] patches.npy  : {disk_gb:.1f} GB on disk  |  "
-          f"dtype={probe_dtype}  |  float32 target={f32_gb:.1f} GB")
-
-    # ── Try to get RAM stats (psutil optional) ────────────────────────
-    try:
-        import psutil
-        avail_ram_bytes = psutil.virtual_memory().available
-        avail_ram_gb    = avail_ram_bytes / 1e9
-        print(f"[DATA] Free CPU RAM : {avail_ram_gb:.1f} GB")
-    except ImportError:
-        avail_ram_bytes = None
-        avail_ram_gb    = -1.0
-        print("[DATA] psutil not installed — RAM check skipped  "
-              "(pip install psutil to enable)")
-
-    # ── Get GPU free memory ───────────────────────────────────────────
-    device = CONFIG["device"]
-    if device.type == "cuda" and not force_mmap and not force_cpu_ram:
-        torch.cuda.synchronize()
-        free_vram_bytes = torch.cuda.mem_get_info(device)[0]
-        free_vram_gb    = free_vram_bytes / 1e9
-        print(f"[DATA] Free GPU VRAM: {free_vram_gb:.1f} GB")
-    else:
-        free_vram_bytes = 0
-        free_vram_gb    = 0.0
-
-    # ══════════════════════════════════════════════════════════════════
-    # STRATEGY 0: GPU VRAM
-    # ══════════════════════════════════════════════════════════════════
-    GPU_HEADROOM = 1.10   # keep 10% VRAM margin
-    if (device.type == "cuda"
-            and free_vram_bytes >= float32_bytes * GPU_HEADROOM
-            and not force_mmap
-            and not force_cpu_ram):
-
-        print(f"[DATA] ► Strategy 0: Loading {f32_gb:.1f} GB → GPU VRAM  "
-              f"(num_workers will be set to 0) …")
-        t0 = time.time()
-
-        # Chunked load: read from mmap in 512-row blocks, cast, send to GPU.
-        # Peak CPU RAM = 1 chunk of source dtype (a few hundred MB max).
-        mmap_arr = np.load(patches_path, mmap_mode="r")
-        gpu_tensor = torch.empty(probe_shape, dtype=torch.float32, device=device)
-        chunk = 512
-        for i in range(0, probe_shape[0], chunk):
-            block = torch.from_numpy(
-                mmap_arr[i : i + chunk].astype(np.float32, copy=False))
-            gpu_tensor[i : i + chunk].copy_(block, non_blocking=True)
-        del mmap_arr, block
-        torch.cuda.synchronize()
-
-        _GPU_PATCHES   = gpu_tensor
-        _GLOBAL_LABELS = np.load(labels_path)
-        _DATA_ON_GPU   = True
-        _USING_MMAP    = False
-        elapsed = time.time() - t0
-        used_vram = (_GPU_PATCHES.nelement() * 4) / 1e9
-        print(f"[DATA] ✓ GPU VRAM load complete in {elapsed:.1f} s  "
-              f"({used_vram:.1f} GB used  |  "
-              f"shape={tuple(_GPU_PATCHES.shape)})")
-        return
-
-    # ══════════════════════════════════════════════════════════════════
-    # STRATEGY A: CPU RAM (chunked, OOM-safe)
-    # ══════════════════════════════════════════════════════════════════
-    # Safety headroom: 1.20× float32 size.  Chunked load means peak RAM
-    # overhead = 1 chunk of source dtype (never a full second copy).
-    RAM_HEADROOM = 1.20
-    ram_ok = (avail_ram_bytes is not None and
-              avail_ram_bytes >= float32_bytes * RAM_HEADROOM and
-              not force_mmap)
-
-    if ram_ok:
-        print(f"[DATA] ► Strategy A: Chunked RAM load  "
-              f"({f32_gb:.1f} GB float32) …")
-        t0 = time.time()
-        try:
-            mmap_arr        = np.load(patches_path, mmap_mode="r")
-            out             = np.empty(probe_shape, dtype=np.float32)
-            chunk = 512     # rows per chunk — ~100s MB max overhead
-            for i in range(0, probe_shape[0], chunk):
-                out[i : i + chunk] = mmap_arr[i : i + chunk].astype(np.float32)
-            del mmap_arr
-
-            _GLOBAL_PATCHES = out
-            _GLOBAL_LABELS  = np.load(labels_path)
-            _USING_MMAP     = False
-            _DATA_ON_GPU    = False
-            elapsed = time.time() - t0
-            print(f"[DATA] ✓ RAM load complete in {elapsed:.1f} s  "
-                  f"({_GLOBAL_PATCHES.nbytes/1e9:.1f} GB  "
-                  f"shape={_GLOBAL_PATCHES.shape})")
-            return
-        except MemoryError:
-            print("[DATA] MemoryError during chunked RAM load — falling back to mmap")
-            _GLOBAL_PATCHES = None
-
-    # ══════════════════════════════════════════════════════════════════
-    # STRATEGY B: mmap + BlockSortedSampler
-    # ══════════════════════════════════════════════════════════════════
-    if not ram_ok:
-        shortage = f32_gb - avail_ram_gb if avail_ram_gb >= 0 else 0
-        print(f"[DATA] ⚠  RAM insufficient (need {f32_gb*RAM_HEADROOM:.1f} GB, "
-              f"have {avail_ram_gb:.1f} GB, short by ~{shortage:.1f} GB).")
-    if free_vram_gb > 0:
-        print(f"[DATA] ⚠  GPU VRAM insufficient for full dataset "
-              f"(need {f32_gb*GPU_HEADROOM:.1f} GB, have {free_vram_gb:.1f} GB).")
-    print("[DATA] ► Strategy B: memory-mapped file + BlockSortedSampler.")
-    print("[DATA]   Training will be slower. Free RAM/VRAM for full speed.")
-
-    _GLOBAL_PATCHES = np.load(patches_path, mmap_mode="r")
-    _GLOBAL_LABELS  = np.load(labels_path)
-    _USING_MMAP     = True
-    _DATA_ON_GPU    = False
-    print(f"[DATA] ✓ mmap ready  shape={_GLOBAL_PATCHES.shape}  "
-          f"dtype={_GLOBAL_PATCHES.dtype}")
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -404,15 +201,8 @@ class RiceSeedDataset(Dataset):
 
     def __init__(self, patches_path, labels_path, indices,
                  aug_strength="none", max_cutout_bands=20, noise_std=0.02):
-        global _GLOBAL_PATCHES, _GLOBAL_LABELS, _GPU_PATCHES, _DATA_ON_GPU
-        if _GLOBAL_PATCHES is None and _GPU_PATCHES is None:
-            _load_data_into_ram(patches_path, labels_path)
-
-        # In GPU mode, self.patches is a CUDA tensor (None otherwise).
-        # In RAM/mmap mode, self.patches is a numpy ndarray.
-        self.patches          = _GPU_PATCHES if _DATA_ON_GPU else _GLOBAL_PATCHES
-        self.labels           = _GLOBAL_LABELS
-        self.on_gpu           = _DATA_ON_GPU
+        self.patches          = np.load(patches_path, mmap_mode="r")
+        self.labels           = np.load(labels_path)
         self.indices          = indices
         self.aug_strength     = aug_strength
         self.max_cutout_bands = max_cutout_bands
@@ -423,13 +213,9 @@ class RiceSeedDataset(Dataset):
     def _probs(self) -> Optional[dict]:
         return self._PROFILES.get(str(self.aug_strength))
 
-    # ── Augmentation primitives ─────────────────────────────────────────
-    # All ops use x.device so they work on both CPU and CUDA tensors.
-    # This lets GPU-mode (Strategy 0) run augmentation directly on VRAM
-    # with no CPU involvement.
+    # ── Augmentation primitives ───────────────────────────────────────
     def _band_dropout(self, x):
-        mask = (torch.rand(x.shape[0], device=x.device) > 0.04).float().view(-1,1,1)
-        return x * mask
+        return x * (torch.rand(x.shape[0]) > 0.04).float().view(-1,1,1)
 
     def _band_cutout(self, x):
         x = x.clone(); nb = x.shape[0]
@@ -457,8 +243,7 @@ class RiceSeedDataset(Dataset):
         return torch.roll(x, random.randint(-8, 8), dims=0)
 
     def _mult_noise(self, x):
-        noise = torch.randn(x.shape[0], 1, 1, device=x.device) * 0.05
-        return x * (1.0 + noise)
+        return x * (1.0 + torch.randn(x.shape[0],1,1) * 0.05)
 
     def _spatial(self, x):
         if torch.rand(1) < 0.5: x = torch.flip(x, [2])
@@ -466,18 +251,9 @@ class RiceSeedDataset(Dataset):
         return torch.rot90(x, torch.randint(0,4,(1,)).item(), [1,2])
 
     def __getitem__(self, idx):
-        ri = self.indices[idx]
-        if self.on_gpu:
-            # GPU mode: tensor index + clone — all in VRAM, no CPU or disk I/O.
-            # .clone() makes a writeable copy so in-place aug ops are safe.
-            patch = self.patches[ri].clone()
-        else:
-            # RAM / mmap mode: numpy → CPU tensor.
-            # astype(float32, copy=False) is a no-op for RAM mode (already f32).
-            # For mmap mode it handles any source dtype (float16/float64/etc).
-            raw   = self.patches[ri]
-            patch = torch.from_numpy(raw.astype(np.float32, copy=False).copy())
-        label = torch.tensor(int(self.labels[ri]), dtype=torch.long)
+        ri    = self.indices[idx]
+        patch = torch.from_numpy(self.patches[ri].copy()).float()
+        label = torch.tensor(self.labels[ri], dtype=torch.long)
         p     = self._probs()
         if p is not None:
             if torch.rand(1) < p["band_drop"]:  patch = self._band_dropout(patch)
@@ -525,55 +301,6 @@ class ClassBalancedBatchSampler(Sampler):
             yield batch
 
     def __len__(self): return self._n
-
-
-class BlockSortedSampler(Sampler):
-    """
-    mmap I/O MITIGATION SAMPLER
-    ============================
-    Used automatically when training with memory-mapped data (_USING_MMAP=True).
-
-    Problem: random index access on a 17 GB mmap file = random disk I/O.
-    Each __getitem__ on a different file region triggers an OS page-fault.
-    With 6 k samples shuffled per epoch ≈ 6 k page-faults ≈ entire file
-    re-read from disk every epoch.  On NVMe this saturates disk bandwidth
-    and leaves the GPU idle.
-
-    Solution: sort training indices into their on-disk order (ascending),
-    then shuffle at the BLOCK level (not sample level).  Effect:
-
-      Random access  →  O(N_samples) page-faults   (worst case: full re-read)
-      Block-sorted   →  O(N_samples / block_size)   page-faults per epoch
-                        ≈ sequential reads within each block (OS read-ahead works)
-
-    With block_size=64 and 6 k samples:
-      • ~94 blocks to shuffle (instead of 6 k individual samples)
-      • Within each block, access is sequential on disk → OS prefetch fires
-      • 10–30× fewer page-faults vs pure random shuffle
-
-    Training quality: block-level shuffle still exposes the model to varied
-    class distributions across batches.  Mixup / CutMix adds within-batch
-    randomisation.  No accuracy impact observed vs full shuffle.
-    """
-    def __init__(self, indices: np.ndarray, block_size: int = 64):
-        self.indices    = np.asarray(indices)
-        self.block_size = block_size
-
-    def __iter__(self):
-        # Sort by original array index (= disk layout order)
-        sorted_pos = np.argsort(self.indices)       # positions in asc disk order
-        sorted_idx = self.indices[sorted_pos]       # values in asc disk order
-
-        # Split into contiguous blocks
-        n = len(sorted_idx)
-        block_starts = np.arange(0, n, self.block_size)
-        blocks = [sorted_idx[s : s + self.block_size] for s in block_starts]
-
-        # Shuffle blocks (not samples) — preserves within-block sequential access
-        np.random.shuffle(blocks)
-        return iter(np.concatenate(blocks).tolist())
-
-    def __len__(self): return len(self.indices)
 
 
 def build_cdws_weights(class_f1: Dict[int,float], num_classes: int,
@@ -1140,38 +867,22 @@ class SpectralQuadNet(nn.Module):
         bc = self.branch_c(x)
         bd = self.branch_d(ms)
 
-        # ── Stochastic Branch Dropout — torch.compile-safe ──────────
-        #
-        # WHY THE PREVIOUS VERSION BROKE torch.compile:
-        #   random.random() → Dynamo warning "cannot trace builtin RNG"
-        #   Python list [True, False, ...] → Dynamo guards on exact values
-        #   → recompile for each new combination (16 possible) → hits
-        #     recompile_limit(8) after ep 2 → falls back to EAGER (no compile)
-        #
-        # FIX: torch.bernoulli on a CUDA tensor.
-        #   • The SHAPE (4,) and DTYPE (float32) are constant every call.
-        #   • Dynamo traces the graph once; only tensor VALUES vary.
-        #   • Zero recompiles, zero warnings, full torch.compile speedup.
-        #
-        # "at least 2 survive" safety:
-        #   With p=0.10, P(≥3 branches dropped) = C(4,3)×0.1³×0.9 + 0.1⁴
-        #   ≈ 0.37% per step.  The clamp below handles the degenerate case
-        #   by ensuring the sum of scales is at least 2.0 — fully traceable.
+        # ── Stochastic Branch Dropout ─────────────────────────────────
         if self.training and self.branch_drop_prob > 0:
-            # keep_prob tensor: shape (4,), lives on same device as activations
-            keep = torch.bernoulli(
-                torch.full((4,), 1.0 - self.branch_drop_prob,
-                           device=ba.device))   # each entry 0.0 or 1.0
-            # Guarantee at least 2 branches survive:
-            # if sum < 2, scale all entries up proportionally so sum == 2.
-            # This is a pure tensor op — static graph, no Python branching.
-            keep_sum = keep.sum().clamp(min=2.0)
-            keep = keep * (keep_sum / keep.sum().clamp(min=1e-6))
-            # Element-wise multiply — graph topology identical every call
-            ba = ba * keep[0]
-            bb = bb * keep[1]
-            bc = bc * keep[2]
-            bd = bd * keep[3]
+            branches  = [ba, bb, bc, bd]
+            drop_mask = [torch.rand(1).item() < self.branch_drop_prob
+                         for _ in range(4)]
+            # Guarantee at least 2 branches survive — rescue randomly chosen
+            # dropped branches until the minimum is met.
+            n_keep = sum(1 for d in drop_mask if not d)
+            if n_keep < 2:
+                dropped_idx = [i for i, d in enumerate(drop_mask) if d]
+                for i in random.sample(dropped_idx, 2 - n_keep):
+                    drop_mask[i] = False
+            ba, bb, bc, bd = [
+                torch.zeros_like(b) if drop_mask[i] else b
+                for i, b in enumerate(branches)
+            ]
 
         emb = self.embed_net(self.cross_attn([ba, bb, bc, bd]))
 
@@ -1226,65 +937,25 @@ def build_loaders(train_idx, val_idx, test_idx, batch_train,
                   balanced=False, all_labels=None,
                   train_aug="none",
                   class_weights: Optional[Dict[int,float]] = None):
-    """
-    DataLoader factory — adapts to whichever data strategy is active.
-
-    GPU mode (_DATA_ON_GPU=True):
-      • num_workers=0  — worker processes cannot access CUDA tensors;
-        single-process mode is used instead.  Since __getitem__ is just
-        a GPU tensor index + clone (microseconds), there is no pipeline
-        stall: the GPU never waits for data.
-      • pin_memory=False — data is already on GPU, pinning is irrelevant.
-      • persistent_workers=False, prefetch_factor omitted (nw=0).
-
-    CPU RAM mode:
-      • num_workers=12, pin_memory=True, prefetch_factor=4
-        → workers pre-load into pinned RAM, DMA to GPU in parallel.
-
-    mmap mode:
-      • Same as CPU RAM but with BlockSortedSampler substituted for
-        the default random shuffle to cut disk page-fault overhead.
-    """
-    nw = 0 if _DATA_ON_GPU else CONFIG["num_workers"]
-    pf = CONFIG.get("prefetch_factor", 4)
-
-    # GPU mode: no workers, no pin_memory, no prefetch
-    if _DATA_ON_GPU:
-        kw_train = dict(num_workers=0, pin_memory=False)
-        kw_val   = dict(num_workers=0, pin_memory=False)
-    else:
-        kw_train = dict(num_workers=nw, pin_memory=True,
-                        persistent_workers=True, prefetch_factor=pf)
-        kw_val   = dict(num_workers=nw, pin_memory=True,
-                        persistent_workers=True, prefetch_factor=pf)
-
+    nw = CONFIG["num_workers"]
+    kw = dict(num_workers=nw, pin_memory=True)
     ds = RiceSeedDataset(CONFIG["patches_data"], CONFIG["labels_path"],
                          train_idx, aug_strength=train_aug)
-
     if balanced and all_labels is not None:
         samp   = ClassBalancedBatchSampler(all_labels[train_idx],
                                            CONFIG["bal_n_cls"], CONFIG["bal_n_spc"],
                                            class_weights=class_weights)
-        tr_ldr = DataLoader(ds, batch_sampler=samp, drop_last=False, **kw_train)
-    elif _USING_MMAP:
-        # mmap fallback: block-sorted sampling to minimise random disk I/O
-        bss    = BlockSortedSampler(train_idx,
-                                    block_size=CONFIG.get("mmap_block_size", 64))
-        tr_ldr = DataLoader(ds, batch_size=batch_train,
-                            sampler=bss, drop_last=True, **kw_train)
+        tr_ldr = DataLoader(ds, batch_sampler=samp,
+                            persistent_workers=True, prefetch_factor=2, **kw)
     else:
         tr_ldr = DataLoader(ds, batch_size=batch_train, shuffle=True,
-                            drop_last=True, **kw_train)
-
+                            persistent_workers=True, prefetch_factor=2, **kw)
     va_ldr = DataLoader(
         RiceSeedDataset(CONFIG["patches_data"], CONFIG["labels_path"], val_idx),
-        batch_size=256, shuffle=False, **kw_val)
+        batch_size=64, shuffle=False, **kw)
     te_ldr = DataLoader(
         RiceSeedDataset(CONFIG["patches_data"], CONFIG["labels_path"], test_idx),
-        batch_size=256, shuffle=False,
-        **(dict(num_workers=0, pin_memory=False) if _DATA_ON_GPU
-           else dict(num_workers=4, pin_memory=True,
-                     persistent_workers=True, prefetch_factor=2)))
+        batch_size=64, shuffle=False, **{**kw,"num_workers":2})
     return tr_ldr, va_ldr, te_ldr
 
 
@@ -2043,29 +1714,6 @@ def main():
     _print_resume_banner(done_stage)
     print(f"[INFO] Latest completed stage: {done_stage}")
 
-    # ── PRE-LOAD ALL DATA INTO RAM (critical for speed) ───────────────
-    # Must happen BEFORE any Dataset/DataLoader is created so that the
-    # numpy array is already in the parent process's virtual memory.
-    # Linux fork workers will share the pages copy-on-write — each
-    # worker gets a read-only view with zero extra I/O.
-    _load_data_into_ram(CONFIG["patches_data"], CONFIG["labels_path"])
-
-    if _DATA_ON_GPU:
-        used = _GPU_PATCHES.nelement() * 4 / 1e9
-        free = torch.cuda.mem_get_info(device)[0] / 1e9
-        print(f"[DATA] ✓ GPU mode: {used:.1f} GB in VRAM  |  "
-              f"{free:.1f} GB VRAM still free  |  num_workers=0")
-    elif _USING_MMAP:
-        print("\n" + "═"*66)
-        print("  ⚠  MMAP MODE  —  training will be slower than optimal")
-        print("  BlockSortedSampler active: random I/O → block-sequential I/O")
-        f32_need = os.path.getsize(CONFIG["patches_data"]) / 1e9
-        print(f"  To unlock GPU mode:  ensure {f32_need*1.1:.0f} GB free VRAM")
-        print(f"  To unlock RAM mode:  ensure {f32_need*1.2:.0f} GB free CPU RAM")
-        print("═"*66 + "\n")
-    else:
-        print("[DATA] ✓ CPU RAM mode — all epochs served from RAM.")
-
     all_labels, train_idx, val_idx, test_idx = build_splits()
     print(f"Train: {len(train_idx):,}  Val: {len(val_idx):,}  "
           f"Test: {len(test_idx):,}")
@@ -2082,61 +1730,13 @@ def main():
     print(f"Params : {n_par/1e6:.2f}M")
     print(f"Device : {device}")
 
-    # ── torch.compile (PyTorch ≥ 2.0) ────────────────────────────────
-    # Compiles the model's computation graph to optimised Triton kernels.
-    # On A100 this typically gives a 20-50% reduction in per-step time
-    # for free — no accuracy change.  Requires a ~1-2 min warm-up on the
-    # first epoch (graph tracing + kernel compilation).
-    if hasattr(torch, "compile"):
-        # mode="default": compiles and fuses ops into optimised kernels
-        # WITHOUT CUDAGraphs.  "reduce-overhead" also enables CUDAGraphs,
-        # which requires fully-static graphs — broken by any Python-side
-        # control flow (`.item()` calls, stochastic branch dropout, etc.)
-        # and causes "overwritten CUDAGraph buffer" RuntimeErrors.
-        # "default" gives the same kernel-fusion speedup with none of the
-        # graph-static constraints.  On A100 this is still 20-40% faster
-        # than un-compiled execution.
-        # Dynamo config — set BEFORE compile() is called
-        torch._dynamo.config.capture_scalar_outputs = True
-        # Raise recompile limit: default is 8, which is too low when the
-        # compiled model is called with slightly different input shapes or
-        # guard conditions in early epochs. 64 gives plenty of headroom
-        # while still catching true infinite-recompile bugs.
-        torch._dynamo.config.recompile_limit = 64
-        # Suppress the networkx backend warning that fires during tracing
-        warnings.filterwarnings("ignore", message=".*networkx backend.*")
-        print("[INFO] Applying torch.compile(model, mode='default') …")
-        model      = torch.compile(model,      mode="default", fullgraph=False)
-        ema.shadow = torch.compile(ema.shadow, mode="default", fullgraph=False)
-    else:
-        print("[WARN] torch.compile not available (PyTorch < 2.0) — skipping.")
-
-    if device.type == "cuda":
-        props = torch.cuda.get_device_properties(device)
-        print(f"[GPU]  {props.name}  |  VRAM {props.total_memory/1e9:.0f} GB  |  "
-              f"TF32={torch.backends.cuda.matmul.allow_tf32}")
-
     # ── Helper: build Stage 1 phase loaders ──────────────────────────
     def _s1_ldr(aug_str):
         ds = RiceSeedDataset(CONFIG["patches_data"], CONFIG["labels_path"],
                              train_idx, aug_strength=aug_str)
-        bs = CONFIG["s1_batch"]
-        if _DATA_ON_GPU:
-            # GPU mode: single-process, no pinning, augmentation on GPU
-            return DataLoader(ds, batch_size=bs, shuffle=True,
-                              drop_last=True,
-                              num_workers=0, pin_memory=False)
-        nw = CONFIG["num_workers"]
-        pf = CONFIG.get("prefetch_factor", 4)
-        if _USING_MMAP:
-            bss = BlockSortedSampler(train_idx,
-                                     block_size=CONFIG.get("mmap_block_size", 64))
-            return DataLoader(ds, batch_size=bs, sampler=bss, drop_last=True,
-                              num_workers=nw, pin_memory=True,
-                              persistent_workers=True, prefetch_factor=pf)
-        return DataLoader(ds, batch_size=bs, shuffle=True, drop_last=True,
-                          num_workers=nw, pin_memory=True,
-                          persistent_workers=True, prefetch_factor=pf)
+        return DataLoader(ds, batch_size=CONFIG["s1_batch"], shuffle=True,
+                          num_workers=CONFIG["num_workers"], pin_memory=True,
+                          persistent_workers=True, prefetch_factor=2)
 
     # ══════════════════════════════════════════════════════════════════
     #  STAGE 1
@@ -2257,7 +1857,7 @@ def main():
     best_final_ckpt = _pick_best_checkpoint(ckpt_s1, ckpt_s2, ckpt_s3)
     print(f"[INFO] Best checkpoint selected: {best_final_ckpt}")
 
-    _, _, test_ldr = build_loaders(train_idx, val_idx, test_idx, 256)
+    _, _, test_ldr = build_loaders(train_idx, val_idx, test_idx, 64)
     final_evaluation(model, ema, test_ldr, device, best_final_ckpt)
 
 
