@@ -1,4 +1,4 @@
-
+# code
 from __future__ import annotations
 
 import copy, json as _json, math, os, random, warnings
@@ -39,18 +39,18 @@ CONFIG: dict = {
     "s1_phase1_frac":     0.40,
     "s1_phase2_frac":     0.30,
     "s1_batch":           128,
-    "s1_max_lr":           8e-4,
+    "s1_max_lr":           1e-3,
     "s1_dropout":          0.30,
-    "s1_mixup":            0.40,
+    "s1_mixup":            0.18,
     "s1_patience":         50,
     "s1_accum":             1,   
     "s1_focal_gamma":       2.0,
-    "s1_label_smooth_hi":  0.05,
+    "s1_label_smooth_hi":  0.00,
     "s1_label_smooth_lo":  0.00,
     "s1_ema_reinit_phases": True,
 
     # Architecture
-    "branch_drop_prob":    0.05,
+    "branch_drop_prob":    0.01,
     "subcenter_K":          3,
 
     # Stage 2
@@ -89,7 +89,7 @@ CONFIG: dict = {
     # Shared
     "weight_decay":         2e-4,
     "grad_clip":             1.0,
-    "ema_decay":            0.9995, # ↓ from 0.9999; 2k-step window vs 10k → tracks faster
+    "ema_decay":            0.995, # ↓ from 0.9999; 2k-step window vs 10k → tracks faster
 
     # TTA
     "tta_spatial":             8,
@@ -273,17 +273,44 @@ class ModelEMA:
 
 class RiceSeedDataset(Dataset):
     _PROFILES = {
-        "heavy":  dict(band_drop=0.65, cutout=0.50, noise=0.35,
-                       warp=0.35,  shift=0.30, mult=0.30),
-        "medium": dict(band_drop=0.35, cutout=0.25, noise=0.20,
-                       warp=0.20,  shift=0.15, mult=0.15),
-        "light":  dict(band_drop=0.25, cutout=0.15, noise=0.10,
-                       warp=0.10,  shift=0.10, mult=0.10),
-        "none":   None,
+
+        # Phase 1 (structure learning) — strong but not destructive
+        "heavy": dict(
+            band_drop=0.30,   # ↓ was 0.65 (too aggressive)
+            cutout=0.20,      # ↓ was 0.50
+            noise=0.15,       # ↓ smoother
+            warp=0.10,        # spectral distortion should be rare
+            shift=0.10,
+            mult=0.10
+        ),
+
+        # Phase 2 (robustness shaping)
+        "medium": dict(
+            band_drop=0.20,
+            cutout=0.15,
+            noise=0.10,
+            warp=0.08,
+            shift=0.08,
+            mult=0.08
+        ),
+
+        # Phase 3 (stability / refinement)
+        "light": dict(
+            band_drop=0.10,
+            cutout=0.08,
+            noise=0.05,
+            warp=0.05,
+            shift=0.05,
+            mult=0.05
+        ),
+
+        "none": None,
     }
+    
+    
 
     def __init__(self, patches_path, labels_path, indices,
-                 aug_strength="none", max_cutout_bands=20, noise_std=0.02):
+                 aug_strength="none", max_cutout_bands=8, noise_std=0.02):
         global _GLOBAL_PATCHES, _GLOBAL_LABELS, _GPU_PATCHES, _DATA_ON_GPU
         if _GLOBAL_PATCHES is None and _GPU_PATCHES is None:
             _load_data_into_ram(patches_path, labels_path)
@@ -625,17 +652,27 @@ class ResBlock1D(nn.Module):
     def __init__(self, in_ch, out_ch, kernel=7):
         super().__init__()
         pad = kernel//2
-        self.conv1 = nn.Conv1d(in_ch,  out_ch, kernel, padding=pad, bias=False)
-        self.bn1   = nn.BatchNorm1d(out_ch)
-        self.conv2 = nn.Conv1d(out_ch, out_ch, kernel, padding=pad, bias=False)
-        self.bn2   = nn.BatchNorm1d(out_ch)
-        self.skip  = (nn.Sequential(nn.Conv1d(in_ch, out_ch, 1, bias=False),
-                                    nn.BatchNorm1d(out_ch))
-                      if in_ch != out_ch else nn.Identity())
+
+        self.conv1 = nn.Conv1d(in_ch, out_ch, kernel,
+                               padding=pad, bias=False)
+        self.norm1 = nn.GroupNorm(1, out_ch)
+
+        self.conv2 = nn.Conv1d(out_ch, out_ch, kernel,
+                               padding=pad, bias=False)
+        self.norm2 = nn.GroupNorm(1, out_ch)
+
+        self.skip = (
+            nn.Sequential(
+                nn.Conv1d(in_ch, out_ch, 1, bias=False),
+                nn.GroupNorm(1, out_ch)
+            )
+            if in_ch != out_ch else nn.Identity()
+        )
 
     def forward(self, x):
-        return F.gelu(self.bn2(self.conv2(F.gelu(self.bn1(self.conv1(x))))) + self.skip(x))
-
+        out = F.gelu(self.norm1(self.conv1(x)))
+        out = self.norm2(self.conv2(out))
+        return F.gelu(out + self.skip(x))
 
 class CBAM(nn.Module):
     def __init__(self, c, r=8):
@@ -652,70 +689,131 @@ class CBAM(nn.Module):
                                        x.amax(1,keepdim=True)], 1))
 
 
-class ResBlock2D(nn.Module):
-    def __init__(self, in_ch, out_ch, stride=1):
-        super().__init__()
-        mid = max(out_ch//2, in_ch)
-        self.c1=nn.Conv2d(in_ch,mid,1,bias=False);  self.n1=nn.GroupNorm(min(8,mid),mid)
-        self.c2=nn.Conv2d(mid,mid,3,stride,1,bias=False); self.n2=nn.GroupNorm(min(8,mid),mid)
-        self.c3=nn.Conv2d(mid,out_ch,1,bias=False); self.n3=nn.GroupNorm(min(8,out_ch),out_ch)
-        self.skip=(nn.Sequential(nn.Conv2d(in_ch,out_ch,1,stride=stride,bias=False),
-                                  nn.GroupNorm(min(8,out_ch),out_ch))
-                   if (stride!=1 or in_ch!=out_ch) else nn.Identity())
-
-    def forward(self, x):
-        return F.gelu(self.n3(self.c3(
-            F.gelu(self.n2(self.c2(F.gelu(self.n1(self.c1(x)))))))) + self.skip(x))
-
-
 class WavelengthPositionalEncoding(nn.Module):
-    def __init__(self, num_bands=256, embed_dim=16):
+    def __init__(self, num_bands, embed_dim, out_channels):
         super().__init__()
-        wl   = torch.linspace(0.0, 1.0, num_bands)
-        half = embed_dim//2
-        freq = torch.exp(torch.arange(half).float() * -(math.log(1e4)/max(half-1,1)))
-        enc  = torch.zeros(num_bands, embed_dim)
+
+        wl = torch.linspace(0.0, 1.0, num_bands)
+        half = embed_dim // 2
+        freq = torch.exp(torch.arange(half).float() *
+                         -(math.log(1e4)/max(half-1,1)))
+
+        enc = torch.zeros(num_bands, embed_dim)
         enc[:,:half] = torch.sin(wl.unsqueeze(1)*freq.unsqueeze(0))
         enc[:,half:] = torch.cos(wl.unsqueeze(1)*freq.unsqueeze(0))
-        self.register_buffer("enc", enc)
-        self.proj = nn.Linear(embed_dim, 1, bias=True)
-        nn.init.trunc_normal_(self.proj.weight, std=0.01); nn.init.zeros_(self.proj.bias)
 
-    def forward(self): return self.proj(self.enc).squeeze(-1).view(1,1,-1)
+        self.register_buffer("enc", enc)
+        self.proj = nn.Linear(embed_dim, out_channels)
+
+    def forward(self):
+        pe = self.proj(self.enc)              # (Bands, C)
+        return pe.transpose(0,1).unsqueeze(0) # (1, C, Bands)
+    
+# ══════════════════════════════════════════════════════════════════════
+#  RELATIVE SPECTRAL ATTENTION
+# ══════════════════════════════════════════════════════════════════════
+
+class RelativeSpectralAttention(nn.Module):
+    def __init__(self, dim, heads, max_len):
+        super().__init__()
+        assert dim % heads == 0
+        self.heads = heads
+        self.head_dim = dim // heads
+        self.scale = self.head_dim ** -0.5
+        self.max_len = max_len
+
+        self.qkv = nn.Linear(dim, dim * 3, bias=False)
+        self.proj = nn.Linear(dim, dim)
+
+        # Relative bias for |i-j| distances
+        self.rel_bias = nn.Parameter(
+            torch.zeros(heads, max_len)
+        )
+
+        nn.init.trunc_normal_(self.rel_bias, std=0.02)
+
+    def forward(self, x):
+        B, N, C = x.shape
+
+        qkv = self.qkv(x).reshape(B, N, 3, self.heads, self.head_dim)
+        q, k, v = qkv.unbind(2)  # each: (B, N, H, D)
+
+        q = q.transpose(1, 2)  # (B, H, N, D)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
+
+        attn = (q @ k.transpose(-2, -1)) * self.scale  # (B,H,N,N)
+
+        # Compute relative distance matrix
+        idx = torch.arange(N, device=x.device)
+        rel = (idx[None, :] - idx[:, None]).abs()  # (N,N)
+        rel = rel.clamp(max=self.max_len - 1)
+
+        bias = self.rel_bias[:, rel]  # (H,N,N)
+        attn = attn + bias.unsqueeze(0)
+
+        attn = attn.softmax(dim=-1)
+
+        out = (attn @ v)  # (B,H,N,D)
+        out = out.transpose(1, 2).reshape(B, N, C)
+
+        return self.proj(out)
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  ADVANCED SPECTRAL PROFILE BRANCH
-#  (Signal + 1st + 2nd derivatives with independent encoding + fusion)
+#  SPECTRAL TRANSFORMER BLOCK
+# ══════════════════════════════════════════════════════════════════════
+
+class SpectralTransformerBlock(nn.Module):
+    def __init__(self, dim, heads, max_len, drop=0.1):
+        super().__init__()
+        self.ln1 = nn.LayerNorm(dim)
+        self.attn = RelativeSpectralAttention(dim, heads, max_len)
+        self.ln2 = nn.LayerNorm(dim)
+
+        self.ff = nn.Sequential(
+            nn.Linear(dim, dim * 4),
+            nn.GELU(),
+            nn.Dropout(drop),
+            nn.Linear(dim * 4, dim),
+            nn.Dropout(drop)
+        )
+
+    def forward(self, x):
+        x = x + self.attn(self.ln1(x))
+        x = x + self.ff(self.ln2(x))
+        return x
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  BRANCH A - SPECTRAL PROFILE BRANCH
 # ══════════════════════════════════════════════════════════════════════
 
 class SpectralProfileBranch(nn.Module):
     """
-    Research-grade spectral modeling branch.
-
-    Features:
-    - Independent encoding of signal / d1 / d2
+    Spectral modeling branch with:
+    - Signal + d1 + d2
     - Learnable derivative scaling
-    - Concatenation fusion (no information bottleneck)
-    - Multi-scale spectral receptive fields
-    - 1D channel attention (spectral SE)
-    - Stable for 90-class fine-grained discrimination
+    - Full spectral tokenization
+    - Transformer encoder with relative wavelength bias
+    - CLS aggregation
     """
 
-    def __init__(self, out_dim=256, tower_ch=96, wl_enc=None):
+    def __init__(self, out_dim=256, tower_ch=96,
+                 wl_enc=None,
+                 num_layers=4,
+                 heads=4,
+                 dropout=0.1,
+                 num_bands=256):
+
         super().__init__()
         self.wl_enc = wl_enc
 
-        # ──────────────────────────────────────────────
-        # Learnable derivative scaling (chemometric stabilizer)
-        # Prevents curvature underflow
-        # ──────────────────────────────────────────────
+        # Derivative scaling
         self.alpha_d1 = nn.Parameter(torch.tensor(1.0))
         self.alpha_d2 = nn.Parameter(torch.tensor(1.0))
 
-        # ──────────────────────────────────────────────
-        # Independent stream projections (1×1 conv)
-        # ──────────────────────────────────────────────
+        # Independent projections
         self.proj_s  = nn.Sequential(
             nn.Conv1d(1, tower_ch//3, 1, bias=False),
             nn.BatchNorm1d(tower_ch//3),
@@ -735,39 +833,31 @@ class SpectralProfileBranch(nn.Module):
         )
 
         fused_ch = tower_ch
+        self.token_dim = fused_ch
 
-        # ──────────────────────────────────────────────
-        # Multi-scale spectral towers
-        # ──────────────────────────────────────────────
-        def make_tower(kernel):
-            return nn.Sequential(
-                ResBlock1D(fused_ch, fused_ch, kernel),
-                ResBlock1D(fused_ch, fused_ch, kernel)
+        # CLS token
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, fused_ch))
+        nn.init.trunc_normal_(self.cls_token, std=0.02)
+
+        # Transformer blocks
+        self.blocks = nn.ModuleList([
+            SpectralTransformerBlock(
+                dim=fused_ch,
+                heads=heads,
+                max_len=num_bands + 1,  # + CLS
+                drop=dropout
             )
+            for _ in range(num_layers)
+        ])
 
-        self.tower_s = make_tower(3)
-        self.tower_m = make_tower(7)
-        self.tower_l = make_tower(15)
+        self.norm = nn.LayerNorm(fused_ch)
 
-        # ──────────────────────────────────────────────
-        # Spectral Channel Attention (1D SE variant)
-        # ──────────────────────────────────────────────
-        self.se_1d = nn.Sequential(
-            nn.AdaptiveAvgPool1d(1),
-            nn.Conv1d(fused_ch, fused_ch // 4, 1, bias=False),
-            nn.GELU(),
-            nn.Conv1d(fused_ch // 4, fused_ch, 1, bias=False),
-            nn.Sigmoid()
-        )
-
-        # ──────────────────────────────────────────────
         # Final projection
-        # ──────────────────────────────────────────────
         self.proj = nn.Sequential(
-            nn.Linear(fused_ch * 6, out_dim),
-            nn.BatchNorm1d(out_dim),
+            nn.Linear(fused_ch, out_dim),
+            nn.LayerNorm(out_dim),
             nn.GELU(),
-            nn.Dropout(0.10)
+            nn.Dropout(dropout)
         )
 
         self._init_weights()
@@ -781,108 +871,211 @@ class SpectralProfileBranch(nn.Module):
                 nn.init.zeros_(m.bias)
             elif isinstance(m, nn.Linear):
                 nn.init.trunc_normal_(m.weight, std=0.02)
-                nn.init.zeros_(m.bias)
-
-    @staticmethod
-    def _gp(f):
-        # Global mean + max pooling
-        return torch.cat([f.mean(dim=2), f.max(dim=2).values], dim=1)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
 
     def forward(self, ms):
         # ms: (B, Bands)
 
-        s  = ms.unsqueeze(1)  # (B,1,L)
+        s = ms.unsqueeze(1)
 
-        # Derivatives
-        d1 = F.pad(torch.diff(s,  dim=2), (0,1))
-        d2 = F.pad(torch.diff(d1, dim=2), (0,1))
+        d1 = F.pad(torch.diff(s, dim=2), (0, 1))
+        d2 = F.pad(torch.diff(d1, dim=2), (0, 1))
 
-        # Learnable derivative scaling
         d1 = self.alpha_d1 * d1
         d2 = self.alpha_d2 * d2
 
-        # Independent encoding
         fs  = self.proj_s(s)
         fd1 = self.proj_d1(d1)
         fd2 = self.proj_d2(d2)
 
-        # Concatenate (preserve expressivity)
-        x = torch.cat([fs, fd1, fd2], dim=1)
+        x = torch.cat([fs, fd1, fd2], dim=1)  # (B,C,L)
 
-        # Optional wavelength encoding
         if self.wl_enc is not None:
             x = x + self.wl_enc()
 
-        # Multi-scale towers
-        xs = self.tower_s(x)
-        xm = self.tower_m(x)
-        xl = self.tower_l(x)
+        # Tokenization: (B,C,L) → (B,L,C)
+        x = x.transpose(1, 2)
 
-        # Shared spectral SE gating
-        attn = self.se_1d(x)
-        xs = xs * attn
-        xm = xm * attn
-        xl = xl * attn
+        B = x.shape[0]
+        cls = self.cls_token.expand(B, -1, -1)
+        x = torch.cat([cls, x], dim=1)
 
-        # Global pooling
-        feat = torch.cat([
-            self._gp(xs),
-            self._gp(xm),
-            self._gp(xl)
-        ], dim=1)
+        for blk in self.blocks:
+            x = blk(x)
 
-        return self.proj(feat)
+        x = self.norm(x)
 
+        spectral_repr = x[:, 0]  # CLS
+
+        return self.proj(spectral_repr)
+    
 # ══════════════════════════════════════════════════════════════════════
 #  BRANCH B — SPECTRAL STATISTICS  (mean, std, max across pixels)
 # ══════════════════════════════════════════════════════════════════════
-
 class SpectralStatsBranch(nn.Module):
+    """
+    Spectral statistics branch with:
+    - Multi-scale 1D residual towers
+    - Proper feature-space wavelength injection
+    - Metric-learning friendly normalization
+    """
+
     def __init__(self, out_dim=256, tower_ch=80, wl_enc=None):
         super().__init__()
+
         self.wl_enc = wl_enc
-        mk = lambda k: nn.Sequential(ResBlock1D(3, tower_ch//2, k),
-                                     ResBlock1D(tower_ch//2, tower_ch, k),
-                                     ResBlock1D(tower_ch, tower_ch, k))
-        self.tower_s = mk(3); self.tower_m = mk(7); self.tower_l = mk(15)
-        self.proj = nn.Sequential(nn.Linear(tower_ch*6, out_dim),
-                                  nn.BatchNorm1d(out_dim), nn.GELU(), nn.Dropout(0.1))
+        mid_ch = tower_ch // 2
+
+        # --- First blocks (separated for proper PE injection) ---
+        self.tower_s_first = ResBlock1D(3, mid_ch, kernel=3)
+        self.tower_m_first = ResBlock1D(3, mid_ch, kernel=7)
+        self.tower_l_first = ResBlock1D(3, mid_ch, kernel=15)
+
+        # --- Remaining blocks ---
+        self.tower_s_rest = nn.Sequential(
+            ResBlock1D(mid_ch, tower_ch, kernel=3),
+            ResBlock1D(tower_ch, tower_ch, kernel=3)
+        )
+
+        self.tower_m_rest = nn.Sequential(
+            ResBlock1D(mid_ch, tower_ch, kernel=7),
+            ResBlock1D(tower_ch, tower_ch, kernel=7)
+        )
+
+        self.tower_l_rest = nn.Sequential(
+            ResBlock1D(mid_ch, tower_ch, kernel=15),
+            ResBlock1D(tower_ch, tower_ch, kernel=15)
+        )
+
+        # --- Projection head (BN replaced with LN for stability) ---
+        self.proj = nn.Sequential(
+            nn.Linear(tower_ch * 6, out_dim),
+            nn.LayerNorm(out_dim),
+            nn.GELU(),
+            nn.Dropout(0.1)
+        )
 
     @staticmethod
-    def _gp(f): return torch.cat([f.mean(2), f.max(2).values], 1)
+    def _gp(f):
+        # global pooling (mean + max)
+        return torch.cat([f.mean(dim=2), f.amax(dim=2)], dim=1)
 
     def forward(self, ms, ss, mx):
-        x = torch.stack([ms, ss, mx], 1)
-        if self.wl_enc: x = x + self.wl_enc()
-        return self.proj(torch.cat([self._gp(self.tower_s(x)),
-                                    self._gp(self.tower_m(x)),
-                                    self._gp(self.tower_l(x))], 1))
+        # Stack statistics → (B, 3, Bands)
+        x = torch.stack([ms, ss, mx], dim=1)
 
+        # ---- First residual block ----
+        fs = self.tower_s_first(x)
+        fm = self.tower_m_first(x)
+        fl = self.tower_l_first(x)
 
+        # ---- Inject wavelength encoding in feature space ----
+        if self.wl_enc is not None:
+            pe = self.wl_enc()  # expected shape (1, C, Bands)
+
+            # If PE is single-channel, broadcast safely
+            if pe.shape[1] == 1:
+                pe = pe.expand(-1, fs.shape[1], -1)
+
+            fs = fs + pe
+            fm = fm + pe
+            fl = fl + pe
+
+        # ---- Remaining blocks ----
+        fs = self.tower_s_rest(fs)
+        fm = self.tower_m_rest(fm)
+        fl = self.tower_l_rest(fl)
+
+        # ---- Global pooling ----
+        out = torch.cat([
+            self._gp(fs),
+            self._gp(fm),
+            self._gp(fl)
+        ], dim=1)
+
+        return self.proj(out)
+    
 # ══════════════════════════════════════════════════════════════════════
-#  BRANCH C — SPATIAL CNN
+#  BRANCH C — SPECTRAL-SPATIAL 3D CNN
 # ══════════════════════════════════════════════════════════════════════
 
-class SpatialCNNBranch(nn.Module):
-    def __init__(self, num_bands=256, out_dim=256):
+class ResBlock3D(nn.Module):
+    def __init__(self, in_ch, out_ch, stride=(1,1,1)):
         super().__init__()
-        self.band_reduce = nn.Sequential(
-            nn.Conv2d(num_bands, 64, 1, bias=False), nn.GroupNorm(8, 64), nn.GELU())
-        self.stages = nn.Sequential(
-            ResBlock2D(64,  128,  2), CBAM(128),
-            ResBlock2D(128,  192, 2), CBAM(192),
-            ResBlock2D(192, 256, 2), CBAM(256),
-            ResBlock2D(256, out_dim, 2))
-        self.proj = nn.Sequential(nn.Linear(out_dim*2, out_dim),
-                                  nn.BatchNorm1d(out_dim), nn.GELU())
+        self.conv1 = nn.Conv3d(in_ch, out_ch, 3, stride=stride, padding=1, bias=False)
+        self.norm1 = nn.GroupNorm(min(8, out_ch), out_ch)
+        self.conv2 = nn.Conv3d(out_ch, out_ch, 3, padding=1, bias=False)
+        self.norm2 = nn.GroupNorm(min(8, out_ch), out_ch)
 
-    @staticmethod
-    def _pn(x): return x.sign() * x.abs().clamp(1e-8).sqrt()
+        self.skip = (
+            nn.Sequential(
+                nn.Conv3d(in_ch, out_ch, 1, stride=stride, bias=False),
+                nn.GroupNorm(min(8, out_ch), out_ch)
+            )
+            if in_ch != out_ch or stride != (1,1,1)
+            else nn.Identity()
+        )
 
     def forward(self, x):
-        h = self.stages(self.band_reduce(x))
-        return self.proj(F.normalize(
-            torch.cat([self._pn(h.mean([2,3])), self._pn(h.amax([2,3]))], 1), dim=1))
+        out = F.gelu(self.norm1(self.conv1(x)))
+        out = self.norm2(self.conv2(out))
+        return F.gelu(out + self.skip(x))
+
+
+class SpectralSpatial3DBranch(nn.Module):
+    """
+    Joint spectral–spatial modelling via 3D convolutions.
+    Much stronger than spectral-reduced 2D CNN.
+    """
+
+    def __init__(self, num_bands=256, out_dim=256):
+        super().__init__()
+
+        # Input reshape: (B, C, H, W) → (B,1,C,H,W)
+        self.stem = nn.Sequential(
+            nn.Conv3d(1, 32, kernel_size=(7,3,3), stride=(2,1,1),
+                      padding=(3,1,1), bias=False),
+            nn.GroupNorm(8, 32),
+            nn.GELU()
+        )
+
+        self.stage1 = ResBlock3D(32, 64, stride=(1,2,2))
+        self.stage2 = ResBlock3D(64, 128, stride=(1,2,2))
+        self.stage3 = ResBlock3D(128, 192, stride=(1,2,2))
+        self.stage4 = ResBlock3D(192, 256, stride=(1,2,2))
+
+        self.norm = nn.LayerNorm(256)
+
+        self.proj = nn.Sequential(
+            nn.Linear(256*2, out_dim),
+            nn.LayerNorm(out_dim),
+            nn.GELU()
+        )
+
+    @staticmethod
+    def _pn(x):
+        return x.sign() * x.abs().clamp(1e-8).sqrt()
+
+    def forward(self, x):
+        # x: (B, C, H, W)
+
+        x = x.unsqueeze(1)  # (B,1,C,H,W)
+
+        x = self.stem(x)
+        x = self.stage1(x)
+        x = self.stage2(x)
+        x = self.stage3(x)
+        x = self.stage4(x)
+
+        # Global pooling across spectral + spatial
+        mean = x.mean(dim=[2,3,4])
+        mx   = x.amax(dim=[2,3,4])
+
+        feat = torch.cat([self._pn(mean), self._pn(mx)], dim=1)
+
+        return self.proj(feat)
+    
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1033,10 +1226,11 @@ class SpectralQuadNet(nn.Module):
         self.branch_drop_prob = cfg.get("branch_drop_prob", 0.0)
 
         self.se       = SpectralSE(num_bands, 16)
-        self.wl_enc   = WavelengthPositionalEncoding(num_bands, wl_embed_dim)
-        self.branch_a = SpectralProfileBranch(out_dim=256, tower_ch=96, wl_enc=self.wl_enc)
-        self.branch_b = SpectralStatsBranch(  256, 80, self.wl_enc)
-        self.branch_c = SpatialCNNBranch(num_bands, 256)
+        self.wl_enc_a   = WavelengthPositionalEncoding(num_bands, wl_embed_dim, out_channels=96)
+        self.wl_enc_b   = WavelengthPositionalEncoding(num_bands, wl_embed_dim, out_channels=40)
+        self.branch_a = SpectralProfileBranch(out_dim=256, tower_ch=96, wl_enc=self.wl_enc_a, num_layers=2, heads=4, dropout=0.1, num_bands=256)
+        self.branch_b = SpectralStatsBranch(256, 80, self.wl_enc_b)
+        self.branch_c = SpectralSpatial3DBranch(num_bands, 256)
         self.branch_d = SpecFormerBranch(num_bands, cfg["specf_patch"],
                                          cfg["specf_dim"], cfg["specf_heads"],
                                          cfg["specf_layers"], 256, cfg["specf_drop"])
@@ -1472,7 +1666,7 @@ def run_stage1(model, ema, loaders_by_phase, val_ldr, device, best_ckpt: str) ->
         scheduler = optim.lr_scheduler.OneCycleLR(
             optimizer, max_lr=CONFIG["s1_max_lr"], epochs=ep_total,
             steps_per_epoch=math.ceil(len(loaders_by_phase[1]) / CONFIG["s1_accum"]),
-            pct_start=0.25, div_factor=25, final_div_factor=1e4, anneal_strategy="cos")
+            pct_start=0.25, div_factor=5, final_div_factor=1e4, anneal_strategy="cos")
 
     scaler       = GradScaler()
     ls_hi        = CONFIG["s1_label_smooth_hi"]

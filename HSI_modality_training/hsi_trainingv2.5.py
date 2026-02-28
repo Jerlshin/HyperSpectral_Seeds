@@ -681,43 +681,111 @@ class WavelengthPositionalEncoding(nn.Module):
 
     def forward(self): return self.proj(self.enc).squeeze(-1).view(1,1,-1)
 
+# ══════════════════════════════════════════════════════════════════════
+#  RELATIVE SPECTRAL ATTENTION
+# ══════════════════════════════════════════════════════════════════════
+
+class RelativeSpectralAttention(nn.Module):
+    def __init__(self, dim, heads, max_len):
+        super().__init__()
+        assert dim % heads == 0
+        self.heads = heads
+        self.head_dim = dim // heads
+        self.scale = self.head_dim ** -0.5
+        self.max_len = max_len
+
+        self.qkv = nn.Linear(dim, dim * 3, bias=False)
+        self.proj = nn.Linear(dim, dim)
+
+        # Relative bias for |i-j| distances
+        self.rel_bias = nn.Parameter(
+            torch.zeros(heads, max_len)
+        )
+
+        nn.init.trunc_normal_(self.rel_bias, std=0.02)
+
+    def forward(self, x):
+        B, N, C = x.shape
+
+        qkv = self.qkv(x).reshape(B, N, 3, self.heads, self.head_dim)
+        q, k, v = qkv.unbind(2)  # each: (B, N, H, D)
+
+        q = q.transpose(1, 2)  # (B, H, N, D)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
+
+        attn = (q @ k.transpose(-2, -1)) * self.scale  # (B,H,N,N)
+
+        # Compute relative distance matrix
+        idx = torch.arange(N, device=x.device)
+        rel = (idx[None, :] - idx[:, None]).abs()  # (N,N)
+        rel = rel.clamp(max=self.max_len - 1)
+
+        bias = self.rel_bias[:, rel]  # (H,N,N)
+        attn = attn + bias.unsqueeze(0)
+
+        attn = attn.softmax(dim=-1)
+
+        out = (attn @ v)  # (B,H,N,D)
+        out = out.transpose(1, 2).reshape(B, N, C)
+
+        return self.proj(out)
+
 
 # ══════════════════════════════════════════════════════════════════════
-#  BRANCH A — SPECTRAL PROFILE  (Signal + 1st + 2nd derivatives with independent encoding + fusion)
+#  SPECTRAL TRANSFORMER BLOCK
 # ══════════════════════════════════════════════════════════════════════
 
+class SpectralTransformerBlock(nn.Module):
+    def __init__(self, dim, heads, max_len, drop=0.1):
+        super().__init__()
+        self.ln1 = nn.LayerNorm(dim)
+        self.attn = RelativeSpectralAttention(dim, heads, max_len)
+        self.ln2 = nn.LayerNorm(dim)
+
+        self.ff = nn.Sequential(
+            nn.Linear(dim, dim * 4),
+            nn.GELU(),
+            nn.Dropout(drop),
+            nn.Linear(dim * 4, dim),
+            nn.Dropout(drop)
+        )
+
+    def forward(self, x):
+        x = x + self.attn(self.ln1(x))
+        x = x + self.ff(self.ln2(x))
+        return x
+
+
 # ══════════════════════════════════════════════════════════════════════
-#  ADVANCED SPECTRAL PROFILE BRANCH
-#  (Signal + 1st + 2nd derivatives with independent encoding + fusion)
+#  BRANCH A - SPECTRAL PROFILE BRANCH
 # ══════════════════════════════════════════════════════════════════════
 
 class SpectralProfileBranch(nn.Module):
     """
-    Research-grade spectral modeling branch.
-
-    Features:
-    - Independent encoding of signal / d1 / d2
+    Spectral modeling branch with:
+    - Signal + d1 + d2
     - Learnable derivative scaling
-    - Concatenation fusion (no information bottleneck)
-    - Multi-scale spectral receptive fields
-    - 1D channel attention (spectral SE)
-    - Stable for 90-class fine-grained discrimination
+    - Full spectral tokenization
+    - Transformer encoder with relative wavelength bias
+    - CLS aggregation
     """
 
-    def __init__(self, out_dim=256, tower_ch=96, wl_enc=None):
+    def __init__(self, out_dim=256, tower_ch=96,
+                 wl_enc=None,
+                 num_layers=4,
+                 heads=4,
+                 dropout=0.1,
+                 num_bands=256):
+
         super().__init__()
         self.wl_enc = wl_enc
 
-        # ──────────────────────────────────────────────
-        # Learnable derivative scaling (chemometric stabilizer)
-        # Prevents curvature underflow
-        # ──────────────────────────────────────────────
+        # Derivative scaling
         self.alpha_d1 = nn.Parameter(torch.tensor(1.0))
         self.alpha_d2 = nn.Parameter(torch.tensor(1.0))
 
-        # ──────────────────────────────────────────────
-        # Independent stream projections (1×1 conv)
-        # ──────────────────────────────────────────────
+        # Independent projections
         self.proj_s  = nn.Sequential(
             nn.Conv1d(1, tower_ch//3, 1, bias=False),
             nn.BatchNorm1d(tower_ch//3),
@@ -737,39 +805,31 @@ class SpectralProfileBranch(nn.Module):
         )
 
         fused_ch = tower_ch
+        self.token_dim = fused_ch
 
-        # ──────────────────────────────────────────────
-        # Multi-scale spectral towers
-        # ──────────────────────────────────────────────
-        def make_tower(kernel):
-            return nn.Sequential(
-                ResBlock1D(fused_ch, fused_ch, kernel),
-                ResBlock1D(fused_ch, fused_ch, kernel)
+        # CLS token
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, fused_ch))
+        nn.init.trunc_normal_(self.cls_token, std=0.02)
+
+        # Transformer blocks
+        self.blocks = nn.ModuleList([
+            SpectralTransformerBlock(
+                dim=fused_ch,
+                heads=heads,
+                max_len=num_bands + 1,  # + CLS
+                drop=dropout
             )
+            for _ in range(num_layers)
+        ])
 
-        self.tower_s = make_tower(3)
-        self.tower_m = make_tower(7)
-        self.tower_l = make_tower(15)
+        self.norm = nn.LayerNorm(fused_ch)
 
-        # ──────────────────────────────────────────────
-        # Spectral Channel Attention (1D SE variant)
-        # ──────────────────────────────────────────────
-        self.se_1d = nn.Sequential(
-            nn.AdaptiveAvgPool1d(1),
-            nn.Conv1d(fused_ch, fused_ch // 4, 1, bias=False),
-            nn.GELU(),
-            nn.Conv1d(fused_ch // 4, fused_ch, 1, bias=False),
-            nn.Sigmoid()
-        )
-
-        # ──────────────────────────────────────────────
         # Final projection
-        # ──────────────────────────────────────────────
         self.proj = nn.Sequential(
-            nn.Linear(fused_ch * 6, out_dim),
-            nn.BatchNorm1d(out_dim),
+            nn.Linear(fused_ch, out_dim),
+            nn.LayerNorm(out_dim),
             nn.GELU(),
-            nn.Dropout(0.10)
+            nn.Dropout(dropout)
         )
 
         self._init_weights()
@@ -783,58 +843,45 @@ class SpectralProfileBranch(nn.Module):
                 nn.init.zeros_(m.bias)
             elif isinstance(m, nn.Linear):
                 nn.init.trunc_normal_(m.weight, std=0.02)
-                nn.init.zeros_(m.bias)
-
-    @staticmethod
-    def _gp(f):
-        # Global mean + max pooling
-        return torch.cat([f.mean(dim=2), f.max(dim=2).values], dim=1)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
 
     def forward(self, ms):
         # ms: (B, Bands)
 
-        s  = ms.unsqueeze(1)  # (B,1,L)
+        s = ms.unsqueeze(1)
 
-        # Derivatives
-        d1 = F.pad(torch.diff(s,  dim=2), (0,1))
-        d2 = F.pad(torch.diff(d1, dim=2), (0,1))
+        d1 = F.pad(torch.diff(s, dim=2), (0, 1))
+        d2 = F.pad(torch.diff(d1, dim=2), (0, 1))
 
-        # Learnable derivative scaling
         d1 = self.alpha_d1 * d1
         d2 = self.alpha_d2 * d2
 
-        # Independent encoding
         fs  = self.proj_s(s)
         fd1 = self.proj_d1(d1)
         fd2 = self.proj_d2(d2)
 
-        # Concatenate (preserve expressivity)
-        x = torch.cat([fs, fd1, fd2], dim=1)
+        x = torch.cat([fs, fd1, fd2], dim=1)  # (B,C,L)
 
-        # Optional wavelength encoding
         if self.wl_enc is not None:
             x = x + self.wl_enc()
 
-        # Multi-scale towers
-        xs = self.tower_s(x)
-        xm = self.tower_m(x)
-        xl = self.tower_l(x)
+        # Tokenization: (B,C,L) → (B,L,C)
+        x = x.transpose(1, 2)
 
-        # Shared spectral SE gating
-        attn = self.se_1d(x)
-        xs = xs * attn
-        xm = xm * attn
-        xl = xl * attn
+        B = x.shape[0]
+        cls = self.cls_token.expand(B, -1, -1)
+        x = torch.cat([cls, x], dim=1)
 
-        # Global pooling
-        feat = torch.cat([
-            self._gp(xs),
-            self._gp(xm),
-            self._gp(xl)
-        ], dim=1)
+        for blk in self.blocks:
+            x = blk(x)
 
-        return self.proj(feat)
+        x = self.norm(x)
 
+        spectral_repr = x[:, 0]  # CLS
+
+        return self.proj(spectral_repr)
+    
 # ══════════════════════════════════════════════════════════════════════
 #  BRANCH B — SPECTRAL STATISTICS  (mean, std, max across pixels)
 # ══════════════════════════════════════════════════════════════════════
@@ -944,24 +991,67 @@ class SpecFormerBranch(nn.Module):
 #  BRANCH CROSS-ATTENTION FUSION
 # ══════════════════════════════════════════════════════════════════════
 
-class BranchCrossAttention(nn.Module):
-    def __init__(self, d=256, n_heads=4, dropout=0.10):
+class SpectralFusion(nn.Module):
+    def __init__(self, d=256, heads=4, drop=0.1):
         super().__init__()
+        self.cls = nn.Parameter(torch.zeros(1, 1, d))
+        nn.init.trunc_normal_(self.cls, std=0.02)
+
+        self.attn = nn.MultiheadAttention(d, heads, dropout=drop, batch_first=True)
         self.ln1  = nn.LayerNorm(d)
-        self.attn = nn.MultiheadAttention(d, n_heads, dropout=dropout, batch_first=True)
         self.ln2  = nn.LayerNorm(d)
-        self.ff   = nn.Sequential(nn.Linear(d, d*2), nn.GELU(), nn.Dropout(dropout),
-                                  nn.Linear(d*2, d), nn.Dropout(dropout))
-        self.drop = nn.Dropout(dropout)
-        self.gate = nn.Parameter(torch.ones(1))
 
-    def forward(self, branches: List[torch.Tensor]) -> torch.Tensor:
-        x   = torch.stack(branches, 1)
-        lx  = self.ln1(x)
-        h,_ = self.attn(lx, lx, lx, need_weights=False)
-        x   = x + self.gate * self.drop(h)
-        return (x + self.drop(self.ff(self.ln2(x)))).flatten(1)
+        self.ff   = nn.Sequential(
+            nn.Linear(d, d*2),
+            nn.GELU(),
+            nn.Dropout(drop),
+            nn.Linear(d*2, d),
+            nn.Dropout(drop)
+        )
 
+    def forward(self, spectral_branches):
+        B = spectral_branches[0].shape[0]
+
+        x = torch.stack(spectral_branches, dim=1)   # (B,3,256)
+        cls = self.cls.expand(B, -1, -1)
+        x = torch.cat([cls, x], dim=1)              # (B,4,256)
+
+        h, _ = self.attn(self.ln1(x), self.ln1(x), self.ln1(x))
+        x = x + h
+        x = x + self.ff(self.ln2(x))
+
+        return x[:, 0]  # return spectral CLS
+    
+class CrossModalFusion(nn.Module):
+    def __init__(self, d=256, heads=4, drop=0.1):
+        super().__init__()
+        self.cls = nn.Parameter(torch.zeros(1,1,d))
+        nn.init.trunc_normal_(self.cls, std=0.02)
+
+        self.attn = nn.MultiheadAttention(d, heads, dropout=drop, batch_first=True)
+        self.ln1  = nn.LayerNorm(d)
+        self.ln2  = nn.LayerNorm(d)
+
+        self.ff   = nn.Sequential(
+            nn.Linear(d, d*2),
+            nn.GELU(),
+            nn.Dropout(drop),
+            nn.Linear(d*2, d),
+            nn.Dropout(drop)
+        )
+
+    def forward(self, spectral_token, spatial_token):
+        B = spectral_token.shape[0]
+
+        tokens = torch.stack([spectral_token, spatial_token], dim=1)  # (B,2,256)
+        cls = self.cls.expand(B, -1, -1)
+        x = torch.cat([cls, tokens], dim=1)  # (B,3,256)
+
+        h, _ = self.attn(self.ln1(x), self.ln1(x), self.ln1(x))
+        x = x + h
+        x = x + self.ff(self.ln2(x))
+
+        return x[:, 0]
 
 # ══════════════════════════════════════════════════════════════════════
 #  SPECTRAL STATISTICS HELPER
@@ -993,17 +1083,17 @@ class SpectralQuadNet(nn.Module):
 
         self.se       = SpectralSE(num_bands, 16)
         self.wl_enc   = WavelengthPositionalEncoding(num_bands, wl_embed_dim)
-        self.branch_a = SpectralProfileBranch(out_dim=256, tower_ch=96, wl_enc=self.wl_enc)
-        self.branch_b = SpectralStatsBranch(  256, 80, self.wl_enc)
+        self.branch_a = SpectralProfileBranch(out_dim=256, tower_ch=96, wl_enc=self.wl_enc, num_layers=4, heads=4, dropout=0.1, num_bands=256)
+        self.branch_b = SpectralStatsBranch(256, 80, self.wl_enc)
         self.branch_c = SpatialCNNBranch(num_bands, 256)
         self.branch_d = SpecFormerBranch(num_bands, cfg["specf_patch"],
                                          cfg["specf_dim"], cfg["specf_heads"],
                                          cfg["specf_layers"], 256, cfg["specf_drop"])
-        self.cross_attn = BranchCrossAttention(256, cfg["fusion_heads"],
-                                               cfg["fusion_drop"])
+        self.spectral_fusion = SpectralFusion(d=256, heads=cfg["fusion_heads"], drop=cfg["fusion_drop"])
+        self.cross_modal_fusion = CrossModalFusion(d=256, heads=cfg["fusion_heads"], drop=cfg["fusion_drop"])
         self.embed_net  = nn.Sequential(
-            nn.Linear(1024, 768), nn.BatchNorm1d(768), nn.GELU(), nn.Dropout(dropout),
-            nn.Linear(768,  256), nn.BatchNorm1d(256))
+            nn.Linear(256, 512), nn.LayerNorm(512), nn.GELU(), nn.Dropout(dropout),
+            nn.Linear(512,  256), nn.LayerNorm(256))
         self.linear_head  = nn.Sequential(
             nn.GELU(), nn.Dropout(dropout*0.4), nn.Linear(256, num_classes))
         self.arcface_head = AdaptiveSubcenterArcFaceHead(
@@ -1049,10 +1139,6 @@ class SpectralQuadNet(nn.Module):
         bc = self.branch_c(x)
         bd = self.branch_d(ms)
 
-        # Stochastic branch dropout — at most 1 branch dropped (always ≥ 3 active).
-        # Uses torch.bernoulli + F.one_hot: shape/dtype are constant every call
-        # so torch.compile traces once with zero recompiles.
-        # Each branch is strictly 0.0 or 1.0 — no partial scales.
         if self.training and self.branch_drop_prob > 0:
             do_drop  = torch.bernoulli(
                 torch.tensor(self.branch_drop_prob, device=ba.device))  # 0.0 or 1.0
@@ -1062,11 +1148,12 @@ class SpectralQuadNet(nn.Module):
             ba = ba * keep[0]; bb = bb * keep[1]
             bc = bc * keep[2]; bd = bd * keep[3]
 
-        emb = self.embed_net(self.cross_attn([ba, bb, bc, bd]))
+        spectral_token = self.spectral_fusion([ba, bb, bd])
+        joint_token = self.cross_modal_fusion(spectral_token, bc)
+        emb = self.embed_net(joint_token)
 
         if self._use_arcface:
-            # Normalise cleanly — F.normalize handles near-zero vectors via eps=1e-12
-            emb_n  = F.normalize(F.gelu(emb), dim=1)
+            emb_n  = F.normalize(emb, dim=1)
             logits = self.arcface_head(emb_n, labels, global_m=arc_m)
         else:
             logits = self.linear_head(emb)
