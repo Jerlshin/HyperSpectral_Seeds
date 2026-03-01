@@ -1073,10 +1073,10 @@ class SpectralQuadNet(nn.Module):
                 arc_m: Optional[float] = None,
                 branch_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         x = self.se(x)
-        ms, ss, mx = masked_spectral_stats(x)
+        ms, _, _ = masked_spectral_stats(x)
 
         ba = self.branch_a(ms)
-        bb = self.branch_b(ms, ss, mx)
+        bb = self.branch_b(ms)
         bc = self.branch_c(x)
         bd = self.branch_d(ms)
 

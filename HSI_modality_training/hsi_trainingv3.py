@@ -1,6 +1,7 @@
-# code5
+# code7
 from __future__ import annotations
 
+import os
 import copy, json as _json, math, os, random, warnings
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Tuple
@@ -16,15 +17,18 @@ from sklearn.model_selection import train_test_split
 from torch.amp import GradScaler, autocast
 from torch.utils.data import DataLoader, Dataset, Sampler
 
+os.environ["NETWORKX_BACKEND"] = "nx-loopback"
+os.environ["PYTHONWARNINGS"] = "ignore"
+warnings.filterwarnings("ignore", module="networkx")
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.filterwarnings("ignore", category=UserWarning, message=".*Online softmax is disabled.*")
-WL_MIN: float = 385.0
-WL_MAX: float = 1000.0
-
 
 # ══════════════════════════════════════════════════════════════════════
 #  CONFIG
 # ══════════════════════════════════════════════════════════════════════
+
+WL_MIN: float = 385.0
+WL_MAX: float = 1000.0
 
 CONFIG: dict = {
     "patches_data":  "./dataset/patches.npy",
@@ -50,7 +54,7 @@ CONFIG: dict = {
     "s1_ema_reinit_phases": True,
 
     # Architecture
-    "branch_drop_prob":    0.01,
+    "branch_drop_prob":    0.15,
     "subcenter_K":          3,
     "max_cutout_bands":     8,
     "noise_std":            0.02,
@@ -99,7 +103,7 @@ CONFIG: dict = {
 
     # Architecture
     "wl_embed_dim":           16,
-    "specf_patch":             8,
+    "specf_patch":            16,
     "specf_dim":             256,
     "specf_heads":             8,
     "specf_layers":            4,
@@ -557,26 +561,23 @@ class SpectralSE(nn.Module):
 
 
 class ResBlock1D(nn.Module):
-    def __init__(self, in_ch, out_ch, kernel=7):
+    def __init__(self, in_ch, out_ch, kernel=7, dilation=1):
         super().__init__()
-        pad = kernel // 2
+        # Calculate padding to maintain sequence length
+        pad = (kernel - 1) * dilation // 2 
 
-        self.conv1 = nn.Conv1d(in_ch, out_ch, kernel, padding=pad, bias=False)
+        self.conv1 = nn.Conv1d(in_ch, out_ch, kernel, padding=pad, dilation=dilation, bias=False)
         self.norm1 = nn.GroupNorm(1, out_ch)
-        self.conv2 = nn.Conv1d(out_ch, out_ch, kernel, padding=pad, bias=False)
+        self.conv2 = nn.Conv1d(out_ch, out_ch, kernel, padding=pad, dilation=dilation, bias=False)
         self.norm2 = nn.GroupNorm(1, out_ch)
 
-        self.skip = (
-            nn.Conv1d(in_ch, out_ch, 1, bias=False)
-            if in_ch != out_ch else nn.Identity()
-        )
+        self.skip = nn.Conv1d(in_ch, out_ch, 1, bias=False) if in_ch != out_ch else nn.Identity()
 
     def forward(self, x):
         identity = self.skip(x)
         x = F.gelu(self.norm1(self.conv1(x)))
         x = self.norm2(self.conv2(x))
         return F.gelu(x + identity)
-
 
 
 class CBAM(nn.Module):
@@ -609,73 +610,52 @@ class ResBlock2D(nn.Module):
         return F.gelu(self.n3(self.c3(
             F.gelu(self.n2(self.c2(F.gelu(self.n1(self.c1(x)))))))) + self.skip(x))
 
-
-class WavelengthPositionalEncoding(nn.Module):
-    def __init__(self, num_bands=256, embed_dim=16):
-        super().__init__()
-        wl   = torch.linspace(0.0, 1.0, num_bands)
-        half = embed_dim//2
-        freq = torch.exp(torch.arange(half).float() * -(math.log(1e4)/max(half-1,1)))
-        enc  = torch.zeros(num_bands, embed_dim)
-        enc[:,:half] = torch.sin(wl.unsqueeze(1)*freq.unsqueeze(0))
-        enc[:,half:] = torch.cos(wl.unsqueeze(1)*freq.unsqueeze(0))
-        self.register_buffer("enc", enc)
-        self.proj = nn.Linear(embed_dim, 1, bias=True)
-        nn.init.trunc_normal_(self.proj.weight, std=0.01); nn.init.zeros_(self.proj.bias)
-
-    def forward(self): return self.proj(self.enc).squeeze(-1).view(1,1,-1)
-
-
 # ══════════════════════════════════════════════════════════════════════
 #  SPECTRAL PROFILE BRANCH
 # ══════════════════════════════════════════════════════════════════════
+
 class SpectralProfileBranch(nn.Module):
     """
-    Refined spectral modeling branch.
+    Advanced Spectral Modeling Branch
 
-    Improvements:
-    - Learnable derivative filters (not raw diff)
-    - Spectral positional encoding
+    Key Improvements:
+    - No hardcoded band count
+    - Dynamic positional encoding
+    - Optional physical wavelength encoding
+    - Learnable derivative filters
     - Cross-scale fusion
     - Attention-based spectral pooling
-    - LayerNorm-style normalization
+    - Stable normalization
     """
 
-    def __init__(self, out_dim=256, tower_ch=96, bands=224):
+    def __init__(self, out_dim=256, tower_ch=96, wavelengths=None):
         super().__init__()
 
-        self.bands = bands
+        # Optional physical wavelength tensor (1D tensor of size L)
+        if wavelengths is not None:
+            wl = torch.tensor(wavelengths).float()
+            wl = (wl - wl.min()) / (wl.max() - wl.min())
+            self.register_buffer("wavelengths", wl)
+        else:
+            self.wavelengths = None
 
-        # ──────────────────────────────────────────────
+        # ─────────────────────────────
         # Learnable derivative filters
-        # Initialized to finite difference kernels
-        # ──────────────────────────────────────────────
+        # ─────────────────────────────
         self.d1_conv = nn.Conv1d(1, 1, kernel_size=5, padding=2, bias=False)
         self.d2_conv = nn.Conv1d(1, 1, kernel_size=5, padding=2, bias=False)
 
         with torch.no_grad():
             self.d1_conv.weight.zero_()
             self.d2_conv.weight.zero_()
+            # first derivative init
             self.d1_conv.weight[0, 0, 1] = -1
             self.d1_conv.weight[0, 0, 3] = 1
+            # second derivative init
             self.d2_conv.weight[0, 0, 0] = 1
             self.d2_conv.weight[0, 0, 2] = -2
             self.d2_conv.weight[0, 0, 4] = 1
 
-        # ──────────────────────────────────────────────
-        # Spectral positional encoding (sinusoidal)
-        # ──────────────────────────────────────────────
-        pe = torch.zeros(1, 1, bands)
-        position = torch.arange(0, bands).unsqueeze(1)
-        div_term = torch.exp(
-            torch.arange(0, 1, 2) * -(math.log(10000.0) / 1)
-        )
-        pe[0, 0, :] = torch.sin(position[:, 0] * div_term)
-        self.register_buffer("pos_enc", pe)
-
-        # ──────────────────────────────────────────────
-        # Independent projections
-        # ──────────────────────────────────────────────
         branch_ch = tower_ch // 3
 
         def make_proj():
@@ -691,39 +671,39 @@ class SpectralProfileBranch(nn.Module):
 
         fused_ch = tower_ch
 
-        # ──────────────────────────────────────────────
+        # ─────────────────────────────
         # Multi-scale towers
-        # ──────────────────────────────────────────────
-        def make_tower(kernel):
+        # ─────────────────────────────
+        def make_tower(kernel, dilation=1): # Add dilation
             return nn.Sequential(
-                ResBlock1D(fused_ch, fused_ch, kernel),
-                ResBlock1D(fused_ch, fused_ch, kernel)
+                ResBlock1D(fused_ch, fused_ch, kernel, dilation=dilation),
+                ResBlock1D(fused_ch, fused_ch, kernel, dilation=dilation)
             )
-
-        self.tower_s = make_tower(3)
-        self.tower_m = make_tower(7)
-        self.tower_l = make_tower(15)
-
-        # ──────────────────────────────────────────────
-        # Cross-scale fusion block
-        # ──────────────────────────────────────────────
+            
+        self.tower_s = make_tower(3, dilation=1)
+        self.tower_m = make_tower(5, dilation=2) # Dilated
+        self.tower_l = make_tower(5, dilation=4) # Heavily Dilated
+        
+        # ─────────────────────────────
+        # Cross-scale fusion
+        # ─────────────────────────────
         self.fusion = nn.Sequential(
-            ResBlock1D(fused_ch * 3, fused_ch, kernel=5),
-            ResBlock1D(fused_ch, fused_ch, kernel=5)
+            ResBlock1D(fused_ch * 3, fused_ch, 5),
+            ResBlock1D(fused_ch, fused_ch, 5)
         )
 
-        # ──────────────────────────────────────────────
+        # ─────────────────────────────
         # Spectral Attention Pooling
-        # ──────────────────────────────────────────────
+        # ─────────────────────────────
         self.attn_pool = nn.Sequential(
             nn.Conv1d(fused_ch, fused_ch // 4, 1),
             nn.GELU(),
             nn.Conv1d(fused_ch // 4, 1, 1)
         )
 
-        # ──────────────────────────────────────────────
-        # Final projection
-        # ──────────────────────────────────────────────
+        # ─────────────────────────────
+        # Output projection
+        # ─────────────────────────────
         self.proj = nn.Sequential(
             nn.Linear(fused_ch, out_dim),
             nn.LayerNorm(out_dim),
@@ -733,7 +713,7 @@ class SpectralProfileBranch(nn.Module):
 
         self._init_weights()
 
-    # ──────────────────────────────────────────────
+    # ─────────────────────────────
     def _init_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Conv1d):
@@ -742,34 +722,53 @@ class SpectralProfileBranch(nn.Module):
                 nn.init.trunc_normal_(m.weight, std=0.02)
                 nn.init.zeros_(m.bias)
 
-    # ──────────────────────────────────────────────
+    # ─────────────────────────────
+    def add_positional_encoding(self, s):
+        """
+        Dynamic positional encoding.
+        Uses physical wavelength if available,
+        otherwise normalized index encoding.
+        """
+        B, C, L = s.shape
+
+        if self.wavelengths is not None:
+            wl = self.wavelengths[:L]
+            wl = wl.unsqueeze(0).unsqueeze(0)
+            return s + wl
+
+        # fallback: normalized index
+        pos = torch.linspace(0, 1, L, device=s.device)
+        pos = pos.unsqueeze(0).unsqueeze(0)
+        return s + pos
+
+    # ─────────────────────────────
     def spectral_pool(self, x):
-        """
-        Attention-based spectral pooling
-        x: (B, C, L)
-        """
-        w = torch.softmax(self.attn_pool(x), dim=2)  # (B,1,L)
-        return torch.sum(x * w, dim=2)               # (B,C)
+        w = torch.softmax(self.attn_pool(x), dim=2)
+        return torch.sum(x * w, dim=2)
 
-    # ──────────────────────────────────────────────
+    # ─────────────────────────────
     def forward(self, ms):
-        # ms: (B, Bands)
-
+        """
+        ms: (B, Bands)
+        """
         s = ms.unsqueeze(1)  # (B,1,L)
 
-        # Add spectral positional encoding
-        s = s + self.pos_enc
+        # CRITICAL FIX: Do NOT add positional encoding to raw signal here.
+        # It ruins the derivative calculations.
 
         # Learnable derivatives
         d1 = self.d1_conv(s)
         d2 = self.d2_conv(d1)
 
-        # Independent encodings
+        # Independent projections
         fs  = self.proj_s(s)
         fd1 = self.proj_d1(d1)
         fd2 = self.proj_d2(d2)
 
         x = torch.cat([fs, fd1, fd2], dim=1)
+
+        # Add positional encoding safely in the latent space
+        x = self.add_positional_encoding(x)
 
         # Multi-scale extraction
         xs = self.tower_s(x)
@@ -780,52 +779,39 @@ class SpectralProfileBranch(nn.Module):
         x_cat = torch.cat([xs, xm, xl], dim=1)
         x_fused = self.fusion(x_cat)
 
-        # Attention pooling
         feat = self.spectral_pool(x_fused)
-
-        return self.proj(feat)
+        return self.proj(feat)    
     
 # ══════════════════════════════════════════════════════════════════════
 #  BRANCH B — SPECTRAL STATISTICS  (mean, std, max across pixels)
 # ══════════════════════════════════════════════════════════════════════
-
 class SpectralStatsBranch(nn.Module):
     """
-    Enhanced Statistical Spectral Branch
-
-    Features:
-    - Higher-order statistics
-    - Statistical attention
-    - Multi-scale modeling
-    - Cross-scale fusion
-    - Attention pooling
+    Enhanced Statistical Spectral Branch (V2)
+    
+    Now accepts pre-computed, masked 1D statistical vectors to 
+    prevent modal collapse and background dilution.
     """
 
-    def __init__(self, out_dim=256, tower_ch=96):
+    def __init__(self, num_bands: int, out_dim=256, tower_ch=96):
         super().__init__()
 
-        self.num_stats = 5  # mean, std, max, skew, kurt
+        self.in_channels = 5
 
         # ─────────────────────────────
         # Statistical Attention
         # ─────────────────────────────
         self.stat_attn = nn.Sequential(
             nn.AdaptiveAvgPool1d(1),
-            nn.Conv1d(self.num_stats, self.num_stats // 2, 1),
-            nn.GELU(),
-            nn.Conv1d(self.num_stats // 2, self.num_stats, 1),
-            nn.Sigmoid()
+            nn.Conv1d(self.in_channels, 16, 1, bias=False), nn.GELU(),
+            nn.Conv1d(16, self.in_channels, 1, bias=False), nn.Sigmoid()
         )
 
-        # ─────────────────────────────
-        # Initial projection
-        # ─────────────────────────────
         self.input_proj = nn.Sequential(
-            nn.Conv1d(self.num_stats, tower_ch, 1, bias=False),
-            nn.GroupNorm(1, tower_ch),
-            nn.GELU()
+            nn.Conv1d(self.in_channels, tower_ch, 1, bias=False),
+            nn.GroupNorm(1, tower_ch), nn.GELU()
         )
-
+        
         # ─────────────────────────────
         # Multi-scale towers
         # ─────────────────────────────
@@ -851,9 +837,9 @@ class SpectralStatsBranch(nn.Module):
         # Attention Pooling
         # ─────────────────────────────
         self.pool_attn = nn.Sequential(
-            nn.Conv1d(tower_ch, tower_ch // 4, 1),
+            nn.Conv1d(tower_ch, tower_ch // 4, 1, bias=False),
             nn.GELU(),
-            nn.Conv1d(tower_ch // 4, 1, 1)
+            nn.Conv1d(tower_ch // 4, 1, 1, bias=False)
         )
 
         # ─────────────────────────────
@@ -866,42 +852,36 @@ class SpectralStatsBranch(nn.Module):
             nn.Dropout(0.15)
         )
 
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv1d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+            elif isinstance(m, nn.Linear):
+                nn.init.trunc_normal_(m.weight, std=0.02)
+                nn.init.zeros_(m.bias)
+
     def attention_pool(self, x):
+        # Softmax weight over the sequence dimension (dim 2)
         w = torch.softmax(self.pool_attn(x), dim=2)
         return torch.sum(x * w, dim=2)
 
-    def compute_stats(self, ms):
-        mean = ms
-        std = torch.std(ms, dim=1, keepdim=True)
-        mx = torch.max(ms, dim=1, keepdim=True).values
-
-        centered = ms - ms.mean(dim=1, keepdim=True)
-        skew = (centered ** 3).mean(dim=1, keepdim=True)
-        kurt = (centered ** 4).mean(dim=1, keepdim=True)
-
-        return torch.cat([mean, std, mx, skew, kurt], dim=1)
-
-    def forward(self, ms):
-        # ms: (B, Bands)
-
-        stats = self.compute_stats(ms.unsqueeze(1))
-
-        # Statistical attention
+    
+    def forward(self, ms, std, mx, skew, kurt):
+        # 1. Shape: (B, 5, 256) -> Now convolutions can actually "see" spectral curves!
+        stats = torch.stack([ms, std, mx, skew, kurt], dim=1) 
         stats = stats * self.stat_attn(stats)
-
         x = self.input_proj(stats)
-
-        xs = self.tower_s(x)
-        xm = self.tower_m(x)
-        xl = self.tower_l(x)
-
-        x_cat = torch.cat([xs, xm, xl], dim=1)
-        x_fused = self.fusion(x_cat)
-
-        pooled = self.attention_pool(x_fused)
-
-        return self.proj(pooled)
-
+        
+        # 2. Extract multi-scale spectral features
+        x_fused = self.fusion(torch.cat([self.tower_s(x), self.tower_m(x), self.tower_l(x)], dim=1))
+        
+        # 3. Attention Pool over the 256 bands
+        w = torch.softmax(self.pool_attn(x_fused), dim=2)
+        pooled = torch.sum(x_fused * w, dim=2)
+        return self.proj(pooled)   
+     
 # ══════════════════════════════════════════════════════════════════════
 #  BRANCH C — SPATIAL CNN
 # ══════════════════════════════════════════════════════════════════════
@@ -948,48 +928,41 @@ class _PreLNBlock(nn.Module):
         x   = x + self.drop(h)
         return x + self.drop(self.ff(self.ln2(x)))
 
-
 class SpecFormerBranch(nn.Module):
-    def __init__(self, num_bands=256, patch_size=8, d_model=128,
+    def __init__(self, num_bands=256, patch_size=16, stride=8, d_model=128,
                  n_heads=4, n_layers=4, out_dim=256, dropout=0.15):
         super().__init__()
+        self.n_patches = (num_bands - patch_size) // stride + 1
         
-        assert num_bands % patch_size == 0, \
-            f"num_bands ({num_bands}) must be divisible by patch_size ({patch_size})"
-    
-        n_p = num_bands // patch_size
-        self.patch_size = patch_size; self.n_patches = n_p
-        self.patch_proj = nn.Sequential(nn.Linear(patch_size, d_model, bias=False),
-                                        nn.LayerNorm(d_model))
-        wl_n = (torch.linspace(WL_MIN, WL_MAX, n_p) - WL_MIN) / (WL_MAX - WL_MIN)
-        half = d_model//2
-        freq = torch.exp(torch.arange(half).float() * -(math.log(1e4)/max(half-1,1)))
-        pe   = torch.zeros(n_p, d_model)
-        pe[:,:half] = torch.sin(wl_n.unsqueeze(1)*freq.unsqueeze(0))
-        pe[:,half:] = torch.cos(wl_n.unsqueeze(1)*freq.unsqueeze(0))
+        # IMPROVEMENT: Use 1D Conv for Overlapping spectral patches
+        self.patch_proj = nn.Sequential(
+            nn.Conv1d(1, d_model, kernel_size=patch_size, stride=stride, bias=False),
+            nn.GroupNorm(1, d_model), nn.GELU()
+        )
+        
+        # Dynamic PE based on patch count
+        pe = torch.zeros(self.n_patches, d_model)
+        wl_n = torch.linspace(0, 1, self.n_patches)
+        half = d_model // 2
+        freq = torch.exp(torch.arange(half).float() * -(math.log(1e4) / max(half - 1, 1)))
+        pe[:, :half], pe[:, half:] = torch.sin(wl_n.unsqueeze(1) * freq), torch.cos(wl_n.unsqueeze(1) * freq)
         self.register_buffer("wl_pe", pe)
-        self.cls    = nn.Parameter(torch.zeros(1, 1, d_model))
-        nn.init.trunc_normal_(self.cls, std=0.02)
-        self.blocks = nn.ModuleList([_PreLNBlock(d_model, n_heads, d_model*2, dropout)
-                                     for _ in range(n_layers)])
-        self.norm   = nn.LayerNorm(d_model)
-        self.proj   = nn.Sequential(nn.Linear(d_model, out_dim),
-                                    nn.BatchNorm1d(out_dim), nn.GELU(), nn.Dropout(dropout))
+        
+        self.cls = nn.Parameter(torch.zeros(1, 1, d_model))
+        self.blocks = nn.ModuleList([_PreLNBlock(d_model, n_heads, d_model * 2, dropout) for _ in range(n_layers)])
+        self.norm = nn.LayerNorm(d_model)
+        self.proj = nn.Sequential(nn.Linear(d_model, out_dim), nn.BatchNorm1d(out_dim), nn.GELU())
 
     def forward(self, ms):
-        B = ms.shape[0]
-        x = ms.float().view(B, self.n_patches, self.patch_size)
-        x = self.patch_proj(x) + self.wl_pe.unsqueeze(0)
-        x = torch.cat([self.cls.expand(B, -1, -1), x], 1)
+        x = self.patch_proj(ms.unsqueeze(1)).transpose(1, 2)
+        x = torch.cat([self.cls.expand(x.shape[0], -1, -1), x + self.wl_pe], dim=1)
         for blk in self.blocks: x = blk(x)
         return self.proj(self.norm(x)[:, 0])
-
 
 # ══════════════════════════════════════════════════════════════════════
 #  BRANCH CROSS-ATTENTION FUSION
 # ══════════════════════════════════════════════════════════════════════
-
-class SpectralFusion(nn.Module):
+class UnifiedModalFusion(nn.Module):
     def __init__(self, d=256, heads=4, drop=0.1):
         super().__init__()
         self.cls = nn.Parameter(torch.zeros(1, 1, d))
@@ -1007,43 +980,13 @@ class SpectralFusion(nn.Module):
             nn.Dropout(drop)
         )
 
-    def forward(self, spectral_branches):
-        B = spectral_branches[0].shape[0]
-
-        x = torch.stack(spectral_branches, dim=1)   # (B,3,256)
+    def forward(self, branches):
+        B = branches[0].shape[0]
+        # Stack all 4 branches equally
+        tokens = torch.stack(branches, dim=1)  # (B, 4, 256)
+        
         cls = self.cls.expand(B, -1, -1)
-        x = torch.cat([cls, x], dim=1)              # (B,4,256)
-
-        h, _ = self.attn(self.ln1(x), self.ln1(x), self.ln1(x))
-        x = x + h
-        x = x + self.ff(self.ln2(x))
-
-        return x[:, 0]  # return spectral CLS
-    
-class CrossModalFusion(nn.Module):
-    def __init__(self, d=256, heads=4, drop=0.1):
-        super().__init__()
-        self.cls = nn.Parameter(torch.zeros(1,1,d))
-        nn.init.trunc_normal_(self.cls, std=0.02)
-
-        self.attn = nn.MultiheadAttention(d, heads, dropout=drop, batch_first=True)
-        self.ln1  = nn.LayerNorm(d)
-        self.ln2  = nn.LayerNorm(d)
-
-        self.ff   = nn.Sequential(
-            nn.Linear(d, d*2),
-            nn.GELU(),
-            nn.Dropout(drop),
-            nn.Linear(d*2, d),
-            nn.Dropout(drop)
-        )
-
-    def forward(self, spectral_token, spatial_token):
-        B = spectral_token.shape[0]
-
-        tokens = torch.stack([spectral_token, spatial_token], dim=1)  # (B,2,256)
-        cls = self.cls.expand(B, -1, -1)
-        x = torch.cat([cls, tokens], dim=1)  # (B,3,256)
+        x = torch.cat([cls, tokens], dim=1)  # (B, 5, 256)
 
         h, _ = self.attn(self.ln1(x), self.ln1(x), self.ln1(x))
         x = x + h
@@ -1056,15 +999,7 @@ class CrossModalFusion(nn.Module):
 # ══════════════════════════════════════════════════════════════════════
 
 @torch.no_grad()
-def compute_branch_influence(model: nn.Module,
-                             loader,
-                             device,
-                             max_batches: int = 3) -> Dict[str, float]:
-    """
-    Estimates relative branch contribution using logit ablation.
-    Returns percentage influence per branch.
-    """
-
+def compute_branch_influence(model, loader, device, max_batches=5):
     model.eval()
 
     influences = torch.zeros(4, device=device)
@@ -1076,15 +1011,22 @@ def compute_branch_influence(model: nn.Module,
 
         x = x.to(device, non_blocking=True)
 
-        # Full forward
         logits_full = model(x)
+        p_full = torch.softmax(logits_full, dim=1)
 
         for b in range(4):
             mask = torch.ones(4, device=device)
             mask[b] = 0.0
 
             logits_ablate = model(x, branch_mask=mask)
-            delta = (logits_full - logits_ablate).abs().mean()
+            p_ablate = torch.softmax(logits_ablate, dim=1)
+
+            delta = F.kl_div(
+                p_ablate.log(),
+                p_full,
+                reduction="batchmean"
+            )
+
             influences[b] += delta
 
         total += 1
@@ -1093,31 +1035,46 @@ def compute_branch_influence(model: nn.Module,
         return {"A":0, "B":0, "C":0, "D":0}
 
     influences /= total
-
-    # Normalize to %
     total_inf = influences.sum().clamp(min=1e-8)
-    influences = (influences / total_inf) * 100.0
+    influences = influences / total_inf * 100.0
 
     return {
-        "A": float(influences[0].item()),
-        "B": float(influences[1].item()),
-        "C": float(influences[2].item()),
-        "D": float(influences[3].item()),
+        "A": float(influences[0]),
+        "B": float(influences[1]),
+        "C": float(influences[2]),
+        "D": float(influences[3]),
     }
     
 def masked_spectral_stats(x: torch.Tensor):
-    x32  = x.float(); B, C, H, W = x32.shape
+    x32  = x.float()
+    B, C, H, W = x32.shape
     flat = x32.reshape(B, C, H*W)
+    
+    # 1. Identify valid seed pixels
     mask = (flat.abs().sum(1, keepdim=True) > 1e-5).float()
     cnt  = mask.sum(2).clamp(min=1.0)
-    mean = (flat*mask).sum(2) / cnt
-    std  = ((flat**2*mask).sum(2)/cnt - mean**2).clamp(min=1e-6).sqrt()
-    mx   = flat.masked_fill(mask.expand_as(flat)==0, -1e4).max(2).values
-    mx   = mx.masked_fill(mx < -9999.0, 0.0)
+    
+    # 2. Mean & Standard Deviation
+    mean = (flat * mask).sum(2) / cnt
+    centered = (flat - mean.unsqueeze(2)) * mask
+    var = (centered ** 2).sum(2) / cnt
+    std = torch.sqrt(var + 1e-5)
+    
+    # 3. Max
+    mx = flat.masked_fill(mask.expand_as(flat)==0, -1e4).max(2).values
+    mx = mx.masked_fill(mx < -9999.0, 0.0)
+    
+    # 4. Skewness & Kurtosis (Safe computation)
+    m3 = (centered ** 3).sum(2) / cnt
+    m4 = (centered ** 4).sum(2) / cnt
+    
+    skew = torch.clamp(m3 / (std ** 3 + 1e-4), -10.0, 10.0)
+    kurt = torch.clamp(m4 / (std ** 4 + 1e-4), 0.0, 20.0)
+    
     return (torch.nan_to_num(mean, 0), torch.nan_to_num(std, 0),
-            torch.nan_to_num(mx, 0))
-
-
+            torch.nan_to_num(mx, 0), torch.nan_to_num(skew, 0),
+            torch.nan_to_num(kurt, 0))
+        
 # ══════════════════════════════════════════════════════════════════════
 #  SPECTRALQUADNET
 # ══════════════════════════════════════════════════════════════════════
@@ -1130,15 +1087,29 @@ class SpectralQuadNet(nn.Module):
         self.branch_drop_prob = cfg.get("branch_drop_prob", 0.0)
 
         self.se       = SpectralSE(num_bands, 16)
-        self.wl_enc   = WavelengthPositionalEncoding(num_bands, wl_embed_dim)
-        self.branch_a = SpectralProfileBranch(out_dim=256, tower_ch=96, wl_enc=self.wl_enc)
-        self.branch_b = SpectralStatsBranch(  256, 80, self.wl_enc)
+        self.branch_a = SpectralProfileBranch(out_dim=256, tower_ch=96)
+        self.branch_b = SpectralStatsBranch(num_bands=num_bands, out_dim=256, tower_ch=96)
         self.branch_c = SpatialCNNBranch(num_bands, 256)
-        self.branch_d = SpecFormerBranch(num_bands, cfg["specf_patch"],
-                                         cfg["specf_dim"], cfg["specf_heads"],
-                                         cfg["specf_layers"], 256, cfg["specf_drop"])
-        self.spectral_fusion = SpectralFusion(d=256, heads=cfg["fusion_heads"], drop=cfg["fusion_drop"])
-        self.cross_modal_fusion = CrossModalFusion(d=256, heads=cfg["fusion_heads"], drop=cfg["fusion_drop"])
+        self.branch_d = SpecFormerBranch(
+            num_bands=num_bands,
+            patch_size=cfg["specf_patch"], # 16
+            stride=cfg["specf_patch"] // 2, # 8 (Overlapping)
+            d_model=cfg["specf_dim"],       # 256
+            n_heads=cfg["specf_heads"],     # 8
+            n_layers=cfg["specf_layers"],   # 4
+            out_dim=256,
+            dropout=cfg["specf_drop"]
+        )
+        
+        self.unified_fusion = UnifiedModalFusion(d=256, heads=cfg["fusion_heads"], drop=cfg["fusion_drop"])        
+        
+        self.aux_head_a = nn.Sequential(
+            nn.Linear(256, 128), nn.GELU(), nn.Linear(128, num_classes)
+        )
+        self.aux_head_b = nn.Sequential(
+            nn.Linear(256, 128), nn.GELU(), nn.Linear(128, num_classes)
+        )
+        
         self.embed_net  = nn.Sequential(
             nn.Linear(256, 512), nn.LayerNorm(512), nn.GELU(), nn.Dropout(dropout),
             nn.Linear(512,  256), nn.LayerNorm(256))
@@ -1181,46 +1152,40 @@ class SpectralQuadNet(nn.Module):
                 arc_m: Optional[float] = None,
                 branch_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         x = self.se(x)
-        ms, ss, mx = masked_spectral_stats(x)
+        ms, std, mx, skew, kurt = masked_spectral_stats(x)
 
-        ba = self.branch_a(ms)
-        bb = self.branch_b(ms, ss, mx)
-        bc = self.branch_c(x)
-        bd = self.branch_d(ms)
-
-        # Controlled branch masking (for debugging influence)
+        ba = self.branch_a(ms)                       
+        bb = self.branch_b(ms, std, mx, skew, kurt)  
+        bc = self.branch_c(x)                        
+        bd = self.branch_d(ms)                       
+                
         if branch_mask is not None:
-            # branch_mask: tensor of shape (4,) with 0 or 1
-            ba = ba * branch_mask[0]
-            bb = bb * branch_mask[1]
-            bc = bc * branch_mask[2]
-            bd = bd * branch_mask[3]
-        elif self.training and self.branch_drop_prob > 0:
-            do_drop  = torch.bernoulli(
-                torch.tensor(self.branch_drop_prob, device=ba.device))
-            drop_idx = torch.randint(0, 4, (), device=ba.device)
-            one_hot  = F.one_hot(drop_idx, num_classes=4).float()
-            keep     = 1.0 - one_hot * do_drop
-            ba = ba * keep[0]
-            bb = bb * keep[1]
-            bc = bc * keep[2]
-            bd = bd * keep[3]
+            ba, bb, bc, bd = ba*branch_mask[0], bb*branch_mask[1], bc*branch_mask[2], bd*branch_mask[3]
             
-        spectral_token = self.spectral_fusion([ba, bb, bd])
-        joint_token = self.cross_modal_fusion(spectral_token, bc)
+        elif self.training:
+            drop_probs = torch.tensor([0.05, 0.05, 0.40, 0.15], device=ba.device)
+            keeps = (torch.rand(4, device=ba.device) > drop_probs).float()
+            if keeps.sum() == 0: keeps[torch.randint(0, 4, ())] = 1.0 
+            ba, bb, bc, bd = ba*keeps[0], bb*keeps[1], bc*keeps[2], bd*keeps[3]
+
+        aux_a = self.aux_head_a(ba) if self.training else None
+        aux_b = self.aux_head_b(bb) if self.training else None
+
+        joint_token = self.unified_fusion([ba, bb, bc, bd])
         emb = self.embed_net(joint_token)
 
         if self._use_arcface:
-            emb_n  = F.normalize(emb, dim=1)
-            logits = self.arcface_head(emb_n, labels, global_m=arc_m)
+            logits = self.arcface_head(F.normalize(emb, dim=1), labels, global_m=arc_m)
         else:
             logits = self.linear_head(emb)
 
+        if self.training and not return_embed:
+            return {"main": logits, "aux_a": aux_a, "aux_b": aux_b}
+        
         if return_embed:
             return logits, F.normalize(emb, dim=1)
         return logits
-
-
+    
 # ══════════════════════════════════════════════════════════════════════
 #  TTA — 8 spatial + 4 spectral
 # ══════════════════════════════════════════════════════════════════════
@@ -1335,7 +1300,6 @@ def arcface_margin(ep, m0, m_target, warmup_ep):
 # ══════════════════════════════════════════════════════════════════════
 #  TRAIN / EVALUATE
 # ══════════════════════════════════════════════════════════════════════
-
 def train_one_epoch(model, loader, optimizer, criterion, scaler, ema, device,
                     scheduler=None, use_mixup=True, mixup_alpha=0.4,
                     supcon=None, supcon_weight=0.0,
@@ -1344,6 +1308,7 @@ def train_one_epoch(model, loader, optimizer, criterion, scaler, ema, device,
     model.train()
     total_loss = total_acc = 0.0
     optimizer.zero_grad(set_to_none=True)
+    
     use_amp = (supcon is None) and (scaler is not None)
 
     if model._use_arcface and use_mixup:
@@ -1352,42 +1317,78 @@ def train_one_epoch(model, loader, optimizer, criterion, scaler, ema, device,
     for step, (x, y) in enumerate(loader):
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
+        
         x_in, ya, yb, lam = mixed_aug(x, y, mixup_alpha) if use_mixup else (x, y, y, 1.0)
 
         with autocast(device_type=device.type, enabled=use_amp):
             if supcon is not None:
-                logits, emb = model(x_in, ya, return_embed=True, arc_m=arc_m)
+                out = model(x_in, ya, return_embed=True, arc_m=arc_m)
+                
+                if isinstance(out, dict):
+                    logits, emb = out["main"], out["emb"]
+                    l_aux_a = criterion(out["aux_a"], ya)
+                    l_aux_b = criterion(out["aux_b"], ya)
+                    aux_loss = 0.3 * (l_aux_a + l_aux_b)
+                else:
+                    logits, emb = out
+                    aux_loss = 0.0
+
                 cls_l  = criterion(logits, ya)
                 sc_l   = supcon(emb, ya)
                 pt_l   = proto(emb, ya) if proto is not None else 0.0
-                loss   = ((1 - supcon_weight - proto_weight)*cls_l
-                          + supcon_weight*sc_l + proto_weight*pt_l)
+                
+                loss = ((1 - supcon_weight - proto_weight) * cls_l 
+                        + supcon_weight * sc_l 
+                        + proto_weight * pt_l 
+                        + aux_loss)
             else:
                 arc_labels = (ya if model._use_arcface and not use_mixup else None)
-                logits = model(x_in, labels=arc_labels, arc_m=arc_m)
-                loss   = mixed_loss(criterion, logits, ya, yb, lam)
+                out = model(x_in, labels=arc_labels, arc_m=arc_m)
+
+                if isinstance(out, dict):
+                    # Apply mixed_loss to all heads to handle Mixup/Cutmix correctly
+                    l_main  = mixed_loss(criterion, out["main"], ya, yb, lam)
+                    l_aux_a = mixed_loss(criterion, out["aux_a"], ya, yb, lam)
+                    l_aux_b = mixed_loss(criterion, out["aux_b"], ya, yb, lam)
+                    
+                    # Weighting: 1.0 for main head, 0.3 for each auxiliary spectral head
+                    loss   = l_main + 0.3 * (l_aux_a + l_aux_b)
+                    logits = out["main"]
+                else:
+                    logits = out
+                    loss   = mixed_loss(criterion, logits, ya, yb, lam)
 
         if not torch.isfinite(loss):
-            optimizer.zero_grad(set_to_none=True); continue
-
-        (scaler.scale(loss/accum_steps).backward() if use_amp
-         else (loss/accum_steps).backward())
-
-        if (step+1) % accum_steps == 0:
-            if use_amp: scaler.unscale_(optimizer)
-            nn.utils.clip_grad_norm_(model.parameters(), CONFIG["grad_clip"])
-            if use_amp: scaler.step(optimizer); scaler.update()
-            else:       optimizer.step()
             optimizer.zero_grad(set_to_none=True)
-            if ema:       ema.update(model)
+            continue
+
+        if use_amp:
+            scaler.scale(loss / accum_steps).backward()
+        else:
+            (loss / accum_steps).backward()
+
+        if (step + 1) % accum_steps == 0:
+            if use_amp:
+                scaler.unscale_(optimizer)
+            
+            nn.utils.clip_grad_norm_(model.parameters(), CONFIG["grad_clip"])
+            
+            if use_amp:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
+                
+            optimizer.zero_grad(set_to_none=True)
+            if ema:
+                ema.update(model)
 
         total_loss += loss.item()
         with torch.no_grad():
-            total_acc += (logits.argmax(1) == y).float().mean().item()
+            total_acc += (logits.argmax(1) == ya).float().mean().item()
 
     n = max(len(loader), 1)
-    return total_loss/n, total_acc/n
-
+    return total_loss / n, total_acc / n
 
 def train_one_epoch_sam(model, loader, sam_opt, criterion, device,
                         supcon=None, supcon_weight=0.0,
