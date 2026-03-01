@@ -1,4 +1,4 @@
-
+# code4
 from __future__ import annotations
 
 import copy, json as _json, math, os, random, warnings
@@ -9,6 +9,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
 import torch.optim as optim
 from sklearn.metrics import accuracy_score, classification_report, f1_score
 from sklearn.model_selection import train_test_split
@@ -16,8 +17,7 @@ from torch.amp import GradScaler, autocast
 from torch.utils.data import DataLoader, Dataset, Sampler
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
-warnings.filterwarnings("ignore", message="Online softmax is disabled on the fly")
-
+warnings.filterwarnings("ignore", category=UserWarning, message=".*Online softmax is disabled.*")
 WL_MIN: float = 385.0
 WL_MAX: float = 1000.0
 
@@ -39,19 +39,21 @@ CONFIG: dict = {
     "s1_phase1_frac":     0.40,
     "s1_phase2_frac":     0.30,
     "s1_batch":           128,
-    "s1_max_lr":           8e-4,
-    "s1_dropout":          0.30,
-    "s1_mixup":            0.40,
+    "s1_max_lr":           2e-3,
+    "s1_dropout":          0.10,
+    "s1_mixup":            0.15,
     "s1_patience":         50,
     "s1_accum":             1,   
     "s1_focal_gamma":       2.0,
-    "s1_label_smooth_hi":  0.05,
+    "s1_label_smooth_hi":  0.00,
     "s1_label_smooth_lo":  0.00,
     "s1_ema_reinit_phases": True,
 
     # Architecture
-    "branch_drop_prob":    0.05,
+    "branch_drop_prob":    0.01,
     "subcenter_K":          3,
+    "max_cutout_bands":     8,
+    "noise_std":            0.02,
 
     # Stage 2
     "s2_epochs":           120,
@@ -72,24 +74,24 @@ CONFIG: dict = {
     "s2_focal_gamma":         1.5,
     "cdws_max_weight":        3.0,
     "cdws_eps":               0.05,
-    "supcon_weight":           0.25, # ↑ from 0.15; stronger contrastive signal
+    "supcon_weight":           0.25,
     "supcon_temp":             0.10,
-    "proto_weight":            0.12, # ↑ from 0.08
+    "proto_weight":            0.12,
     "proto_temp":              0.10,
     "bal_n_cls":               16,
-    "bal_n_spc":                8,   # ↑ from 4; 7 positives/anchor vs 3 → better SupCon
+    "bal_n_spc":                8,
 
     # Stage 3
     "s3_epochs":            100,
     "s3_swa_lr":            4e-5,
     "s3_cycle_len":           8,
-    "s3_sam_rho":             0.05, # ↑ from 0.02; standard SAM default
+    "s3_sam_rho":             0.05,
     "s3_greedy":            True,
 
     # Shared
     "weight_decay":         2e-4,
     "grad_clip":             1.0,
-    "ema_decay":            0.9995, # ↓ from 0.9999; 2k-step window vs 10k → tracks faster
+    "ema_decay":            0.999,
 
     # TTA
     "tta_spatial":             8,
@@ -107,11 +109,6 @@ CONFIG: dict = {
 
     "device":    torch.device("cuda" if torch.cuda.is_available() else "cpu"),
     "seed":      42,
-    "num_workers": 12,
-    "prefetch_factor": 4,
-    "mmap_block_size": 64,
-    "force_mmap":      False,
-    "force_cpu_ram":   False,
 }
 
 Path(CONFIG["output_dir"]).mkdir(parents=True, exist_ok=True)
@@ -121,99 +118,41 @@ torch.set_float32_matmul_precision("high")
 torch.backends.cuda.matmul.allow_tf32  = True
 torch.backends.cudnn.allow_tf32        = True
 
-_GLOBAL_PATCHES: Optional[np.ndarray]   = None
-_GLOBAL_LABELS:  Optional[np.ndarray]   = None
-_GPU_PATCHES:    Optional[torch.Tensor] = None
-_USING_MMAP:     bool = False
-_DATA_ON_GPU:    bool = False
-
+_GPU_PATCHES: Optional[torch.Tensor] = None
+_GLOBAL_LABELS: Optional[np.ndarray] = None
 
 # ══════════════════════════════════════════════════════════════════════
-#  DATA LOADING  (3-strategy: GPU VRAM → CPU RAM → mmap)
+#  DATA LOADING
 # ══════════════════════════════════════════════════════════════════════
+def _load_data_to_gpu(patches_path: str, labels_path: str):
+    global _GPU_PATCHES, _GLOBAL_LABELS
 
-def _load_data_into_ram(patches_path: str, labels_path: str) -> None:
-    global _GLOBAL_PATCHES, _GLOBAL_LABELS, _GPU_PATCHES, _USING_MMAP, _DATA_ON_GPU
-    if _GLOBAL_PATCHES is not None or _GPU_PATCHES is not None:
+    if _GPU_PATCHES is not None:
         return
-
-    import time
-    patches_path = str(patches_path); labels_path = str(labels_path)
-    if not os.path.isfile(patches_path):
-        raise FileNotFoundError(f"patches file not found: {patches_path}")
-
-    _probe        = np.load(patches_path, mmap_mode="r")
-    probe_dtype   = _probe.dtype; probe_shape = _probe.shape
-    float32_bytes = int(np.prod(probe_shape)) * 4
-    disk_gb       = os.path.getsize(patches_path) / 1e9
-    f32_gb        = float32_bytes / 1e9
-    del _probe
-
-    force_mmap    = CONFIG.get("force_mmap",    False)
-    force_cpu_ram = CONFIG.get("force_cpu_ram", False)
-    print(f"[DATA] patches.npy : {disk_gb:.1f} GB on disk | dtype={probe_dtype} | float32={f32_gb:.1f} GB")
-
-    try:
-        import psutil
-        avail_ram   = psutil.virtual_memory().available
-        avail_ram_gb = avail_ram / 1e9
-        print(f"[DATA] Free CPU RAM: {avail_ram_gb:.1f} GB")
-    except ImportError:
-        avail_ram = None; avail_ram_gb = -1.0
 
     device = CONFIG["device"]
-    if device.type == "cuda" and not force_mmap and not force_cpu_ram:
-        torch.cuda.synchronize()
-        free_vram = torch.cuda.mem_get_info(device)[0]
-        print(f"[DATA] Free GPU VRAM: {free_vram/1e9:.1f} GB")
-    else:
-        free_vram = 0
+    assert device.type == "cuda", "GPU mode required."
 
-    # Strategy 0: GPU VRAM
-    if (device.type == "cuda" and free_vram >= float32_bytes * 1.10
-            and not force_mmap and not force_cpu_ram):
-        print(f"[DATA] ► Strategy 0: Loading {f32_gb:.1f} GB → GPU VRAM ...")
-        t0 = time.time()
-        mmap_arr   = np.load(patches_path, mmap_mode="r")
-        gpu_tensor = torch.empty(probe_shape, dtype=torch.float32, device=device)
-        for i in range(0, probe_shape[0], 512):
-            block = torch.from_numpy(mmap_arr[i:i+512].astype(np.float32)).clone()
-            gpu_tensor[i:i+512].copy_(block, non_blocking=True)
-        del mmap_arr, block
-        torch.cuda.synchronize()
-        _GPU_PATCHES   = gpu_tensor; _GLOBAL_LABELS = np.load(labels_path)
-        _DATA_ON_GPU   = True;       _USING_MMAP    = False
-        print(f"[DATA] ✓ GPU load complete in {time.time()-t0:.1f}s  "
-              f"({_GPU_PATCHES.nelement()*4/1e9:.1f} GB | shape={tuple(_GPU_PATCHES.shape)})")
-        return
+    print("[DATA] Loading full dataset into GPU VRAM...")
 
-    # Strategy A: CPU RAM (chunked — never OOM)
-    if (avail_ram is not None and avail_ram >= float32_bytes * 1.20 and not force_mmap):
-        print(f"[DATA] ► Strategy A: Chunked CPU RAM load ...")
-        t0 = time.time()
-        try:
-            mmap_arr = np.load(patches_path, mmap_mode="r")
-            out      = np.empty(probe_shape, dtype=np.float32)
-            for i in range(0, probe_shape[0], 512):
-                out[i:i+512] = mmap_arr[i:i+512].astype(np.float32)
-            del mmap_arr
-            _GLOBAL_PATCHES = out; _GLOBAL_LABELS = np.load(labels_path)
-            _USING_MMAP = False;   _DATA_ON_GPU   = False
-            print(f"[DATA] ✓ RAM load complete in {time.time()-t0:.1f}s  "
-                  f"({_GLOBAL_PATCHES.nbytes/1e9:.1f} GB)")
-            return
-        except MemoryError:
-            print("[DATA] MemoryError — falling back to mmap")
-            _GLOBAL_PATCHES = None
+    mmap_arr = np.load(patches_path, mmap_mode="r")
+    shape = mmap_arr.shape
 
-    # Strategy B: mmap + BlockSortedSampler
-    shortage = f32_gb - avail_ram_gb if avail_ram_gb >= 0 else 0
-    print(f"[DATA] ► Strategy B: mmap fallback  (RAM short by ~{shortage:.1f} GB)")
-    _GLOBAL_PATCHES = np.load(patches_path, mmap_mode="r")
-    _GLOBAL_LABELS  = np.load(labels_path)
-    _USING_MMAP     = True; _DATA_ON_GPU = False
-    print(f"[DATA] ✓ mmap ready  shape={_GLOBAL_PATCHES.shape}  dtype={_GLOBAL_PATCHES.dtype}")
+    gpu_tensor = torch.empty(shape, dtype=torch.float32, device=device)
 
+    for i in range(0, shape[0], 512):
+        block = torch.from_numpy(
+            mmap_arr[i:i+512].astype(np.float32)
+        ).to(device, non_blocking=True)
+        gpu_tensor[i:i+512].copy_(block)
+
+    del mmap_arr
+    torch.cuda.synchronize()
+
+    _GPU_PATCHES = gpu_tensor
+    _GLOBAL_LABELS = np.load(labels_path)
+
+    print(f"[DATA] ✓ Loaded {_GPU_PATCHES.nelement()*4/1e9:.1f} GB into VRAM")
 
 # ══════════════════════════════════════════════════════════════════════
 #  REPRODUCIBILITY
@@ -273,27 +212,45 @@ class ModelEMA:
 
 class RiceSeedDataset(Dataset):
     _PROFILES = {
-        "heavy":  dict(band_drop=0.65, cutout=0.50, noise=0.35,
-                       warp=0.35,  shift=0.30, mult=0.30),
-        "medium": dict(band_drop=0.35, cutout=0.25, noise=0.20,
-                       warp=0.20,  shift=0.15, mult=0.15),
-        "light":  dict(band_drop=0.25, cutout=0.15, noise=0.10,
-                       warp=0.10,  shift=0.10, mult=0.10),
-        "none":   None,
+
+        # Phase 1 (structure learning) — strong but not destructive
+        "heavy": dict(
+            band_drop=0.30,
+            cutout=0.20,
+            noise=0.15,
+            warp=0.10,
+            shift=0.10,
+            mult=0.10
+        ),
+
+        # Phase 2 (robustness shaping)
+        "medium": dict(
+            band_drop=0.20,
+            cutout=0.15,
+            noise=0.10,
+            warp=0.08,
+            shift=0.08,
+            mult=0.08
+        ),
+
+        # Phase 3 (stability / refinement)
+        "light": dict(
+            band_drop=0.10,
+            cutout=0.08,
+            noise=0.05,
+            warp=0.05,
+            shift=0.05,
+            mult=0.05
+        ),
+
+        "none": None,
     }
 
-    def __init__(self, patches_path, labels_path, indices,
-                 aug_strength="none", max_cutout_bands=20, noise_std=0.02):
-        global _GLOBAL_PATCHES, _GLOBAL_LABELS, _GPU_PATCHES, _DATA_ON_GPU
-        if _GLOBAL_PATCHES is None and _GPU_PATCHES is None:
-            _load_data_into_ram(patches_path, labels_path)
-        self.patches          = _GPU_PATCHES if _DATA_ON_GPU else _GLOBAL_PATCHES
+    def __init__(self, indices, aug_strength="none"):
+        self.patches          = _GPU_PATCHES
         self.labels           = _GLOBAL_LABELS
-        self.on_gpu           = _DATA_ON_GPU
         self.indices          = indices
         self.aug_strength     = aug_strength
-        self.max_cutout_bands = max_cutout_bands
-        self.noise_std        = noise_std
 
     def __len__(self): return len(self.indices)
 
@@ -304,15 +261,13 @@ class RiceSeedDataset(Dataset):
 
     def _band_cutout(self, x):
         x = x.clone(); nb = x.shape[0]
-        cut = torch.randint(1, max(2, self.max_cutout_bands), (1,)).item()
+        cut = torch.randint(1, max(2, CONFIG["max_cutout_bands"]), (1,)).item()
         st  = torch.randint(0, max(1, nb - cut), (1,)).item()
         x[st:st+cut] = 0.0; return x
 
     def _spectral_noise(self, x):
-        # Create a spatial mask of non-zero pixels (1, H, W)
         mask = (x.abs().sum(dim=0, keepdim=True) > 1e-5).float()
-        # Only add noise to the seed, preserve the 0.0 background
-        return x + (torch.randn_like(x) * self.noise_std) * mask
+        return x + (torch.randn_like(x) * CONFIG["noise_std"]) * mask
     
     def _spectral_warp(self, x):
         C, H, W = x.shape
@@ -331,7 +286,6 @@ class RiceSeedDataset(Dataset):
     def _mult_noise(self, x):
         mask = (x.abs().sum(dim=0, keepdim=True) > 1e-5).float()
         noise_factor = 1.0 + torch.randn(x.shape[0], 1, 1, device=x.device) * 0.05
-        # Apply multiplicative noise, masked to be safe
         return x * noise_factor * mask
     
     def _spatial(self, x):
@@ -341,11 +295,7 @@ class RiceSeedDataset(Dataset):
 
     def __getitem__(self, idx):
         ri = self.indices[idx]
-        if self.on_gpu:
-            patch = self.patches[ri].clone()
-        else:
-            patch = torch.from_numpy(
-                self.patches[ri].astype(np.float32, copy=False).copy())
+        patch = self.patches[ri].clone()
         label = torch.tensor(int(self.labels[ri]), dtype=torch.long)
         p = self._probs()
         if p is not None:
@@ -389,21 +339,6 @@ class ClassBalancedBatchSampler(Sampler):
             yield batch
 
     def __len__(self): return self._n
-
-
-class BlockSortedSampler(Sampler):
-    """Converts random mmap access → block-sequential I/O to reduce page-faults."""
-    def __init__(self, indices: np.ndarray, block_size: int = 64):
-        self.indices = np.asarray(indices); self.block_size = block_size
-
-    def __iter__(self):
-        sorted_idx = self.indices[np.argsort(self.indices)]
-        blocks = [sorted_idx[s:s+self.block_size]
-                  for s in range(0, len(sorted_idx), self.block_size)]
-        np.random.shuffle(blocks)
-        return iter(np.concatenate(blocks).tolist())
-
-    def __len__(self): return len(self.indices)
 
 
 def build_cdws_weights(class_f1: Dict[int,float], num_classes: int,
@@ -910,6 +845,10 @@ class SpecFormerBranch(nn.Module):
     def __init__(self, num_bands=256, patch_size=8, d_model=128,
                  n_heads=4, n_layers=4, out_dim=256, dropout=0.15):
         super().__init__()
+        
+        assert num_bands % patch_size == 0, \
+            f"num_bands ({num_bands}) must be divisible by patch_size ({patch_size})"
+    
         n_p = num_bands // patch_size
         self.patch_size = patch_size; self.n_patches = n_p
         self.patch_proj = nn.Sequential(nn.Linear(patch_size, d_model, bias=False),
@@ -1008,6 +947,56 @@ class CrossModalFusion(nn.Module):
 #  SPECTRAL STATISTICS HELPER
 # ══════════════════════════════════════════════════════════════════════
 
+@torch.no_grad()
+def compute_branch_influence(model: nn.Module,
+                             loader,
+                             device,
+                             max_batches: int = 3) -> Dict[str, float]:
+    """
+    Estimates relative branch contribution using logit ablation.
+    Returns percentage influence per branch.
+    """
+
+    model.eval()
+
+    influences = torch.zeros(4, device=device)
+    total = 0
+
+    for i, (x, _) in enumerate(loader):
+        if i >= max_batches:
+            break
+
+        x = x.to(device, non_blocking=True)
+
+        # Full forward
+        logits_full = model(x)
+
+        for b in range(4):
+            mask = torch.ones(4, device=device)
+            mask[b] = 0.0
+
+            logits_ablate = model(x, branch_mask=mask)
+            delta = (logits_full - logits_ablate).abs().mean()
+            influences[b] += delta
+
+        total += 1
+
+    if total == 0:
+        return {"A":0, "B":0, "C":0, "D":0}
+
+    influences /= total
+
+    # Normalize to %
+    total_inf = influences.sum().clamp(min=1e-8)
+    influences = (influences / total_inf) * 100.0
+
+    return {
+        "A": float(influences[0].item()),
+        "B": float(influences[1].item()),
+        "C": float(influences[2].item()),
+        "D": float(influences[3].item()),
+    }
+    
 def masked_spectral_stats(x: torch.Tensor):
     x32  = x.float(); B, C, H, W = x32.shape
     flat = x32.reshape(B, C, H*W)
@@ -1081,7 +1070,8 @@ class SpectralQuadNet(nn.Module):
     def forward(self, x: torch.Tensor,
                 labels: Optional[torch.Tensor] = None,
                 return_embed: bool = False,
-                arc_m: Optional[float] = None) -> torch.Tensor:
+                arc_m: Optional[float] = None,
+                branch_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         x = self.se(x)
         ms, ss, mx = masked_spectral_stats(x)
 
@@ -1090,15 +1080,24 @@ class SpectralQuadNet(nn.Module):
         bc = self.branch_c(x)
         bd = self.branch_d(ms)
 
-        if self.training and self.branch_drop_prob > 0:
+        # Controlled branch masking (for debugging influence)
+        if branch_mask is not None:
+            # branch_mask: tensor of shape (4,) with 0 or 1
+            ba = ba * branch_mask[0]
+            bb = bb * branch_mask[1]
+            bc = bc * branch_mask[2]
+            bd = bd * branch_mask[3]
+        elif self.training and self.branch_drop_prob > 0:
             do_drop  = torch.bernoulli(
-                torch.tensor(self.branch_drop_prob, device=ba.device))  # 0.0 or 1.0
-            drop_idx = torch.randint(0, 4, (), device=ba.device)        # 0..3
-            one_hot  = F.one_hot(drop_idx, num_classes=4).float()       # (4,)
-            keep     = 1.0 - one_hot * do_drop                          # (4,) ∈ {0,1}
-            ba = ba * keep[0]; bb = bb * keep[1]
-            bc = bc * keep[2]; bd = bd * keep[3]
-
+                torch.tensor(self.branch_drop_prob, device=ba.device))
+            drop_idx = torch.randint(0, 4, (), device=ba.device)
+            one_hot  = F.one_hot(drop_idx, num_classes=4).float()
+            keep     = 1.0 - one_hot * do_drop
+            ba = ba * keep[0]
+            bb = bb * keep[1]
+            bc = bc * keep[2]
+            bd = bd * keep[3]
+            
         spectral_token = self.spectral_fusion([ba, bb, bd])
         joint_token = self.cross_modal_fusion(spectral_token, bc)
         emb = self.embed_net(joint_token)
@@ -1110,7 +1109,7 @@ class SpectralQuadNet(nn.Module):
             logits = self.linear_head(emb)
 
         if return_embed:
-            return logits, F.normalize(F.gelu(emb), dim=1)
+            return logits, F.normalize(emb, dim=1)
         return logits
 
 
@@ -1150,38 +1149,38 @@ def build_splits():
 def build_loaders(train_idx, val_idx, test_idx, batch_train,
                   balanced=False, all_labels=None,
                   train_aug="none",
-                  class_weights: Optional[Dict[int,float]] = None):
-    nw = 0 if _DATA_ON_GPU else CONFIG["num_workers"]
-    pf = CONFIG.get("prefetch_factor", 4)
-    kw = (dict(num_workers=0, pin_memory=False) if _DATA_ON_GPU
-          else dict(num_workers=nw, pin_memory=True,
-                    persistent_workers=True, prefetch_factor=pf))
+                  class_weights=None):
 
-    ds = RiceSeedDataset(CONFIG["patches_data"], CONFIG["labels_path"],
-                         train_idx, aug_strength=train_aug)
+    ds = RiceSeedDataset(train_idx, aug_strength=train_aug)
 
     if balanced and all_labels is not None:
-        samp   = ClassBalancedBatchSampler(all_labels[train_idx],
-                                           CONFIG["bal_n_cls"], CONFIG["bal_n_spc"],
-                                           class_weights=class_weights)
-        tr_ldr = DataLoader(ds, batch_sampler=samp, drop_last=False, **kw)
-    elif _USING_MMAP:
-        bss    = BlockSortedSampler(train_idx, block_size=CONFIG.get("mmap_block_size", 64))
-        tr_ldr = DataLoader(ds, batch_size=batch_train, sampler=bss, drop_last=True, **kw)
+        samp = ClassBalancedBatchSampler(
+            all_labels[train_idx],
+            CONFIG["bal_n_cls"],
+            CONFIG["bal_n_spc"],
+            class_weights=class_weights
+        )
+        tr_ldr = DataLoader(ds, batch_sampler=samp, num_workers=0)
     else:
-        tr_ldr = DataLoader(ds, batch_size=batch_train, shuffle=True, drop_last=True, **kw)
+        tr_ldr = DataLoader(ds, batch_size=batch_train,
+                            shuffle=True, drop_last=True,
+                            num_workers=0)
 
     va_ldr = DataLoader(
-        RiceSeedDataset(CONFIG["patches_data"], CONFIG["labels_path"], val_idx),
-        batch_size=256, shuffle=False, **kw)
-    te_ldr = DataLoader(
-        RiceSeedDataset(CONFIG["patches_data"], CONFIG["labels_path"], test_idx),
-        batch_size=256, shuffle=False,
-        **(dict(num_workers=0, pin_memory=False) if _DATA_ON_GPU
-           else dict(num_workers=4, pin_memory=True,
-                     persistent_workers=True, prefetch_factor=2)))
-    return tr_ldr, va_ldr, te_ldr
+        RiceSeedDataset(val_idx),
+        batch_size=256,
+        shuffle=False,
+        num_workers=0
+    )
 
+    te_ldr = DataLoader(
+        RiceSeedDataset(test_idx),
+        batch_size=256,
+        shuffle=False,
+        num_workers=0
+    )
+
+    return tr_ldr, va_ldr, te_ldr
 
 # ══════════════════════════════════════════════════════════════════════
 #  OPTIMISERS & SCHEDULERS
@@ -1239,6 +1238,9 @@ def train_one_epoch(model, loader, optimizer, criterion, scaler, ema, device,
     optimizer.zero_grad(set_to_none=True)
     use_amp = (supcon is None) and (scaler is not None)
 
+    if model._use_arcface and use_mixup:
+        raise ValueError("Mixup cannot be used with ArcFace.")
+
     for step, (x, y) in enumerate(loader):
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
@@ -1269,7 +1271,6 @@ def train_one_epoch(model, loader, optimizer, criterion, scaler, ema, device,
             if use_amp: scaler.step(optimizer); scaler.update()
             else:       optimizer.step()
             optimizer.zero_grad(set_to_none=True)
-            if scheduler: scheduler.step()
             if ema:       ema.update(model)
 
         total_loss += loss.item()
@@ -1435,17 +1436,42 @@ def update_bn_stats(loader, model, device):
 #  CLASS DIFFICULTY
 # ══════════════════════════════════════════════════════════════════════
 
-def compute_class_difficulty(ema_shadow: nn.Module, val_ldr, device,
+def compute_class_difficulty(ema_shadow: nn.Module,
+                             val_ldr,
+                             device,
                              label: str = "Stage") -> Tuple[Dict[int,float], Dict[int,float]]:
-    class_f1 = evaluate_per_class(ema_shadow, val_ldr, device, CONFIG["num_classes"])
-    cdws_wts = build_cdws_weights(class_f1, CONFIG["num_classes"],
-                                  CONFIG["cdws_max_weight"], CONFIG["cdws_eps"])
-    macro    = float(np.mean(list(class_f1.values())))
-    n_hard   = sum(1 for f in class_f1.values() if f < 0.50)
-    print(f"[INFO] {label} class difficulty — macro F1={macro:.3f}  "
-          f"hard classes (<0.50 F1): {n_hard}/{CONFIG['num_classes']}")
-    return class_f1, cdws_wts
 
+    class_f1 = evaluate_per_class(
+        ema_shadow, val_ldr, device, CONFIG["num_classes"])
+
+    cdws_wts = build_cdws_weights(
+        class_f1,
+        CONFIG["num_classes"],
+        CONFIG["cdws_max_weight"],
+        CONFIG["cdws_eps"]
+    )
+
+    macro = float(np.mean(list(class_f1.values())))
+    n_hard = sum(1 for f in class_f1.values() if f < 0.50)
+
+    branch_inf = compute_branch_influence(
+        ema_shadow,
+        val_ldr,
+        device,
+        max_batches=3
+    )
+
+    print(
+        f"[INFO] {label} class difficulty — macro F1={macro:.3f}  "
+        f"hard classes (<0.50 F1): {n_hard}/{CONFIG['num_classes']}  |  "
+        f"Branch influence % → "
+        f"A:{branch_inf['A']:.1f}  "
+        f"B:{branch_inf['B']:.1f}  "
+        f"C:{branch_inf['C']:.1f}  "
+        f"D:{branch_inf['D']:.1f}"
+    )
+
+    return class_f1, cdws_wts
 
 # ══════════════════════════════════════════════════════════════════════
 #  STAGE 1 — 3-PHASE PROGRESSIVE AUGMENTATION
@@ -1469,11 +1495,11 @@ def run_stage1(model, ema, loaders_by_phase, val_ldr, device, best_ckpt: str) ->
     optimizer = build_optimizer_s1(model, CONFIG["s1_max_lr"] / 25)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        scheduler = optim.lr_scheduler.OneCycleLR(
-            optimizer, max_lr=CONFIG["s1_max_lr"], epochs=ep_total,
-            steps_per_epoch=math.ceil(len(loaders_by_phase[1]) / CONFIG["s1_accum"]),
-            pct_start=0.25, div_factor=25, final_div_factor=1e4, anneal_strategy="cos")
-
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=ep_total,
+            eta_min=CONFIG["s1_max_lr"] * 1e-3
+        )
     scaler       = GradScaler()
     ls_hi        = CONFIG["s1_label_smooth_hi"]
     ls_lo        = CONFIG["s1_label_smooth_lo"]
@@ -1524,6 +1550,8 @@ def run_stage1(model, ema, loaders_by_phase, val_ldr, device, best_ckpt: str) ->
         best_ep_acc = max(acc_live, acc_ema)
         lr_now      = optimizer.param_groups[0]["lr"]
         saved       = ""
+        
+        scheduler.step()
 
         # Save and track patience on F1 (primary metric)
         if best_ep_f1 > best_f1:
@@ -1821,19 +1849,11 @@ def main():
     print(f"{'─'*66}")
     print(f"[INFO] Latest completed stage: {done_stage}")
 
-    _load_data_into_ram(CONFIG["patches_data"], CONFIG["labels_path"])
+    _load_data_to_gpu(CONFIG["patches_data"], CONFIG["labels_path"])
 
-    if _DATA_ON_GPU:
-        free = torch.cuda.mem_get_info(device)[0] / 1e9
-        print(f"[DATA] ✓ GPU mode: {_GPU_PATCHES.nelement()*4/1e9:.1f} GB in VRAM  "
-              f"| {free:.1f} GB free | num_workers=0")
-    elif _USING_MMAP:
-        f32_need = os.path.getsize(CONFIG["patches_data"]) / 1e9
-        print(f"\n{'═'*66}\n  ⚠  MMAP MODE — BlockSortedSampler active")
-        print(f"  Need {f32_need*1.1:.0f} GB GPU VRAM or {f32_need*1.2:.0f} GB CPU RAM for full speed")
-        print(f"{'═'*66}\n")
-    else:
-        print("[DATA] ✓ CPU RAM mode.")
+    free = torch.cuda.mem_get_info(device)[0] / 1e9
+    print(f"[DATA] ✓ GPU mode: {_GPU_PATCHES.nelement()*4/1e9:.1f} GB in VRAM  "
+          f"| {free:.1f} GB free | num_workers=0")
 
     all_labels, train_idx, val_idx, test_idx = build_splits()
     print(f"Train: {len(train_idx):,}  Val: {len(val_idx):,}  Test: {len(test_idx):,}")
@@ -1868,22 +1888,15 @@ def main():
               f"TF32={torch.backends.cuda.matmul.allow_tf32}")
 
     def _s1_ldr(aug_str):
-        ds = RiceSeedDataset(CONFIG["patches_data"], CONFIG["labels_path"],
-                             train_idx, aug_strength=aug_str)
-        bs = CONFIG["s1_batch"]
-        if _DATA_ON_GPU:
-            return DataLoader(ds, batch_size=bs, shuffle=True, drop_last=True,
-                              num_workers=0, pin_memory=False)
-        nw = CONFIG["num_workers"]; pf = CONFIG.get("prefetch_factor", 4)
-        if _USING_MMAP:
-            bss = BlockSortedSampler(train_idx, CONFIG.get("mmap_block_size", 64))
-            return DataLoader(ds, batch_size=bs, sampler=bss, drop_last=True,
-                              num_workers=nw, pin_memory=True,
-                              persistent_workers=True, prefetch_factor=pf)
-        return DataLoader(ds, batch_size=bs, shuffle=True, drop_last=True,
-                          num_workers=nw, pin_memory=True,
-                          persistent_workers=True, prefetch_factor=pf)
-
+        ds = RiceSeedDataset(train_idx, aug_strength=aug_str)
+        return DataLoader(
+            ds,
+            batch_size=CONFIG["s1_batch"],
+            shuffle=True,
+            drop_last=True,
+            num_workers=0
+        )
+        
     if done_stage < 1:
         print("\n[RUN] Stage 1")
         phase_loaders = {1: _s1_ldr("heavy"), 2: _s1_ldr("medium"), 3: _s1_ldr("light")}

@@ -1,3 +1,4 @@
+# code5
 from __future__ import annotations
 
 import copy, json as _json, math, os, random, warnings
@@ -8,6 +9,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
 import torch.optim as optim
 from sklearn.metrics import accuracy_score, classification_report, f1_score
 from sklearn.model_selection import train_test_split
@@ -15,7 +17,7 @@ from torch.amp import GradScaler, autocast
 from torch.utils.data import DataLoader, Dataset, Sampler
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
-
+warnings.filterwarnings("ignore", category=UserWarning, message=".*Online softmax is disabled.*")
 WL_MIN: float = 385.0
 WL_MAX: float = 1000.0
 
@@ -37,19 +39,21 @@ CONFIG: dict = {
     "s1_phase1_frac":     0.40,
     "s1_phase2_frac":     0.30,
     "s1_batch":           128,
-    "s1_max_lr":           8e-4,
-    "s1_dropout":          0.30,
-    "s1_mixup":            0.40,
+    "s1_max_lr":           2e-3,
+    "s1_dropout":          0.10,
+    "s1_mixup":            0.15,
     "s1_patience":         50,
     "s1_accum":             1,   
     "s1_focal_gamma":       2.0,
-    "s1_label_smooth_hi":  0.05,
+    "s1_label_smooth_hi":  0.00,
     "s1_label_smooth_lo":  0.00,
     "s1_ema_reinit_phases": True,
 
     # Architecture
-    "branch_drop_prob":    0.05,
+    "branch_drop_prob":    0.01,
     "subcenter_K":          3,
+    "max_cutout_bands":     8,
+    "noise_std":            0.02,
 
     # Stage 2
     "s2_epochs":           120,
@@ -70,24 +74,24 @@ CONFIG: dict = {
     "s2_focal_gamma":         1.5,
     "cdws_max_weight":        3.0,
     "cdws_eps":               0.05,
-    "supcon_weight":           0.25, # ↑ from 0.15; stronger contrastive signal
+    "supcon_weight":           0.25,
     "supcon_temp":             0.10,
-    "proto_weight":            0.12, # ↑ from 0.08
+    "proto_weight":            0.12,
     "proto_temp":              0.10,
     "bal_n_cls":               16,
-    "bal_n_spc":                8,   # ↑ from 4; 7 positives/anchor vs 3 → better SupCon
+    "bal_n_spc":                8,
 
     # Stage 3
     "s3_epochs":            100,
     "s3_swa_lr":            4e-5,
     "s3_cycle_len":           8,
-    "s3_sam_rho":             0.05, # ↑ from 0.02; standard SAM default
+    "s3_sam_rho":             0.05,
     "s3_greedy":            True,
 
     # Shared
     "weight_decay":         2e-4,
     "grad_clip":             1.0,
-    "ema_decay":            0.9995, # ↓ from 0.9999; 2k-step window vs 10k → tracks faster
+    "ema_decay":            0.999,
 
     # TTA
     "tta_spatial":             8,
@@ -105,11 +109,6 @@ CONFIG: dict = {
 
     "device":    torch.device("cuda" if torch.cuda.is_available() else "cpu"),
     "seed":      42,
-    "num_workers": 12,
-    "prefetch_factor": 4,
-    "mmap_block_size": 64,
-    "force_mmap":      False,
-    "force_cpu_ram":   False,
 }
 
 Path(CONFIG["output_dir"]).mkdir(parents=True, exist_ok=True)
@@ -119,99 +118,41 @@ torch.set_float32_matmul_precision("high")
 torch.backends.cuda.matmul.allow_tf32  = True
 torch.backends.cudnn.allow_tf32        = True
 
-_GLOBAL_PATCHES: Optional[np.ndarray]   = None
-_GLOBAL_LABELS:  Optional[np.ndarray]   = None
-_GPU_PATCHES:    Optional[torch.Tensor] = None
-_USING_MMAP:     bool = False
-_DATA_ON_GPU:    bool = False
-
+_GPU_PATCHES: Optional[torch.Tensor] = None
+_GLOBAL_LABELS: Optional[np.ndarray] = None
 
 # ══════════════════════════════════════════════════════════════════════
-#  DATA LOADING  (3-strategy: GPU VRAM → CPU RAM → mmap)
+#  DATA LOADING
 # ══════════════════════════════════════════════════════════════════════
+def _load_data_to_gpu(patches_path: str, labels_path: str):
+    global _GPU_PATCHES, _GLOBAL_LABELS
 
-def _load_data_into_ram(patches_path: str, labels_path: str) -> None:
-    global _GLOBAL_PATCHES, _GLOBAL_LABELS, _GPU_PATCHES, _USING_MMAP, _DATA_ON_GPU
-    if _GLOBAL_PATCHES is not None or _GPU_PATCHES is not None:
+    if _GPU_PATCHES is not None:
         return
-
-    import time
-    patches_path = str(patches_path); labels_path = str(labels_path)
-    if not os.path.isfile(patches_path):
-        raise FileNotFoundError(f"patches file not found: {patches_path}")
-
-    _probe        = np.load(patches_path, mmap_mode="r")
-    probe_dtype   = _probe.dtype; probe_shape = _probe.shape
-    float32_bytes = int(np.prod(probe_shape)) * 4
-    disk_gb       = os.path.getsize(patches_path) / 1e9
-    f32_gb        = float32_bytes / 1e9
-    del _probe
-
-    force_mmap    = CONFIG.get("force_mmap",    False)
-    force_cpu_ram = CONFIG.get("force_cpu_ram", False)
-    print(f"[DATA] patches.npy : {disk_gb:.1f} GB on disk | dtype={probe_dtype} | float32={f32_gb:.1f} GB")
-
-    try:
-        import psutil
-        avail_ram   = psutil.virtual_memory().available
-        avail_ram_gb = avail_ram / 1e9
-        print(f"[DATA] Free CPU RAM: {avail_ram_gb:.1f} GB")
-    except ImportError:
-        avail_ram = None; avail_ram_gb = -1.0
 
     device = CONFIG["device"]
-    if device.type == "cuda" and not force_mmap and not force_cpu_ram:
-        torch.cuda.synchronize()
-        free_vram = torch.cuda.mem_get_info(device)[0]
-        print(f"[DATA] Free GPU VRAM: {free_vram/1e9:.1f} GB")
-    else:
-        free_vram = 0
+    assert device.type == "cuda", "GPU mode required."
 
-    # Strategy 0: GPU VRAM
-    if (device.type == "cuda" and free_vram >= float32_bytes * 1.10
-            and not force_mmap and not force_cpu_ram):
-        print(f"[DATA] ► Strategy 0: Loading {f32_gb:.1f} GB → GPU VRAM ...")
-        t0 = time.time()
-        mmap_arr   = np.load(patches_path, mmap_mode="r")
-        gpu_tensor = torch.empty(probe_shape, dtype=torch.float32, device=device)
-        for i in range(0, probe_shape[0], 512):
-            block = torch.from_numpy(mmap_arr[i:i+512].astype(np.float32)).clone()
-            gpu_tensor[i:i+512].copy_(block, non_blocking=True)
-        del mmap_arr, block
-        torch.cuda.synchronize()
-        _GPU_PATCHES   = gpu_tensor; _GLOBAL_LABELS = np.load(labels_path)
-        _DATA_ON_GPU   = True;       _USING_MMAP    = False
-        print(f"[DATA] ✓ GPU load complete in {time.time()-t0:.1f}s  "
-              f"({_GPU_PATCHES.nelement()*4/1e9:.1f} GB | shape={tuple(_GPU_PATCHES.shape)})")
-        return
+    print("[DATA] Loading full dataset into GPU VRAM...")
 
-    # Strategy A: CPU RAM (chunked — never OOM)
-    if (avail_ram is not None and avail_ram >= float32_bytes * 1.20 and not force_mmap):
-        print(f"[DATA] ► Strategy A: Chunked CPU RAM load ...")
-        t0 = time.time()
-        try:
-            mmap_arr = np.load(patches_path, mmap_mode="r")
-            out      = np.empty(probe_shape, dtype=np.float32)
-            for i in range(0, probe_shape[0], 512):
-                out[i:i+512] = mmap_arr[i:i+512].astype(np.float32)
-            del mmap_arr
-            _GLOBAL_PATCHES = out; _GLOBAL_LABELS = np.load(labels_path)
-            _USING_MMAP = False;   _DATA_ON_GPU   = False
-            print(f"[DATA] ✓ RAM load complete in {time.time()-t0:.1f}s  "
-                  f"({_GLOBAL_PATCHES.nbytes/1e9:.1f} GB)")
-            return
-        except MemoryError:
-            print("[DATA] MemoryError — falling back to mmap")
-            _GLOBAL_PATCHES = None
+    mmap_arr = np.load(patches_path, mmap_mode="r")
+    shape = mmap_arr.shape
 
-    # Strategy B: mmap + BlockSortedSampler
-    shortage = f32_gb - avail_ram_gb if avail_ram_gb >= 0 else 0
-    print(f"[DATA] ► Strategy B: mmap fallback  (RAM short by ~{shortage:.1f} GB)")
-    _GLOBAL_PATCHES = np.load(patches_path, mmap_mode="r")
-    _GLOBAL_LABELS  = np.load(labels_path)
-    _USING_MMAP     = True; _DATA_ON_GPU = False
-    print(f"[DATA] ✓ mmap ready  shape={_GLOBAL_PATCHES.shape}  dtype={_GLOBAL_PATCHES.dtype}")
+    gpu_tensor = torch.empty(shape, dtype=torch.float32, device=device)
 
+    for i in range(0, shape[0], 512):
+        block = torch.from_numpy(
+            mmap_arr[i:i+512].astype(np.float32)
+        ).to(device, non_blocking=True)
+        gpu_tensor[i:i+512].copy_(block)
+
+    del mmap_arr
+    torch.cuda.synchronize()
+
+    _GPU_PATCHES = gpu_tensor
+    _GLOBAL_LABELS = np.load(labels_path)
+
+    print(f"[DATA] ✓ Loaded {_GPU_PATCHES.nelement()*4/1e9:.1f} GB into VRAM")
 
 # ══════════════════════════════════════════════════════════════════════
 #  REPRODUCIBILITY
@@ -271,27 +212,45 @@ class ModelEMA:
 
 class RiceSeedDataset(Dataset):
     _PROFILES = {
-        "heavy":  dict(band_drop=0.65, cutout=0.50, noise=0.35,
-                       warp=0.35,  shift=0.30, mult=0.30),
-        "medium": dict(band_drop=0.35, cutout=0.25, noise=0.20,
-                       warp=0.20,  shift=0.15, mult=0.15),
-        "light":  dict(band_drop=0.25, cutout=0.15, noise=0.10,
-                       warp=0.10,  shift=0.10, mult=0.10),
-        "none":   None,
+
+        # Phase 1 (structure learning) — strong but not destructive
+        "heavy": dict(
+            band_drop=0.30,
+            cutout=0.20,
+            noise=0.15,
+            warp=0.10,
+            shift=0.10,
+            mult=0.10
+        ),
+
+        # Phase 2 (robustness shaping)
+        "medium": dict(
+            band_drop=0.20,
+            cutout=0.15,
+            noise=0.10,
+            warp=0.08,
+            shift=0.08,
+            mult=0.08
+        ),
+
+        # Phase 3 (stability / refinement)
+        "light": dict(
+            band_drop=0.10,
+            cutout=0.08,
+            noise=0.05,
+            warp=0.05,
+            shift=0.05,
+            mult=0.05
+        ),
+
+        "none": None,
     }
 
-    def __init__(self, patches_path, labels_path, indices,
-                 aug_strength="none", max_cutout_bands=20, noise_std=0.02):
-        global _GLOBAL_PATCHES, _GLOBAL_LABELS, _GPU_PATCHES, _DATA_ON_GPU
-        if _GLOBAL_PATCHES is None and _GPU_PATCHES is None:
-            _load_data_into_ram(patches_path, labels_path)
-        self.patches          = _GPU_PATCHES if _DATA_ON_GPU else _GLOBAL_PATCHES
+    def __init__(self, indices, aug_strength="none"):
+        self.patches          = _GPU_PATCHES
         self.labels           = _GLOBAL_LABELS
-        self.on_gpu           = _DATA_ON_GPU
         self.indices          = indices
         self.aug_strength     = aug_strength
-        self.max_cutout_bands = max_cutout_bands
-        self.noise_std        = noise_std
 
     def __len__(self): return len(self.indices)
 
@@ -302,15 +261,13 @@ class RiceSeedDataset(Dataset):
 
     def _band_cutout(self, x):
         x = x.clone(); nb = x.shape[0]
-        cut = torch.randint(1, max(2, self.max_cutout_bands), (1,)).item()
+        cut = torch.randint(1, max(2, CONFIG["max_cutout_bands"]), (1,)).item()
         st  = torch.randint(0, max(1, nb - cut), (1,)).item()
         x[st:st+cut] = 0.0; return x
 
     def _spectral_noise(self, x):
-        # Create a spatial mask of non-zero pixels (1, H, W)
         mask = (x.abs().sum(dim=0, keepdim=True) > 1e-5).float()
-        # Only add noise to the seed, preserve the 0.0 background
-        return x + (torch.randn_like(x) * self.noise_std) * mask
+        return x + (torch.randn_like(x) * CONFIG["noise_std"]) * mask
     
     def _spectral_warp(self, x):
         C, H, W = x.shape
@@ -329,7 +286,6 @@ class RiceSeedDataset(Dataset):
     def _mult_noise(self, x):
         mask = (x.abs().sum(dim=0, keepdim=True) > 1e-5).float()
         noise_factor = 1.0 + torch.randn(x.shape[0], 1, 1, device=x.device) * 0.05
-        # Apply multiplicative noise, masked to be safe
         return x * noise_factor * mask
     
     def _spatial(self, x):
@@ -339,11 +295,7 @@ class RiceSeedDataset(Dataset):
 
     def __getitem__(self, idx):
         ri = self.indices[idx]
-        if self.on_gpu:
-            patch = self.patches[ri].clone()
-        else:
-            patch = torch.from_numpy(
-                self.patches[ri].astype(np.float32, copy=False).copy())
+        patch = self.patches[ri].clone()
         label = torch.tensor(int(self.labels[ri]), dtype=torch.long)
         p = self._probs()
         if p is not None:
@@ -387,21 +339,6 @@ class ClassBalancedBatchSampler(Sampler):
             yield batch
 
     def __len__(self): return self._n
-
-
-class BlockSortedSampler(Sampler):
-    """Converts random mmap access → block-sequential I/O to reduce page-faults."""
-    def __init__(self, indices: np.ndarray, block_size: int = 64):
-        self.indices = np.asarray(indices); self.block_size = block_size
-
-    def __iter__(self):
-        sorted_idx = self.indices[np.argsort(self.indices)]
-        blocks = [sorted_idx[s:s+self.block_size]
-                  for s in range(0, len(sorted_idx), self.block_size)]
-        np.random.shuffle(blocks)
-        return iter(np.concatenate(blocks).tolist())
-
-    def __len__(self): return len(self.indices)
 
 
 def build_cdws_weights(class_f1: Dict[int,float], num_classes: int,
@@ -622,17 +559,24 @@ class SpectralSE(nn.Module):
 class ResBlock1D(nn.Module):
     def __init__(self, in_ch, out_ch, kernel=7):
         super().__init__()
-        pad = kernel//2
-        self.conv1 = nn.Conv1d(in_ch,  out_ch, kernel, padding=pad, bias=False)
-        self.bn1   = nn.BatchNorm1d(out_ch)
+        pad = kernel // 2
+
+        self.conv1 = nn.Conv1d(in_ch, out_ch, kernel, padding=pad, bias=False)
+        self.norm1 = nn.GroupNorm(1, out_ch)
         self.conv2 = nn.Conv1d(out_ch, out_ch, kernel, padding=pad, bias=False)
-        self.bn2   = nn.BatchNorm1d(out_ch)
-        self.skip  = (nn.Sequential(nn.Conv1d(in_ch, out_ch, 1, bias=False),
-                                    nn.BatchNorm1d(out_ch))
-                      if in_ch != out_ch else nn.Identity())
+        self.norm2 = nn.GroupNorm(1, out_ch)
+
+        self.skip = (
+            nn.Conv1d(in_ch, out_ch, 1, bias=False)
+            if in_ch != out_ch else nn.Identity()
+        )
 
     def forward(self, x):
-        return F.gelu(self.bn2(self.conv2(F.gelu(self.bn1(self.conv1(x))))) + self.skip(x))
+        identity = self.skip(x)
+        x = F.gelu(self.norm1(self.conv1(x)))
+        x = self.norm2(self.conv2(x))
+        return F.gelu(x + identity)
+
 
 
 class CBAM(nn.Module):
@@ -681,232 +625,282 @@ class WavelengthPositionalEncoding(nn.Module):
 
     def forward(self): return self.proj(self.enc).squeeze(-1).view(1,1,-1)
 
-# ══════════════════════════════════════════════════════════════════════
-#  RELATIVE SPECTRAL ATTENTION
-# ══════════════════════════════════════════════════════════════════════
-
-class RelativeSpectralAttention(nn.Module):
-    def __init__(self, dim, heads, max_len):
-        super().__init__()
-        assert dim % heads == 0
-        self.heads = heads
-        self.head_dim = dim // heads
-        self.scale = self.head_dim ** -0.5
-        self.max_len = max_len
-
-        self.qkv = nn.Linear(dim, dim * 3, bias=False)
-        self.proj = nn.Linear(dim, dim)
-
-        # Relative bias for |i-j| distances
-        self.rel_bias = nn.Parameter(
-            torch.zeros(heads, max_len)
-        )
-
-        nn.init.trunc_normal_(self.rel_bias, std=0.02)
-
-    def forward(self, x):
-        B, N, C = x.shape
-
-        qkv = self.qkv(x).reshape(B, N, 3, self.heads, self.head_dim)
-        q, k, v = qkv.unbind(2)  # each: (B, N, H, D)
-
-        q = q.transpose(1, 2)  # (B, H, N, D)
-        k = k.transpose(1, 2)
-        v = v.transpose(1, 2)
-
-        attn = (q @ k.transpose(-2, -1)) * self.scale  # (B,H,N,N)
-
-        # Compute relative distance matrix
-        idx = torch.arange(N, device=x.device)
-        rel = (idx[None, :] - idx[:, None]).abs()  # (N,N)
-        rel = rel.clamp(max=self.max_len - 1)
-
-        bias = self.rel_bias[:, rel]  # (H,N,N)
-        attn = attn + bias.unsqueeze(0)
-
-        attn = attn.softmax(dim=-1)
-
-        out = (attn @ v)  # (B,H,N,D)
-        out = out.transpose(1, 2).reshape(B, N, C)
-
-        return self.proj(out)
-
 
 # ══════════════════════════════════════════════════════════════════════
-#  SPECTRAL TRANSFORMER BLOCK
+#  SPECTRAL PROFILE BRANCH
 # ══════════════════════════════════════════════════════════════════════
-
-class SpectralTransformerBlock(nn.Module):
-    def __init__(self, dim, heads, max_len, drop=0.1):
-        super().__init__()
-        self.ln1 = nn.LayerNorm(dim)
-        self.attn = RelativeSpectralAttention(dim, heads, max_len)
-        self.ln2 = nn.LayerNorm(dim)
-
-        self.ff = nn.Sequential(
-            nn.Linear(dim, dim * 4),
-            nn.GELU(),
-            nn.Dropout(drop),
-            nn.Linear(dim * 4, dim),
-            nn.Dropout(drop)
-        )
-
-    def forward(self, x):
-        x = x + self.attn(self.ln1(x))
-        x = x + self.ff(self.ln2(x))
-        return x
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  BRANCH A - SPECTRAL PROFILE BRANCH
-# ══════════════════════════════════════════════════════════════════════
-
 class SpectralProfileBranch(nn.Module):
     """
-    Spectral modeling branch with:
-    - Signal + d1 + d2
-    - Learnable derivative scaling
-    - Full spectral tokenization
-    - Transformer encoder with relative wavelength bias
-    - CLS aggregation
+    Refined spectral modeling branch.
+
+    Improvements:
+    - Learnable derivative filters (not raw diff)
+    - Spectral positional encoding
+    - Cross-scale fusion
+    - Attention-based spectral pooling
+    - LayerNorm-style normalization
     """
 
-    def __init__(self, out_dim=256, tower_ch=96,
-                 wl_enc=None,
-                 num_layers=4,
-                 heads=4,
-                 dropout=0.1,
-                 num_bands=256):
-
+    def __init__(self, out_dim=256, tower_ch=96, bands=224):
         super().__init__()
-        self.wl_enc = wl_enc
 
-        # Derivative scaling
-        self.alpha_d1 = nn.Parameter(torch.tensor(1.0))
-        self.alpha_d2 = nn.Parameter(torch.tensor(1.0))
+        self.bands = bands
 
+        # ──────────────────────────────────────────────
+        # Learnable derivative filters
+        # Initialized to finite difference kernels
+        # ──────────────────────────────────────────────
+        self.d1_conv = nn.Conv1d(1, 1, kernel_size=5, padding=2, bias=False)
+        self.d2_conv = nn.Conv1d(1, 1, kernel_size=5, padding=2, bias=False)
+
+        with torch.no_grad():
+            self.d1_conv.weight.zero_()
+            self.d2_conv.weight.zero_()
+            self.d1_conv.weight[0, 0, 1] = -1
+            self.d1_conv.weight[0, 0, 3] = 1
+            self.d2_conv.weight[0, 0, 0] = 1
+            self.d2_conv.weight[0, 0, 2] = -2
+            self.d2_conv.weight[0, 0, 4] = 1
+
+        # ──────────────────────────────────────────────
+        # Spectral positional encoding (sinusoidal)
+        # ──────────────────────────────────────────────
+        pe = torch.zeros(1, 1, bands)
+        position = torch.arange(0, bands).unsqueeze(1)
+        div_term = torch.exp(
+            torch.arange(0, 1, 2) * -(math.log(10000.0) / 1)
+        )
+        pe[0, 0, :] = torch.sin(position[:, 0] * div_term)
+        self.register_buffer("pos_enc", pe)
+
+        # ──────────────────────────────────────────────
         # Independent projections
-        self.proj_s  = nn.Sequential(
-            nn.Conv1d(1, tower_ch//3, 1, bias=False),
-            nn.BatchNorm1d(tower_ch//3),
-            nn.GELU()
-        )
+        # ──────────────────────────────────────────────
+        branch_ch = tower_ch // 3
 
-        self.proj_d1 = nn.Sequential(
-            nn.Conv1d(1, tower_ch//3, 1, bias=False),
-            nn.BatchNorm1d(tower_ch//3),
-            nn.GELU()
-        )
+        def make_proj():
+            return nn.Sequential(
+                nn.Conv1d(1, branch_ch, 1, bias=False),
+                nn.GroupNorm(1, branch_ch),
+                nn.GELU()
+            )
 
-        self.proj_d2 = nn.Sequential(
-            nn.Conv1d(1, tower_ch//3, 1, bias=False),
-            nn.BatchNorm1d(tower_ch//3),
-            nn.GELU()
-        )
+        self.proj_s  = make_proj()
+        self.proj_d1 = make_proj()
+        self.proj_d2 = make_proj()
 
         fused_ch = tower_ch
-        self.token_dim = fused_ch
 
-        # CLS token
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, fused_ch))
-        nn.init.trunc_normal_(self.cls_token, std=0.02)
-
-        # Transformer blocks
-        self.blocks = nn.ModuleList([
-            SpectralTransformerBlock(
-                dim=fused_ch,
-                heads=heads,
-                max_len=num_bands + 1,  # + CLS
-                drop=dropout
+        # ──────────────────────────────────────────────
+        # Multi-scale towers
+        # ──────────────────────────────────────────────
+        def make_tower(kernel):
+            return nn.Sequential(
+                ResBlock1D(fused_ch, fused_ch, kernel),
+                ResBlock1D(fused_ch, fused_ch, kernel)
             )
-            for _ in range(num_layers)
-        ])
 
-        self.norm = nn.LayerNorm(fused_ch)
+        self.tower_s = make_tower(3)
+        self.tower_m = make_tower(7)
+        self.tower_l = make_tower(15)
 
+        # ──────────────────────────────────────────────
+        # Cross-scale fusion block
+        # ──────────────────────────────────────────────
+        self.fusion = nn.Sequential(
+            ResBlock1D(fused_ch * 3, fused_ch, kernel=5),
+            ResBlock1D(fused_ch, fused_ch, kernel=5)
+        )
+
+        # ──────────────────────────────────────────────
+        # Spectral Attention Pooling
+        # ──────────────────────────────────────────────
+        self.attn_pool = nn.Sequential(
+            nn.Conv1d(fused_ch, fused_ch // 4, 1),
+            nn.GELU(),
+            nn.Conv1d(fused_ch // 4, 1, 1)
+        )
+
+        # ──────────────────────────────────────────────
         # Final projection
+        # ──────────────────────────────────────────────
         self.proj = nn.Sequential(
             nn.Linear(fused_ch, out_dim),
             nn.LayerNorm(out_dim),
             nn.GELU(),
-            nn.Dropout(dropout)
+            nn.Dropout(0.15)
         )
 
         self._init_weights()
 
+    # ──────────────────────────────────────────────
     def _init_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Conv1d):
                 nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
-            elif isinstance(m, nn.BatchNorm1d):
-                nn.init.ones_(m.weight)
-                nn.init.zeros_(m.bias)
             elif isinstance(m, nn.Linear):
                 nn.init.trunc_normal_(m.weight, std=0.02)
-                if m.bias is not None:
-                    nn.init.zeros_(m.bias)
+                nn.init.zeros_(m.bias)
 
+    # ──────────────────────────────────────────────
+    def spectral_pool(self, x):
+        """
+        Attention-based spectral pooling
+        x: (B, C, L)
+        """
+        w = torch.softmax(self.attn_pool(x), dim=2)  # (B,1,L)
+        return torch.sum(x * w, dim=2)               # (B,C)
+
+    # ──────────────────────────────────────────────
     def forward(self, ms):
         # ms: (B, Bands)
 
-        s = ms.unsqueeze(1)
+        s = ms.unsqueeze(1)  # (B,1,L)
 
-        d1 = F.pad(torch.diff(s, dim=2), (0, 1))
-        d2 = F.pad(torch.diff(d1, dim=2), (0, 1))
+        # Add spectral positional encoding
+        s = s + self.pos_enc
 
-        d1 = self.alpha_d1 * d1
-        d2 = self.alpha_d2 * d2
+        # Learnable derivatives
+        d1 = self.d1_conv(s)
+        d2 = self.d2_conv(d1)
 
+        # Independent encodings
         fs  = self.proj_s(s)
         fd1 = self.proj_d1(d1)
         fd2 = self.proj_d2(d2)
 
-        x = torch.cat([fs, fd1, fd2], dim=1)  # (B,C,L)
+        x = torch.cat([fs, fd1, fd2], dim=1)
 
-        if self.wl_enc is not None:
-            x = x + self.wl_enc()
+        # Multi-scale extraction
+        xs = self.tower_s(x)
+        xm = self.tower_m(x)
+        xl = self.tower_l(x)
 
-        # Tokenization: (B,C,L) → (B,L,C)
-        x = x.transpose(1, 2)
+        # Cross-scale fusion
+        x_cat = torch.cat([xs, xm, xl], dim=1)
+        x_fused = self.fusion(x_cat)
 
-        B = x.shape[0]
-        cls = self.cls_token.expand(B, -1, -1)
-        x = torch.cat([cls, x], dim=1)
+        # Attention pooling
+        feat = self.spectral_pool(x_fused)
 
-        for blk in self.blocks:
-            x = blk(x)
-
-        x = self.norm(x)
-
-        spectral_repr = x[:, 0]  # CLS
-
-        return self.proj(spectral_repr)
+        return self.proj(feat)
     
 # ══════════════════════════════════════════════════════════════════════
 #  BRANCH B — SPECTRAL STATISTICS  (mean, std, max across pixels)
 # ══════════════════════════════════════════════════════════════════════
 
 class SpectralStatsBranch(nn.Module):
-    def __init__(self, out_dim=256, tower_ch=80, wl_enc=None):
+    """
+    Enhanced Statistical Spectral Branch
+
+    Features:
+    - Higher-order statistics
+    - Statistical attention
+    - Multi-scale modeling
+    - Cross-scale fusion
+    - Attention pooling
+    """
+
+    def __init__(self, out_dim=256, tower_ch=96):
         super().__init__()
-        self.wl_enc = wl_enc
-        mk = lambda k: nn.Sequential(ResBlock1D(3, tower_ch//2, k),
-                                     ResBlock1D(tower_ch//2, tower_ch, k),
-                                     ResBlock1D(tower_ch, tower_ch, k))
-        self.tower_s = mk(3); self.tower_m = mk(7); self.tower_l = mk(15)
-        self.proj = nn.Sequential(nn.Linear(tower_ch*6, out_dim),
-                                  nn.BatchNorm1d(out_dim), nn.GELU(), nn.Dropout(0.1))
 
-    @staticmethod
-    def _gp(f): return torch.cat([f.mean(2), f.max(2).values], 1)
+        self.num_stats = 5  # mean, std, max, skew, kurt
 
-    def forward(self, ms, ss, mx):
-        x = torch.stack([ms, ss, mx], 1)
-        if self.wl_enc: x = x + self.wl_enc()
-        return self.proj(torch.cat([self._gp(self.tower_s(x)),
-                                    self._gp(self.tower_m(x)),
-                                    self._gp(self.tower_l(x))], 1))
+        # ─────────────────────────────
+        # Statistical Attention
+        # ─────────────────────────────
+        self.stat_attn = nn.Sequential(
+            nn.AdaptiveAvgPool1d(1),
+            nn.Conv1d(self.num_stats, self.num_stats // 2, 1),
+            nn.GELU(),
+            nn.Conv1d(self.num_stats // 2, self.num_stats, 1),
+            nn.Sigmoid()
+        )
 
+        # ─────────────────────────────
+        # Initial projection
+        # ─────────────────────────────
+        self.input_proj = nn.Sequential(
+            nn.Conv1d(self.num_stats, tower_ch, 1, bias=False),
+            nn.GroupNorm(1, tower_ch),
+            nn.GELU()
+        )
+
+        # ─────────────────────────────
+        # Multi-scale towers
+        # ─────────────────────────────
+        def make_tower(kernel):
+            return nn.Sequential(
+                ResBlock1D(tower_ch, tower_ch, kernel),
+                ResBlock1D(tower_ch, tower_ch, kernel)
+            )
+
+        self.tower_s = make_tower(3)
+        self.tower_m = make_tower(7)
+        self.tower_l = make_tower(15)
+
+        # ─────────────────────────────
+        # Cross-scale fusion
+        # ─────────────────────────────
+        self.fusion = nn.Sequential(
+            ResBlock1D(tower_ch * 3, tower_ch, 5),
+            ResBlock1D(tower_ch, tower_ch, 5)
+        )
+
+        # ─────────────────────────────
+        # Attention Pooling
+        # ─────────────────────────────
+        self.pool_attn = nn.Sequential(
+            nn.Conv1d(tower_ch, tower_ch // 4, 1),
+            nn.GELU(),
+            nn.Conv1d(tower_ch // 4, 1, 1)
+        )
+
+        # ─────────────────────────────
+        # Output projection
+        # ─────────────────────────────
+        self.proj = nn.Sequential(
+            nn.Linear(tower_ch, out_dim),
+            nn.LayerNorm(out_dim),
+            nn.GELU(),
+            nn.Dropout(0.15)
+        )
+
+    def attention_pool(self, x):
+        w = torch.softmax(self.pool_attn(x), dim=2)
+        return torch.sum(x * w, dim=2)
+
+    def compute_stats(self, ms):
+        mean = ms
+        std = torch.std(ms, dim=1, keepdim=True)
+        mx = torch.max(ms, dim=1, keepdim=True).values
+
+        centered = ms - ms.mean(dim=1, keepdim=True)
+        skew = (centered ** 3).mean(dim=1, keepdim=True)
+        kurt = (centered ** 4).mean(dim=1, keepdim=True)
+
+        return torch.cat([mean, std, mx, skew, kurt], dim=1)
+
+    def forward(self, ms):
+        # ms: (B, Bands)
+
+        stats = self.compute_stats(ms.unsqueeze(1))
+
+        # Statistical attention
+        stats = stats * self.stat_attn(stats)
+
+        x = self.input_proj(stats)
+
+        xs = self.tower_s(x)
+        xm = self.tower_m(x)
+        xl = self.tower_l(x)
+
+        x_cat = torch.cat([xs, xm, xl], dim=1)
+        x_fused = self.fusion(x_cat)
+
+        pooled = self.attention_pool(x_fused)
+
+        return self.proj(pooled)
 
 # ══════════════════════════════════════════════════════════════════════
 #  BRANCH C — SPATIAL CNN
@@ -959,6 +953,10 @@ class SpecFormerBranch(nn.Module):
     def __init__(self, num_bands=256, patch_size=8, d_model=128,
                  n_heads=4, n_layers=4, out_dim=256, dropout=0.15):
         super().__init__()
+        
+        assert num_bands % patch_size == 0, \
+            f"num_bands ({num_bands}) must be divisible by patch_size ({patch_size})"
+    
         n_p = num_bands // patch_size
         self.patch_size = patch_size; self.n_patches = n_p
         self.patch_proj = nn.Sequential(nn.Linear(patch_size, d_model, bias=False),
@@ -1057,6 +1055,56 @@ class CrossModalFusion(nn.Module):
 #  SPECTRAL STATISTICS HELPER
 # ══════════════════════════════════════════════════════════════════════
 
+@torch.no_grad()
+def compute_branch_influence(model: nn.Module,
+                             loader,
+                             device,
+                             max_batches: int = 3) -> Dict[str, float]:
+    """
+    Estimates relative branch contribution using logit ablation.
+    Returns percentage influence per branch.
+    """
+
+    model.eval()
+
+    influences = torch.zeros(4, device=device)
+    total = 0
+
+    for i, (x, _) in enumerate(loader):
+        if i >= max_batches:
+            break
+
+        x = x.to(device, non_blocking=True)
+
+        # Full forward
+        logits_full = model(x)
+
+        for b in range(4):
+            mask = torch.ones(4, device=device)
+            mask[b] = 0.0
+
+            logits_ablate = model(x, branch_mask=mask)
+            delta = (logits_full - logits_ablate).abs().mean()
+            influences[b] += delta
+
+        total += 1
+
+    if total == 0:
+        return {"A":0, "B":0, "C":0, "D":0}
+
+    influences /= total
+
+    # Normalize to %
+    total_inf = influences.sum().clamp(min=1e-8)
+    influences = (influences / total_inf) * 100.0
+
+    return {
+        "A": float(influences[0].item()),
+        "B": float(influences[1].item()),
+        "C": float(influences[2].item()),
+        "D": float(influences[3].item()),
+    }
+    
 def masked_spectral_stats(x: torch.Tensor):
     x32  = x.float(); B, C, H, W = x32.shape
     flat = x32.reshape(B, C, H*W)
@@ -1083,8 +1131,8 @@ class SpectralQuadNet(nn.Module):
 
         self.se       = SpectralSE(num_bands, 16)
         self.wl_enc   = WavelengthPositionalEncoding(num_bands, wl_embed_dim)
-        self.branch_a = SpectralProfileBranch(out_dim=256, tower_ch=96, wl_enc=self.wl_enc, num_layers=4, heads=4, dropout=0.1, num_bands=256)
-        self.branch_b = SpectralStatsBranch(256, 80, self.wl_enc)
+        self.branch_a = SpectralProfileBranch(out_dim=256, tower_ch=96, wl_enc=self.wl_enc)
+        self.branch_b = SpectralStatsBranch(  256, 80, self.wl_enc)
         self.branch_c = SpatialCNNBranch(num_bands, 256)
         self.branch_d = SpecFormerBranch(num_bands, cfg["specf_patch"],
                                          cfg["specf_dim"], cfg["specf_heads"],
@@ -1130,7 +1178,8 @@ class SpectralQuadNet(nn.Module):
     def forward(self, x: torch.Tensor,
                 labels: Optional[torch.Tensor] = None,
                 return_embed: bool = False,
-                arc_m: Optional[float] = None) -> torch.Tensor:
+                arc_m: Optional[float] = None,
+                branch_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         x = self.se(x)
         ms, ss, mx = masked_spectral_stats(x)
 
@@ -1139,15 +1188,24 @@ class SpectralQuadNet(nn.Module):
         bc = self.branch_c(x)
         bd = self.branch_d(ms)
 
-        if self.training and self.branch_drop_prob > 0:
+        # Controlled branch masking (for debugging influence)
+        if branch_mask is not None:
+            # branch_mask: tensor of shape (4,) with 0 or 1
+            ba = ba * branch_mask[0]
+            bb = bb * branch_mask[1]
+            bc = bc * branch_mask[2]
+            bd = bd * branch_mask[3]
+        elif self.training and self.branch_drop_prob > 0:
             do_drop  = torch.bernoulli(
-                torch.tensor(self.branch_drop_prob, device=ba.device))  # 0.0 or 1.0
-            drop_idx = torch.randint(0, 4, (), device=ba.device)        # 0..3
-            one_hot  = F.one_hot(drop_idx, num_classes=4).float()       # (4,)
-            keep     = 1.0 - one_hot * do_drop                          # (4,) ∈ {0,1}
-            ba = ba * keep[0]; bb = bb * keep[1]
-            bc = bc * keep[2]; bd = bd * keep[3]
-
+                torch.tensor(self.branch_drop_prob, device=ba.device))
+            drop_idx = torch.randint(0, 4, (), device=ba.device)
+            one_hot  = F.one_hot(drop_idx, num_classes=4).float()
+            keep     = 1.0 - one_hot * do_drop
+            ba = ba * keep[0]
+            bb = bb * keep[1]
+            bc = bc * keep[2]
+            bd = bd * keep[3]
+            
         spectral_token = self.spectral_fusion([ba, bb, bd])
         joint_token = self.cross_modal_fusion(spectral_token, bc)
         emb = self.embed_net(joint_token)
@@ -1159,7 +1217,7 @@ class SpectralQuadNet(nn.Module):
             logits = self.linear_head(emb)
 
         if return_embed:
-            return logits, F.normalize(F.gelu(emb), dim=1)
+            return logits, F.normalize(emb, dim=1)
         return logits
 
 
@@ -1199,38 +1257,38 @@ def build_splits():
 def build_loaders(train_idx, val_idx, test_idx, batch_train,
                   balanced=False, all_labels=None,
                   train_aug="none",
-                  class_weights: Optional[Dict[int,float]] = None):
-    nw = 0 if _DATA_ON_GPU else CONFIG["num_workers"]
-    pf = CONFIG.get("prefetch_factor", 4)
-    kw = (dict(num_workers=0, pin_memory=False) if _DATA_ON_GPU
-          else dict(num_workers=nw, pin_memory=True,
-                    persistent_workers=True, prefetch_factor=pf))
+                  class_weights=None):
 
-    ds = RiceSeedDataset(CONFIG["patches_data"], CONFIG["labels_path"],
-                         train_idx, aug_strength=train_aug)
+    ds = RiceSeedDataset(train_idx, aug_strength=train_aug)
 
     if balanced and all_labels is not None:
-        samp   = ClassBalancedBatchSampler(all_labels[train_idx],
-                                           CONFIG["bal_n_cls"], CONFIG["bal_n_spc"],
-                                           class_weights=class_weights)
-        tr_ldr = DataLoader(ds, batch_sampler=samp, drop_last=False, **kw)
-    elif _USING_MMAP:
-        bss    = BlockSortedSampler(train_idx, block_size=CONFIG.get("mmap_block_size", 64))
-        tr_ldr = DataLoader(ds, batch_size=batch_train, sampler=bss, drop_last=True, **kw)
+        samp = ClassBalancedBatchSampler(
+            all_labels[train_idx],
+            CONFIG["bal_n_cls"],
+            CONFIG["bal_n_spc"],
+            class_weights=class_weights
+        )
+        tr_ldr = DataLoader(ds, batch_sampler=samp, num_workers=0)
     else:
-        tr_ldr = DataLoader(ds, batch_size=batch_train, shuffle=True, drop_last=True, **kw)
+        tr_ldr = DataLoader(ds, batch_size=batch_train,
+                            shuffle=True, drop_last=True,
+                            num_workers=0)
 
     va_ldr = DataLoader(
-        RiceSeedDataset(CONFIG["patches_data"], CONFIG["labels_path"], val_idx),
-        batch_size=256, shuffle=False, **kw)
-    te_ldr = DataLoader(
-        RiceSeedDataset(CONFIG["patches_data"], CONFIG["labels_path"], test_idx),
-        batch_size=256, shuffle=False,
-        **(dict(num_workers=0, pin_memory=False) if _DATA_ON_GPU
-           else dict(num_workers=4, pin_memory=True,
-                     persistent_workers=True, prefetch_factor=2)))
-    return tr_ldr, va_ldr, te_ldr
+        RiceSeedDataset(val_idx),
+        batch_size=256,
+        shuffle=False,
+        num_workers=0
+    )
 
+    te_ldr = DataLoader(
+        RiceSeedDataset(test_idx),
+        batch_size=256,
+        shuffle=False,
+        num_workers=0
+    )
+
+    return tr_ldr, va_ldr, te_ldr
 
 # ══════════════════════════════════════════════════════════════════════
 #  OPTIMISERS & SCHEDULERS
@@ -1288,6 +1346,9 @@ def train_one_epoch(model, loader, optimizer, criterion, scaler, ema, device,
     optimizer.zero_grad(set_to_none=True)
     use_amp = (supcon is None) and (scaler is not None)
 
+    if model._use_arcface and use_mixup:
+        raise ValueError("Mixup cannot be used with ArcFace.")
+
     for step, (x, y) in enumerate(loader):
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
@@ -1318,7 +1379,6 @@ def train_one_epoch(model, loader, optimizer, criterion, scaler, ema, device,
             if use_amp: scaler.step(optimizer); scaler.update()
             else:       optimizer.step()
             optimizer.zero_grad(set_to_none=True)
-            if scheduler: scheduler.step()
             if ema:       ema.update(model)
 
         total_loss += loss.item()
@@ -1484,17 +1544,42 @@ def update_bn_stats(loader, model, device):
 #  CLASS DIFFICULTY
 # ══════════════════════════════════════════════════════════════════════
 
-def compute_class_difficulty(ema_shadow: nn.Module, val_ldr, device,
+def compute_class_difficulty(ema_shadow: nn.Module,
+                             val_ldr,
+                             device,
                              label: str = "Stage") -> Tuple[Dict[int,float], Dict[int,float]]:
-    class_f1 = evaluate_per_class(ema_shadow, val_ldr, device, CONFIG["num_classes"])
-    cdws_wts = build_cdws_weights(class_f1, CONFIG["num_classes"],
-                                  CONFIG["cdws_max_weight"], CONFIG["cdws_eps"])
-    macro    = float(np.mean(list(class_f1.values())))
-    n_hard   = sum(1 for f in class_f1.values() if f < 0.50)
-    print(f"[INFO] {label} class difficulty — macro F1={macro:.3f}  "
-          f"hard classes (<0.50 F1): {n_hard}/{CONFIG['num_classes']}")
-    return class_f1, cdws_wts
 
+    class_f1 = evaluate_per_class(
+        ema_shadow, val_ldr, device, CONFIG["num_classes"])
+
+    cdws_wts = build_cdws_weights(
+        class_f1,
+        CONFIG["num_classes"],
+        CONFIG["cdws_max_weight"],
+        CONFIG["cdws_eps"]
+    )
+
+    macro = float(np.mean(list(class_f1.values())))
+    n_hard = sum(1 for f in class_f1.values() if f < 0.50)
+
+    branch_inf = compute_branch_influence(
+        ema_shadow,
+        val_ldr,
+        device,
+        max_batches=3
+    )
+
+    print(
+        f"[INFO] {label} class difficulty — macro F1={macro:.3f}  "
+        f"hard classes (<0.50 F1): {n_hard}/{CONFIG['num_classes']}  |  "
+        f"Branch influence % → "
+        f"A:{branch_inf['A']:.1f}  "
+        f"B:{branch_inf['B']:.1f}  "
+        f"C:{branch_inf['C']:.1f}  "
+        f"D:{branch_inf['D']:.1f}"
+    )
+
+    return class_f1, cdws_wts
 
 # ══════════════════════════════════════════════════════════════════════
 #  STAGE 1 — 3-PHASE PROGRESSIVE AUGMENTATION
@@ -1518,11 +1603,11 @@ def run_stage1(model, ema, loaders_by_phase, val_ldr, device, best_ckpt: str) ->
     optimizer = build_optimizer_s1(model, CONFIG["s1_max_lr"] / 25)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        scheduler = optim.lr_scheduler.OneCycleLR(
-            optimizer, max_lr=CONFIG["s1_max_lr"], epochs=ep_total,
-            steps_per_epoch=math.ceil(len(loaders_by_phase[1]) / CONFIG["s1_accum"]),
-            pct_start=0.25, div_factor=25, final_div_factor=1e4, anneal_strategy="cos")
-
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=ep_total,
+            eta_min=CONFIG["s1_max_lr"] * 1e-3
+        )
     scaler       = GradScaler()
     ls_hi        = CONFIG["s1_label_smooth_hi"]
     ls_lo        = CONFIG["s1_label_smooth_lo"]
@@ -1573,6 +1658,8 @@ def run_stage1(model, ema, loaders_by_phase, val_ldr, device, best_ckpt: str) ->
         best_ep_acc = max(acc_live, acc_ema)
         lr_now      = optimizer.param_groups[0]["lr"]
         saved       = ""
+        
+        scheduler.step()
 
         # Save and track patience on F1 (primary metric)
         if best_ep_f1 > best_f1:
@@ -1870,19 +1957,11 @@ def main():
     print(f"{'─'*66}")
     print(f"[INFO] Latest completed stage: {done_stage}")
 
-    _load_data_into_ram(CONFIG["patches_data"], CONFIG["labels_path"])
+    _load_data_to_gpu(CONFIG["patches_data"], CONFIG["labels_path"])
 
-    if _DATA_ON_GPU:
-        free = torch.cuda.mem_get_info(device)[0] / 1e9
-        print(f"[DATA] ✓ GPU mode: {_GPU_PATCHES.nelement()*4/1e9:.1f} GB in VRAM  "
-              f"| {free:.1f} GB free | num_workers=0")
-    elif _USING_MMAP:
-        f32_need = os.path.getsize(CONFIG["patches_data"]) / 1e9
-        print(f"\n{'═'*66}\n  ⚠  MMAP MODE — BlockSortedSampler active")
-        print(f"  Need {f32_need*1.1:.0f} GB GPU VRAM or {f32_need*1.2:.0f} GB CPU RAM for full speed")
-        print(f"{'═'*66}\n")
-    else:
-        print("[DATA] ✓ CPU RAM mode.")
+    free = torch.cuda.mem_get_info(device)[0] / 1e9
+    print(f"[DATA] ✓ GPU mode: {_GPU_PATCHES.nelement()*4/1e9:.1f} GB in VRAM  "
+          f"| {free:.1f} GB free | num_workers=0")
 
     all_labels, train_idx, val_idx, test_idx = build_splits()
     print(f"Train: {len(train_idx):,}  Val: {len(val_idx):,}  Test: {len(test_idx):,}")
@@ -1917,22 +1996,15 @@ def main():
               f"TF32={torch.backends.cuda.matmul.allow_tf32}")
 
     def _s1_ldr(aug_str):
-        ds = RiceSeedDataset(CONFIG["patches_data"], CONFIG["labels_path"],
-                             train_idx, aug_strength=aug_str)
-        bs = CONFIG["s1_batch"]
-        if _DATA_ON_GPU:
-            return DataLoader(ds, batch_size=bs, shuffle=True, drop_last=True,
-                              num_workers=0, pin_memory=False)
-        nw = CONFIG["num_workers"]; pf = CONFIG.get("prefetch_factor", 4)
-        if _USING_MMAP:
-            bss = BlockSortedSampler(train_idx, CONFIG.get("mmap_block_size", 64))
-            return DataLoader(ds, batch_size=bs, sampler=bss, drop_last=True,
-                              num_workers=nw, pin_memory=True,
-                              persistent_workers=True, prefetch_factor=pf)
-        return DataLoader(ds, batch_size=bs, shuffle=True, drop_last=True,
-                          num_workers=nw, pin_memory=True,
-                          persistent_workers=True, prefetch_factor=pf)
-
+        ds = RiceSeedDataset(train_idx, aug_strength=aug_str)
+        return DataLoader(
+            ds,
+            batch_size=CONFIG["s1_batch"],
+            shuffle=True,
+            drop_last=True,
+            num_workers=0
+        )
+        
     if done_stage < 1:
         print("\n[RUN] Stage 1")
         phase_loaders = {1: _s1_ldr("heavy"), 2: _s1_ldr("medium"), 3: _s1_ldr("light")}
