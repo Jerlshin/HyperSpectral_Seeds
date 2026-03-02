@@ -232,98 +232,180 @@ class ModelEMA:
 #  DATASET
 # ══════════════════════════════════════════════════════════════════════
 
+import torch
+import torch.nn.functional as F
+from torch.utils.data import Dataset
+import random
+
+
 class RiceSeedDataset(Dataset):
+    """
+    Hyperspectral Rice Seed Dataset with centrally controlled
+    phase-aware spectral + spatial augmentation.
+    """
+
+    # ------------------------------------------------------------------
+    # Centralised Augmentation Profiles
+    # Values represent PROBABILITY of applying each transform.
+    # Intensities are scaled internally based on phase.
+    # ------------------------------------------------------------------
     _PROFILES = {
-
-        # Phase 1 (structure learning) — strong but not destructive
+        # Phase 1 — representation shaping (moderate but safe)
         "heavy": dict(
-            band_drop=0.30,
-            cutout=0.20,
-            noise=0.15,
-            warp=0.10,
-            mult=0.10
+            band_drop=0.08,
+            cutout=0.06,
+            noise=0.04,
+            warp=0.03,
+            mult=0.05,
         ),
 
-        # Phase 2 (robustness shaping)
+        # Phase 2 — robustness consolidation
         "medium": dict(
-            band_drop=0.20,
-            cutout=0.15,
-            noise=0.10,
-            warp=0.08,
-            mult=0.08
+            band_drop=0.05,
+            cutout=0.04,
+            noise=0.03,
+            warp=0.02,
+            mult=0.03,
         ),
 
-        # Phase 3 (stability / refinement)
+        # Phase 3 — fine refinement (spectrally clean)
         "light": dict(
-            band_drop=0.10,
-            cutout=0.08,
-            noise=0.05,
-            warp=0.05,
-            mult=0.05
+            band_drop=0.0,
+            cutout=0.0,
+            noise=0.0,
+            warp=0.0,
+            mult=0.0,
         ),
 
         "none": None,
     }
 
+    # Intensity multipliers per phase
+    _INTENSITY_SCALE = {
+        "heavy": 1.0,
+        "medium": 0.7,
+        "light": 0.4,
+    }
+
+    # Warp scaling range per phase (physically plausible)
+    _WARP_RANGE = {
+        "heavy": 0.05,   # ±5%
+        "medium": 0.03,
+        "light": 0.0,
+    }
+
     def __init__(self, indices, aug_strength="none"):
-        self.patches          = _GPU_PATCHES
-        self.labels           = _GLOBAL_LABELS
-        self.indices          = indices
-        self.aug_strength     = aug_strength
+        self.patches = _GPU_PATCHES
+        self.labels = _GLOBAL_LABELS
+        self.indices = indices
+        self.aug_strength = str(aug_strength)
 
-    def __len__(self): return len(self.indices)
+        self.profile = self._PROFILES.get(self.aug_strength)
+        self.intensity_scale = self._INTENSITY_SCALE.get(self.aug_strength, 0.0)
+        self.warp_range = self._WARP_RANGE.get(self.aug_strength, 0.0)
 
-    def _probs(self): return self._PROFILES.get(str(self.aug_strength))
+    def __len__(self):
+        return len(self.indices)
 
-    def _band_dropout(self, x):
-        return x * (torch.rand(x.shape[0], device=x.device) > 0.04).float().view(-1,1,1)
+    # ------------------------------------------------------------------
+    # Spectral Transforms
+    # ------------------------------------------------------------------
+
+    def _band_dropout(self, x, prob):
+        C = x.shape[0]
+        mask = (torch.rand(C, device=x.device) > prob).float()
+        return x * mask.view(-1, 1, 1)
 
     def _band_cutout(self, x):
-        x = x.clone(); nb = x.shape[0]
-        cut = torch.randint(1, max(2, CONFIG["max_cutout_bands"]), (1,)).item()
-        st  = torch.randint(0, max(1, nb - cut), (1,)).item()
-        x[st:st+cut] = 0.0; return x
+        x = x.clone()
+        C = x.shape[0]
+
+        max_cut = max(1, CONFIG["max_cutout_bands"])
+        cut = torch.randint(1, max_cut + 1, (1,)).item()
+        start = torch.randint(0, max(1, C - cut), (1,)).item()
+
+        x[start:start + cut] = 0.0
+        return x
 
     def _spectral_noise(self, x):
+        sigma = CONFIG["noise_std"] * self.intensity_scale
         mask = (x.abs().sum(dim=0, keepdim=True) > 1e-5).float()
-        return x + (torch.randn_like(x) * CONFIG["noise_std"]) * mask
-    
-    def _spectral_warp(self, x):
-        C, H, W = x.shape
-        scale = 1.0 + random.uniform(-0.10, 0.10); new_C = max(1, int(C * scale))
-        if new_C == C: return x
-        xp     = x.permute(1,2,0).reshape(-1,1,C)
-        warped = F.interpolate(xp, size=new_C, mode="linear", align_corners=False)
-        if new_C > C:
-            s = (new_C-C)//2; warped = warped[:,:,s:s+C]
-        else:
-            lo = (C-new_C)//2; warped = F.pad(warped, (lo, C-new_C-lo))
-        return warped.reshape(H,W,C).permute(2,0,1)
+        noise = torch.randn_like(x) * sigma
+        return x + noise * mask
 
-    def _mult_noise(self, x):
+    def _spectral_warp(self, x):
+        if self.warp_range <= 0:
+            return x
+
+        C, H, W = x.shape
+        scale = 1.0 + random.uniform(-self.warp_range, self.warp_range)
+        new_C = max(1, int(C * scale))
+
+        if new_C == C:
+            return x
+
+        xp = x.permute(1, 2, 0).reshape(-1, 1, C)
+        warped = F.interpolate(xp, size=new_C, mode="linear", align_corners=False)
+
+        if new_C > C:
+            s = (new_C - C) // 2
+            warped = warped[:, :, s:s + C]
+        else:
+            pad_left = (C - new_C) // 2
+            pad_right = C - new_C - pad_left
+            warped = F.pad(warped, (pad_left, pad_right))
+
+        return warped.reshape(H, W, C).permute(2, 0, 1)
+
+    def _multiplicative_noise(self, x):
+        scale_std = 0.05 * self.intensity_scale
         mask = (x.abs().sum(dim=0, keepdim=True) > 1e-5).float()
-        noise_factor = 1.0 + torch.randn(x.shape[0], 1, 1, device=x.device) * 0.05
-        return x * noise_factor * mask
-    
+        factor = 1.0 + torch.randn(x.shape[0], 1, 1, device=x.device) * scale_std
+        return x * factor * mask
+
+    # ------------------------------------------------------------------
+    # Spatial Transforms (always active except "none")
+    # ------------------------------------------------------------------
+
     def _spatial(self, x):
-        if torch.rand(1) < 0.5: x = torch.flip(x, [2])
-        if torch.rand(1) < 0.5: x = torch.flip(x, [1])
-        return torch.rot90(x, torch.randint(0,4,(1,)).item(), [1,2])
+        if torch.rand(1) < 0.5:
+            x = torch.flip(x, [2])
+        if torch.rand(1) < 0.5:
+            x = torch.flip(x, [1])
+        k = torch.randint(0, 4, (1,)).item()
+        return torch.rot90(x, k, [1, 2])
+
+    # ------------------------------------------------------------------
+    # Forward Retrieval
+    # ------------------------------------------------------------------
 
     def __getitem__(self, idx):
         ri = self.indices[idx]
+
         patch = self.patches[ri].clone()
         label = torch.tensor(int(self.labels[ri]), dtype=torch.long)
-        p = self._probs()
-        if p is not None:
-            if torch.rand(1) < p["band_drop"]:  patch = self._band_dropout(patch)
-            if torch.rand(1) < p["cutout"]:     patch = self._band_cutout(patch)
-            if torch.rand(1) < p["noise"]:      patch = self._spectral_noise(patch)
-            if torch.rand(1) < p["warp"]:       patch = self._spectral_warp(patch)
-            if torch.rand(1) < p["mult"]:       patch = self._mult_noise(patch)
-            patch = self._spatial(patch)
-        return patch, label
 
+        if self.profile is not None:
+            p = self.profile
+
+            if torch.rand(1) < p["band_drop"]:
+                patch = self._band_dropout(patch, p["band_drop"])
+
+            if torch.rand(1) < p["cutout"]:
+                patch = self._band_cutout(patch)
+
+            if torch.rand(1) < p["noise"]:
+                patch = self._spectral_noise(patch)
+
+            if torch.rand(1) < p["warp"]:
+                patch = self._spectral_warp(patch)
+
+            if torch.rand(1) < p["mult"]:
+                patch = self._multiplicative_noise(patch)
+
+            patch = self._spatial(patch)
+
+        return patch, label
 
 # ══════════════════════════════════════════════════════════════════════
 #  SAMPLERS
@@ -1240,12 +1322,19 @@ def tta_predict(model: nn.Module, x: torch.Tensor,
     scales = torch.linspace(0.95, 1.05, n_spectral, device=device)
     
     for s in scales:
-        if s == 1.0: continue
-        aug_spectral = x * s
+        if s == 1.0:
+            continue
+
+        # Center per-band (same structure as training stats)
+        mean = x.mean(dim=[2, 3], keepdim=True)
+
+        # Scale deviations, not absolute magnitude
+        aug_spectral = mean + (x - mean) * s
+
         with autocast(device_type=device.type):
             out = eval_model(aug_spectral)
             logits.append(out["main"] if isinstance(out, dict) else out)
-
+        
     return torch.stack(logits).mean(0)
 
 # ══════════════════════════════════════════════════════════════════════
