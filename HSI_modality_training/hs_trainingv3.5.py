@@ -57,6 +57,17 @@ CONFIG: dict = {
     "s1_label_smooth_lo":   0.00,
     "s1_ema_reinit_phases": True,
 
+    # ── Stage 1 · Phase 3 — Hard-Class Oversampling ───────────────────
+    # Hard classes are identified at the Phase-2→3 boundary by measuring
+    # per-class F1 on the validation set with the EMA shadow model.
+    # The sampler boosts sampling probability for low-F1 classes.
+    "s1_p3_oversample":         True,   # enable class-specific oversampling
+    "s1_p3_oversample_power":   0.75,   # exponent applied to inverse-F1 weights
+                                        # 1.0 = full inverse, 0.5 = square-root softened
+    "s1_p3_oversample_max_w":   5.0,    # cap on any single class weight
+    "s1_p3_hard_f1_thresh":     0.50,   # F1 < threshold → classified as "hard"
+    "s1_p3_oversample_eps":     0.05,   # smoothing denominator (avoids div-by-zero)
+
     # ── Architecture ──────────────────────────────────────────────────
     "branch_drop_prob":    0.20,
     "subcenter_K":          3,
@@ -391,6 +402,79 @@ class ClassBalancedBatchSampler(Sampler):
 
     def __len__(self) -> int:
         return self._n
+
+
+class HardClassOversampledSampler(Sampler):
+    """
+    Stage 1 · Phase 3 — Class-Specific Oversampling Sampler.
+
+    Hard classes (low per-class F1 from Phase 2 evaluation) are assigned
+    higher sampling weight via inverse-F1 re-weighting.  The weight is
+    raised to ``oversample_power`` to control the aggressiveness of the
+    boost, and capped at ``max_weight`` to prevent pathological imbalance.
+
+    Args:
+        labels:            Integer class label for every training sample.
+        class_f1:          Per-class F1 scores from Phase 2 EMA evaluation.
+        num_samples:       Total samples to draw per epoch (with replacement).
+        oversample_power:  Exponent on inverse-F1 weight (1.0 = full inverse).
+        max_weight:        Ceiling on any single class multiplier.
+        hard_f1_thresh:    Classes below this F1 are logged as "hard".
+        eps:               Smoothing term in the denominator (avoids div-by-zero).
+    """
+
+    def __init__(
+        self,
+        labels:           np.ndarray,
+        class_f1:         Dict[int, float],
+        num_samples:      int,
+        oversample_power: float = 0.75,
+        max_weight:       float = 5.0,
+        hard_f1_thresh:   float = 0.50,
+        eps:              float = 0.05,
+    ) -> None:
+        self.num_samples = num_samples
+
+        # ── Build per-class weights ────────────────────────────────────
+        num_classes   = int(np.max(labels)) + 1
+        raw_weights: Dict[int, float] = {}
+        for c in range(num_classes):
+            f1 = float(class_f1.get(c, 0.0))
+            w  = (1.0 / (f1 + eps)) ** oversample_power
+            raw_weights[c] = min(w, max_weight)
+
+        # Normalise so the mean weight stays at 1.0 (no overall rate change)
+        mean_w = float(np.mean(list(raw_weights.values())))
+        norm_weights = {c: w / mean_w for c, w in raw_weights.items()}
+
+        # ── Assign per-sample weights ──────────────────────────────────
+        sample_weights         = np.array(
+            [norm_weights.get(int(lbl), 1.0) for lbl in labels], dtype=np.float32
+        )
+        self._weights          = torch.from_numpy(sample_weights)
+
+        # ── Diagnostics ───────────────────────────────────────────────
+        n_hard = sum(1 for f in class_f1.values() if f < hard_f1_thresh)
+        hard_classes = sorted(
+            [c for c, f in class_f1.items() if f < hard_f1_thresh],
+            key=lambda c: class_f1[c]
+        )
+        print(
+            f"[INFO] Phase-3 oversampling: {n_hard}/{num_classes} hard classes "
+            f"(F1 < {hard_f1_thresh})  |  power={oversample_power:.2f}  "
+            f"max_w={max_weight:.1f}  n_samples={num_samples:,}"
+        )
+        if hard_classes:
+            worst5 = [(c, class_f1[c]) for c in hard_classes[:5]]
+            print(f"[INFO] Hardest classes (class_id, F1): {worst5}")
+
+    def __iter__(self) -> Iterator[int]:
+        return iter(
+            torch.multinomial(self._weights, self.num_samples, replacement=True).tolist()
+        )
+
+    def __len__(self) -> int:
+        return self.num_samples
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1419,6 +1503,41 @@ def build_loaders(
     return tr_ldr, va_ldr, te_ldr
 
 
+def build_phase3_loader(
+    train_ds:  Dataset,
+    class_f1:  Dict[int, float],
+) -> DataLoader:
+    """
+    Build the Phase-3 DataLoader with hard-class oversampling.
+
+    Uses HardClassOversampledSampler to give hard classes (low F1 from
+    Phase 2) higher sampling probability.  Falls back to standard
+    shuffled loader if oversampling is disabled in CONFIG.
+    """
+    if not CONFIG["s1_p3_oversample"] or not class_f1:
+        return DataLoader(
+            train_ds, batch_size=CONFIG["s1_batch"],
+            shuffle=True, drop_last=True, num_workers=0
+        )
+
+    train_labels = np.array(
+        [int(_GLOBAL_LABELS[train_ds.indices[i]]) for i in range(len(train_ds.indices))]
+    )
+    sampler = HardClassOversampledSampler(
+        labels           = train_labels,
+        class_f1         = class_f1,
+        num_samples      = len(train_labels),
+        oversample_power = CONFIG["s1_p3_oversample_power"],
+        max_weight       = CONFIG["s1_p3_oversample_max_w"],
+        hard_f1_thresh   = CONFIG["s1_p3_hard_f1_thresh"],
+        eps              = CONFIG["s1_p3_oversample_eps"],
+    )
+    return DataLoader(
+        train_ds, batch_size=CONFIG["s1_batch"],
+        sampler=sampler, drop_last=True, num_workers=0
+    )
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  OPTIMISERS & SCHEDULERS
 # ══════════════════════════════════════════════════════════════════════
@@ -1869,6 +1988,7 @@ def run_stage1(
     Phase 1 (0 → ~25%):   heavy aug  + mixup  + high LS   → explore representation
     Phase 2 (~25 → ~60%): medium aug + mixup  + decay LS  → robustness consolidation
     Phase 3 (~60 → 100%): light aug  + Focal  + NO mixup  → discriminate hard classes
+                          └─ Uses HardClassOversampledSampler built from Phase 2 F1 scores
 
     Deep supervision via per-branch AuxiliaryHeads with decaying weight.
     Primary metric: macro-F1 (not accuracy).
@@ -1895,15 +2015,22 @@ def run_stage1(
     no_improve   = 0
     ema_reinited = [False, False]
 
+    # Phase 3 loader — built lazily at the Phase 2 → 3 boundary
+    phase3_ldr:       Optional[DataLoader]   = None
+    class_f1_phase2:  Dict[int, float]       = {}
+
     w = 66
     print(f"\n{'═'*w}")
     print(f"  Stage 1 — 3-Phase Progressive Augmentation  [{ep_total} epochs max]")
     print(f"{'═'*w}")
     print(f"  Phase 1: ep 1–{p1_end}         heavy aug + mixup")
     print(f"  Phase 2: ep {p1_end+1}–{p2_end}       medium aug + mixup")
-    print(f"  Phase 3: ep {p2_end+1}–{ep_total}      light aug, Focal, NO mixup")
+    print(f"  Phase 3: ep {p2_end+1}–{ep_total}      light aug, Focal, class-oversample")
     print(f"  Label smooth: {ls_hi} → {ls_lo}  |  Aux w: "
           f"{CONFIG['aux_loss_weight_init']} → {CONFIG['aux_loss_weight_final']}")
+    print(f"  Oversample: {CONFIG['s1_p3_oversample']}  "
+          f"power={CONFIG['s1_p3_oversample_power']}  "
+          f"hard_thresh={CONFIG['s1_p3_hard_f1_thresh']}")
 
     for ep in range(1, ep_total + 1):
 
@@ -1923,10 +2050,21 @@ def run_stage1(
             print(f"[INFO] EMA re-init at Phase 3 (ep {ep})")
             ema_reinited[1] = True
 
+        # ── Phase 3 loader construction (once, at first Phase-3 epoch) ─
+        if phase == 3 and phase3_ldr is None:
+            print(f"\n[INFO] Phase 2→3 boundary: measuring per-class F1 for oversampling ...")
+            class_f1_phase2, _ = compute_class_difficulty(
+                ema.shadow, val_ldr, device, "Phase2→3"
+            )
+            phase3_ldr = build_phase3_loader(
+                train_ds = loaders_by_phase[3].dataset,
+                class_f1 = class_f1_phase2,
+            )
+
         # ── Select active loader ──────────────────────────────────────
         if   phase == 1: cur_ldr = loaders_by_phase[1]
         elif phase == 2: cur_ldr = loaders_by_phase[2]
-        else:            cur_ldr = loaders_by_phase[3]
+        else:            cur_ldr = phase3_ldr   # oversampled Phase-3 loader
 
         # ── Loss function ─────────────────────────────────────────────
         t      = (ep - 1) / max(ep_total - 1, 1)
@@ -1971,6 +2109,7 @@ def run_stage1(
                 val_f1=best_ep_f1, val_acc=best_ep_acc,
                 class_f1=_cf1, cdws_weights=_cdws,
                 arcface_init_done=False,
+                phase3_class_f1=class_f1_phase2,          # store phase-2 hard-class info
             )
             saved = "  ✓"
         else:
