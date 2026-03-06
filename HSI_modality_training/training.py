@@ -1,9 +1,10 @@
-# code 2
+# code 4
 from __future__ import annotations
 
+import os
 import copy, json as _json, math, os, random, warnings
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -17,6 +18,8 @@ from sklearn.model_selection import train_test_split
 from torch.amp import GradScaler, autocast
 from torch.utils.data import DataLoader, Dataset, Sampler
 
+from utilities import *
+
 os.environ["NETWORKX_BACKEND"] = "nx-loopback"
 os.environ["PYTHONWARNINGS"] = "ignore"
 warnings.filterwarnings("ignore", module="networkx")
@@ -24,7 +27,7 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.filterwarnings("ignore", category=UserWarning, message=".*Online softmax is disabled.*")
 
 # ══════════════════════════════════════════════════════════════════════
-#  CONFIG
+#  CONFIG  (all hyper-parameters centralised here)
 # ══════════════════════════════════════════════════════════════════════
 
 WL_MIN: float = 385.0
@@ -45,7 +48,7 @@ CONFIG: dict = {
     "s1_epochs":            400,
     "s1_phase1_frac":       0.15,
     "s1_phase2_frac":       0.35,
-                                 
+
     "s1_batch":             128,
     "s1_max_lr":            2e-3,
     "s1_dropout":           0.10,
@@ -57,12 +60,30 @@ CONFIG: dict = {
     "s1_label_smooth_lo":   0.00,
     "s1_ema_reinit_phases": True,
 
+    # ── Stage 1 · Phase 1 — CosineAnnealingWarmRestarts ──────────────
+    # LR is reset to s1_max_lr at the start of Phase 1.
+    "s1_p1_T0":             20,     # epochs per first SGDR cycle
+    "s1_p1_T_mult":          2,     # cycle length multiplier
+
+    # ── Stage 1 · Phase 2 — CosineAnnealingLR ────────────────────────
+    # LR is reset to s1_max_lr at the start of Phase 2.
+    "s1_p2_lr":             6e-4,   # peak LR for Phase 2 (reset value)
+    "s1_p2_min_lr":         5e-6,   # eta_min for CosineAnnealingLR
+    # T_max is derived automatically as the Phase 2 epoch count
+
+    # ── Stage 1 · Phase 3 — ReduceLROnPlateau ────────────────────────
+    # LR is reset to s1_p3_lr at the start of Phase 3.
+    "s1_p3_lr":             2e-4,   # peak LR for Phase 3 (reset value)
+    "s1_p3_rlrop_factor":   0.5,    # LR reduction factor on plateau
+    "s1_p3_rlrop_patience": 8,     # epochs without improvement before reduction
+    "s1_p3_rlrop_min_lr":   1e-7,   # minimum LR floor
+
     # ── Stage 1 · Phase 3 — Hard-Class Oversampling ───────────────────
     "s1_p3_oversample":         True,
     "s1_p3_oversample_power":   0.75,
                                      
     "s1_p3_oversample_max_w":   5.0,
-    "s1_p3_hard_f1_thresh":     0.50,
+    "s1_p3_hard_f1_thresh":     0.50,   # F1 < threshold → classified as "hard"
     "s1_p3_oversample_eps":     0.05,   
 
     # ── Architecture ──────────────────────────────────────────────────
@@ -109,8 +130,6 @@ CONFIG: dict = {
     "s3_sam_rho":             0.05,
     "s3_greedy":            True,
     "s3_aux_loss_weight":    0.10,
-    "s3_supcon_weight":      0.02,
-    "s3_proto_weight":       0.01,
 
     # ── Shared ────────────────────────────────────────────────────────
     "weight_decay":          2e-4,
@@ -148,67 +167,6 @@ _GPU_PATCHES:    Optional[torch.Tensor] = None
 _GLOBAL_LABELS:  Optional[np.ndarray]  = None
 _PHYSICAL_WL:    Optional[torch.Tensor] = None
 
-
-# ══════════════════════════════════════════════════════════════════════
-#  DATA LOADING
-# ══════════════════════════════════════════════════════════════════════
-
-def _load_data_to_gpu(patches_path: str, labels_path: str) -> None:
-    global _GPU_PATCHES, _GLOBAL_LABELS
-
-    if _GPU_PATCHES is not None:
-        return
-
-    device = CONFIG["device"]
-    assert device.type == "cuda", "GPU mode required."
-
-    print("[DATA] Loading full dataset into GPU VRAM...")
-    mmap_arr   = np.load(patches_path, mmap_mode="r")
-    shape      = mmap_arr.shape
-    gpu_tensor = torch.empty(shape, dtype=torch.float32, device=device)
-
-    for i in range(0, shape[0], 512):
-        block = torch.from_numpy(
-            mmap_arr[i:i+512].astype(np.float32)
-        ).to(device, non_blocking=True)
-        gpu_tensor[i:i+512].copy_(block)
-
-    del mmap_arr
-    torch.cuda.synchronize()
-
-    _GPU_PATCHES  = gpu_tensor
-    _GLOBAL_LABELS = np.load(labels_path)
-    print(f"[DATA] ✓ Loaded {_GPU_PATCHES.nelement()*4/1e9:.1f} GB into VRAM")
-
-
-def _load_wavelengths_to_gpu(csv_path: str, device: torch.device) -> None:
-    global _PHYSICAL_WL
-
-    if _PHYSICAL_WL is not None:
-        return
-
-    print("[DATA] Loading physical wavelengths from CSV...")
-    try:
-        df      = pd.read_csv(csv_path, sep=None, engine="python")
-        raw_wl  = df.iloc[:, -1].values.astype(np.float32)
-        wl_norm = (raw_wl - raw_wl.min()) / (raw_wl.max() - raw_wl.min())
-        _PHYSICAL_WL = torch.from_numpy(wl_norm).to(device)
-        print(f"[DATA] ✓ Loaded physical wavelengths: {_PHYSICAL_WL.size(0)} bands.")
-    except Exception as e:
-        raise RuntimeError(f"Failed to load wavelengths.csv: {e}")
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  REPRODUCIBILITY
-# ══════════════════════════════════════════════════════════════════════
-
-def set_seed(seed: int = 42) -> None:
-    random.seed(seed); np.random.seed(seed)
-    torch.manual_seed(seed); torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = False
-    torch.backends.cudnn.benchmark     = True
-
-set_seed(CONFIG["seed"])
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -267,11 +225,11 @@ class RiceSeedDataset(Dataset):
     phase-aware spectral + spatial augmentation.
     """
     _PROFILES = {
-        # Phase 1 — representation shaping
+        # Phase 1 — representation shaping (moderate but safe)
         "heavy": dict(band_drop=0.08, cutout=0.06, noise=0.04, warp=0.03, mult=0.05),
         # Phase 2 — robustness consolidation
         "medium": dict(band_drop=0.05, cutout=0.04, noise=0.03, warp=0.02, mult=0.03),
-        # Phase 3 — fine refinement
+        # Phase 3 — fine refinement (spectrally clean)
         "light": dict(band_drop=0.0, cutout=0.0, noise=0.0, warp=0.0, mult=0.0),
         "none":  None,
     }
@@ -367,99 +325,9 @@ class RiceSeedDataset(Dataset):
         return patch, label
 
 
-# ══════════════════════════════════════════════════════════════════════
-#  SAMPLERS
-# ══════════════════════════════════════════════════════════════════════
-
-class ClassBalancedBatchSampler(Sampler):
-    """Draws n_cls classes per batch, n_spc samples per class, with optional CDWS weighting."""
-
-    def __init__(self, train_labels: np.ndarray, n_cls: int = 16, n_spc: int = 8,
-                 class_weights: Optional[Dict[int, float]] = None) -> None:
-        self.n_cls  = n_cls
-        self.n_spc  = n_spc
-        self.classes = np.unique(train_labels)
-        self.cls_idx = {c: np.where(train_labels == c)[0] for c in self.classes}
-        self._n      = len(train_labels) // (n_cls * n_spc)
-        if class_weights is not None:
-            raw        = np.array([class_weights.get(int(c), 1.0) for c in self.classes])
-            self.probs = raw / raw.sum()
-        else:
-            self.probs = None
-
-    def __iter__(self) -> Iterator[List[int]]:
-        rng = np.random.default_rng()
-        for _ in range(self._n):
-            chosen = rng.choice(self.classes, self.n_cls, replace=False, p=self.probs)
-            batch  = []
-            for c in chosen:
-                pool = self.cls_idx[c]
-                batch.extend(
-                    rng.choice(pool, self.n_spc, replace=len(pool) < self.n_spc).tolist()
-                )
-            yield batch
-
-    def __len__(self) -> int:
-        return self._n
-
-
-class HardClassOversampledSampler(Sampler):
-    """
-    Stage 1 · Phase 3 — Class-Specific Oversampling Sampler.
-    """
-
-    def __init__(
-        self,
-        labels:           np.ndarray,
-        class_f1:         Dict[int, float],
-        num_samples:      int,
-        oversample_power: float = 0.75,
-        max_weight:       float = 5.0,
-        hard_f1_thresh:   float = 0.50,
-        eps:              float = 0.05,
-    ) -> None:
-        self.num_samples = num_samples
-
-        num_classes   = int(np.max(labels)) + 1
-        raw_weights: Dict[int, float] = {}
-        for c in range(num_classes):
-            f1 = float(class_f1.get(c, 0.0))
-            w  = (1.0 / (f1 + eps)) ** oversample_power
-            raw_weights[c] = min(w, max_weight)
-
-        mean_w = float(np.mean(list(raw_weights.values())))
-        norm_weights = {c: w / mean_w for c, w in raw_weights.items()}
-
-        sample_weights         = np.array(
-            [norm_weights.get(int(lbl), 1.0) for lbl in labels], dtype=np.float32
-        )
-        self._weights          = torch.from_numpy(sample_weights)
-
-        n_hard = sum(1 for f in class_f1.values() if f < hard_f1_thresh)
-        hard_classes = sorted(
-            [c for c, f in class_f1.items() if f < hard_f1_thresh],
-            key=lambda c: class_f1[c]
-        )
-        print(
-            f"[INFO] Phase-3 oversampling: {n_hard}/{num_classes} hard classes "
-            f"(F1 < {hard_f1_thresh})  |  power={oversample_power:.2f}  "
-            f"max_w={max_weight:.1f}  n_samples={num_samples:,}"
-        )
-        if hard_classes:
-            worst5 = [(c, class_f1[c]) for c in hard_classes[:5]]
-            print(f"[INFO] Hardest classes (class_id, F1): {worst5}")
-
-    def __iter__(self) -> Iterator[int]:
-        return iter(
-            torch.multinomial(self._weights, self.num_samples, replacement=True).tolist()
-        )
-
-    def __len__(self) -> int:
-        return self.num_samples
-
 
 # ══════════════════════════════════════════════════════════════════════
-#  CLASS DIFFICULTY WEIGHTS
+#  CLASS DIFFICULTY WEIGHTS (CDWS)
 # ══════════════════════════════════════════════════════════════════════
 
 def build_cdws_weights(
@@ -498,75 +366,6 @@ def mixed_loss(
 ) -> torch.Tensor:
     return lam * crit(logits, ya) + (1 - lam) * crit(logits, yb)
 
-
-# ══════════════════════════════════════════════════════════════════════
-#  LOSSES
-# ══════════════════════════════════════════════════════════════════════
-
-class FocalLoss(nn.Module):
-    """
-    Focal loss with optional label smoothing.
-    """
-    def __init__(self, gamma: float = 1.5, label_smoothing: float = 0.0) -> None:
-        super().__init__()
-        self.gamma = gamma
-        self.ls    = label_smoothing
-
-    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        C    = logits.shape[1]
-        logp = F.log_softmax(logits, dim=1)
-        if self.ls > 0.0:
-            with torch.no_grad():
-                soft = torch.full_like(logits, self.ls / (C - 1))
-                soft.scatter_(1, targets.view(-1, 1), 1.0 - self.ls)
-            ce = -(soft * logp).sum(1)
-        else:
-            ce = F.nll_loss(logp, targets, reduction="none")
-        return ((1.0 - torch.exp(-ce)) ** self.gamma * ce).mean()
-
-
-class SupConLoss(nn.Module):
-    """Supervised Contrastive Loss. Expects L2-normalised features."""
-
-    def __init__(self, temperature: float = 0.10) -> None:
-        super().__init__()
-        self.temperature = temperature
-
-    def forward(self, features: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        B         = features.shape[0]
-        sim       = torch.mm(features, features.T) / self.temperature
-        self_mask = torch.eye(B, dtype=torch.bool, device=features.device)
-        pos_mask  = (labels.unsqueeze(0) == labels.unsqueeze(1)) & ~self_mask
-        n_pos     = pos_mask.float().sum(1)
-        if not (n_pos > 0).any():
-            return torch.zeros((), device=features.device, requires_grad=True)
-        sim_m    = sim.masked_fill(self_mask, float("-inf"))
-        log_prob = sim_m - torch.logsumexp(sim_m, dim=1, keepdim=True)
-        loss     = -(pos_mask.float() * log_prob.masked_fill(self_mask, 0.0)).sum(1)
-        valid    = n_pos > 0
-        return (loss[valid] / n_pos[valid]).mean()
-
-
-class ProtoNCELoss(nn.Module):
-    """Class-mean prototype contrastive CE."""
-
-    def __init__(self, temperature: float = 0.10) -> None:
-        super().__init__()
-        self.temperature = temperature
-
-    def forward(self, features: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        classes = labels.unique()
-        if len(classes) < 2:
-            return (features * 0).sum()
-        protos = F.normalize(
-            torch.stack([features[labels == c].mean(0) for c in classes]), dim=1
-        )
-        sim   = torch.mm(features, protos.T) / self.temperature
-        c2l   = {c.item(): i for i, c in enumerate(classes)}
-        local = torch.tensor(
-            [c2l[y.item()] for y in labels], dtype=torch.long, device=features.device
-        )
-        return F.cross_entropy(sim, local)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -852,8 +651,7 @@ class SpectralProfileBranch(nn.Module):
                 nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
             elif isinstance(m, nn.Linear):
                 nn.init.trunc_normal_(m.weight, std=0.02)
-                if m.bias is not None:  # FIX-4: guard against bias=False linears
-                    nn.init.zeros_(m.bias)
+                nn.init.zeros_(m.bias)
 
     def forward(self, ms: torch.Tensor) -> torch.Tensor:
         s        = ms.unsqueeze(1)
@@ -934,8 +732,7 @@ class SpectralStatsBranch(nn.Module):
                 nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
             elif isinstance(m, nn.Linear):
                 nn.init.trunc_normal_(m.weight, std=0.02)
-                if m.bias is not None:  # FIX-4: guard against bias=False linears
-                    nn.init.zeros_(m.bias)
+                nn.init.zeros_(m.bias)
 
     def forward(
         self,
@@ -1116,6 +913,13 @@ class CrossModalInteraction(nn.Module):
 class AuxiliaryHead(nn.Module):
     """
     Lightweight per-branch classification head for deep supervision.
+
+    Used during Stage 1 only.  Each of the four spectral branches gets
+    its own head so that every branch is individually discriminative
+    before the fusion layer collapses them.
+
+    Architecture: Linear → GELU → Linear (num_classes)
+    The small hidden dimension keeps the parameter cost low.
     """
 
     def __init__(self, in_dim: int, hidden_dim: int, num_classes: int) -> None:
@@ -1125,6 +929,7 @@ class AuxiliaryHead(nn.Module):
             nn.GELU(),
             nn.Linear(hidden_dim, num_classes),
         )
+        # Conservative init: smaller std avoids saturating softmax early
         nn.init.trunc_normal_(self.net[0].weight, std=0.02)
         nn.init.zeros_(self.net[0].bias)
         nn.init.trunc_normal_(self.net[2].weight, std=0.02)
@@ -1245,10 +1050,13 @@ class SpectralQuadNet(nn.Module):
 
         self.branch_drop_prob = cfg.get("branch_drop_prob", 0.0)
 
+        # ── Shared spectral attention ─────────────────────────────────
         self.se        = SpectralSE(num_bands, 16)
 
+        # ── Physical wavelength positional encoding (for 1-D CNN branches) ──
         self.wl_pe_cnn = PhysicalWavelengthPE(_PHYSICAL_WL, tower_ch)
 
+        # ── Four spectral branches ────────────────────────────────────
         self.branch_a = SpectralProfileBranch(
             out_dim=256, tower_ch=tower_ch, wl_pe_module=self.wl_pe_cnn
         )
@@ -1268,21 +1076,25 @@ class SpectralQuadNet(nn.Module):
             dropout=0.10,
         )
 
+        # ── Cross-modal fusion ────────────────────────────────────────
         self.cross_interaction = CrossModalInteraction(
             num_modalities=4, d=256, drop=cfg["fusion_drop"]
         )
 
+        # ── Auxiliary heads — one per branch (deep supervision) ───────
         aux_hidden = cfg.get("aux_head_hidden", 128)
         self.aux_head_a = AuxiliaryHead(256, aux_hidden, num_classes)
         self.aux_head_b = AuxiliaryHead(256, aux_hidden, num_classes)
-        self.aux_head_c = AuxiliaryHead(256, aux_hidden, num_classes)
+        self.aux_head_c = AuxiliaryHead(256, aux_hidden, num_classes)   # ← branch C
         self.aux_head_d = AuxiliaryHead(256, aux_hidden, num_classes)
 
+        # ── Embedding network ─────────────────────────────────────────
         self.embed_net = nn.Sequential(
             nn.Linear(256, 512), nn.LayerNorm(512), nn.GELU(), nn.Dropout(dropout),
             nn.Linear(512, 256), nn.LayerNorm(256),
         )
 
+        # ── Classification heads ──────────────────────────────────────
         self.linear_head  = nn.Sequential(
             nn.GELU(), nn.Dropout(dropout * 0.4), nn.Linear(256, num_classes)
         )
@@ -1296,6 +1108,8 @@ class SpectralQuadNet(nn.Module):
         self._use_arcface = False
         self._init_weights()
 
+    # ── Weight initialisation ─────────────────────────────────────────
+
     def _init_weights(self) -> None:
         for m in self.modules():
             if isinstance(m, (nn.Conv1d, nn.Conv2d)):
@@ -1306,6 +1120,8 @@ class SpectralQuadNet(nn.Module):
                 nn.init.trunc_normal_(m.weight, std=0.02)
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
+
+    # ── Control API ──────────────────────────────────────────────────
 
     def set_dropout(self, p: float) -> None:
         for m in self.modules():
@@ -1323,6 +1139,7 @@ class SpectralQuadNet(nn.Module):
         h = self.linear_head if which == "linear" else self.arcface_head
         for p in h.parameters(): p.requires_grad_(True)
 
+    # ── Forward ───────────────────────────────────────────────────────
 
     def forward(
         self,
@@ -1332,48 +1149,56 @@ class SpectralQuadNet(nn.Module):
         arc_m: Optional[float]             = None,
         branch_mask: Optional[torch.Tensor] = None,
     ):
+        # Global spectral channel attention
         x = self.se(x)
         ms, std, mx, skew, kurt = masked_spectral_stats(x)
 
-        ba_raw = self.branch_a(ms)
-        bb_raw = self.branch_b(ms, std, mx, skew, kurt)
-        bc_raw = self.branch_c(x)
-        bd_raw = self.branch_d(ms)
+        # Four independent branches
+        ba = self.branch_a(ms)
+        bb = self.branch_b(ms, std, mx, skew, kurt)
+        bc = self.branch_c(x)
+        bd = self.branch_d(ms)
 
+        # Asymmetric modality dropout (training only)
         if branch_mask is not None:
-            ba = ba_raw * branch_mask[0]; bb = bb_raw * branch_mask[1]
-            bc = bc_raw * branch_mask[2]; bd = bd_raw * branch_mask[3]
+            ba, bb, bc, bd = (
+                ba * branch_mask[0], bb * branch_mask[1],
+                bc * branch_mask[2], bd * branch_mask[3],
+            )
         elif self.training:
-            drop_probs = torch.tensor([0.05, 0.05, 0.40, 0.15], device=ba_raw.device)
-            keeps      = (torch.rand(4, device=ba_raw.device) > drop_probs).float()
-            safe_idx   = torch.randint(0, 4, (), device=ba_raw.device)
+            drop_probs = torch.tensor([0.05, 0.05, 0.40, 0.15], device=ba.device)
+            keeps      = (torch.rand(4, device=ba.device) > drop_probs).float()
+            safe_idx   = torch.randint(0, 4, (), device=ba.device)
             safe_mask  = F.one_hot(safe_idx, num_classes=4).float()
             keeps      = torch.maximum(keeps, safe_mask)
-            ba = ba_raw * keeps[0]; bb = bb_raw * keeps[1]
-            bc = bc_raw * keeps[2]; bd = bd_raw * keeps[3]
-        else:
-            ba, bb, bc, bd = ba_raw, bb_raw, bc_raw, bd_raw
+            ba, bb, bc, bd = (
+                ba * keeps[0], bb * keeps[1], bc * keeps[2], bd * keeps[3]
+            )
 
+        # Cross-modal fusion → embedding
         joint_token = self.cross_interaction([ba, bb, bc, bd])
         emb         = self.embed_net(joint_token)
 
+        # Classification
         if self._use_arcface:
             logits = self.arcface_head(F.normalize(emb, dim=1), labels, global_m=arc_m)
         else:
             logits = self.linear_head(emb)
 
+        # ── Training: return dict for deep supervision ─────────────────
         if self.training:
             out = {
                 "main":  logits,
-                "aux_a": self.aux_head_a(ba_raw),
-                "aux_b": self.aux_head_b(bb_raw),
-                "aux_c": self.aux_head_c(bc_raw),
-                "aux_d": self.aux_head_d(bd_raw),
+                "aux_a": self.aux_head_a(ba),   # Branch A (spectral profile)
+                "aux_b": self.aux_head_b(bb),   # Branch B (statistics)
+                "aux_c": self.aux_head_c(bc),   # Branch C (spatial CNN)
+                "aux_d": self.aux_head_d(bd),   # Branch D (SpecFormer)
             }
             if return_embed:
                 out["emb"] = F.normalize(emb, dim=1)
             return out
 
+        # ── Inference: plain tensor / (logits, emb) ────────────────────
         if return_embed:
             return logits, F.normalize(emb, dim=1)
         return logits
@@ -1404,7 +1229,7 @@ def tta_predict(
 
     scales = torch.linspace(0.95, 1.05, n_spectral, device=device)
     for s in scales:
-        if abs(s.item() - 1.0) < 1e-5:
+        if s == 1.0:
             continue
         mean    = x.mean(dim=[2, 3], keepdim=True)
         aug_sp  = mean + (x - mean) * s
@@ -1413,173 +1238,6 @@ def tta_predict(
             logits.append(out["main"] if isinstance(out, dict) else out)
 
     return torch.stack(logits).mean(0)
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  DATA SPLITS & LOADERS
-# ══════════════════════════════════════════════════════════════════════
-
-def build_splits() -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    labels  = _GLOBAL_LABELS
-    indices = np.arange(len(labels))
-    tr, tmp = train_test_split(indices, test_size=0.3, stratify=labels,       random_state=42)
-    va, te  = train_test_split(tmp,     test_size=0.5, stratify=labels[tmp],  random_state=42)
-    return labels, tr, va, te
-
-
-def build_loaders(
-    train_idx: np.ndarray,
-    val_idx:   np.ndarray,
-    test_idx:  np.ndarray,
-    batch_train: int,
-    balanced: bool = False,
-    all_labels: Optional[np.ndarray] = None,
-    train_aug:  str = "none",
-    class_weights: Optional[Dict[int, float]] = None,
-) -> Tuple[DataLoader, DataLoader, DataLoader]:
-
-    ds = RiceSeedDataset(train_idx, aug_strength=train_aug)
-
-    if balanced and all_labels is not None:
-        samp   = ClassBalancedBatchSampler(
-            all_labels[train_idx],
-            CONFIG["bal_n_cls"],
-            CONFIG["bal_n_spc"],
-            class_weights=class_weights,
-        )
-        tr_ldr = DataLoader(ds, batch_sampler=samp, num_workers=0)
-    else:
-        tr_ldr = DataLoader(ds, batch_size=batch_train, shuffle=True, drop_last=True, num_workers=0)
-
-    va_ldr = DataLoader(RiceSeedDataset(val_idx),  batch_size=256, shuffle=False, num_workers=0)
-    te_ldr = DataLoader(RiceSeedDataset(test_idx), batch_size=256, shuffle=False, num_workers=0)
-    return tr_ldr, va_ldr, te_ldr
-
-
-def build_phase3_loader(
-    train_ds:  Dataset,
-    class_f1:  Dict[int, float],
-) -> DataLoader:
-    """
-    Build the Phase-3 DataLoader with hard-class oversampling.
-    """
-    if not CONFIG["s1_p3_oversample"] or not class_f1:
-        return DataLoader(
-            train_ds, batch_size=CONFIG["s1_batch"],
-            shuffle=True, drop_last=True, num_workers=0
-        )
-
-    train_labels = np.array(
-        [int(_GLOBAL_LABELS[train_ds.indices[i]]) for i in range(len(train_ds.indices))]
-    )
-    sampler = HardClassOversampledSampler(
-        labels           = train_labels,
-        class_f1         = class_f1,
-        num_samples      = len(train_labels),
-        oversample_power = CONFIG["s1_p3_oversample_power"],
-        max_weight       = CONFIG["s1_p3_oversample_max_w"],
-        hard_f1_thresh   = CONFIG["s1_p3_hard_f1_thresh"],
-        eps              = CONFIG["s1_p3_oversample_eps"],
-    )
-    return DataLoader(
-        train_ds, batch_size=CONFIG["s1_batch"],
-        sampler=sampler, drop_last=True, num_workers=0
-    )
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  OPTIMISERS & SCHEDULERS
-# ══════════════════════════════════════════════════════════════════════
-
-def _wd_groups(named_params, lr: float) -> List[dict]:
-    wd, no_wd = [], []
-    for n, p in named_params:
-        if not p.requires_grad:
-            continue
-        (no_wd if (p.ndim == 1 or n.endswith(".bias")) else wd).append(p)
-    return [
-        {"params": wd,    "lr": lr, "weight_decay": CONFIG["weight_decay"]},
-        {"params": no_wd, "lr": lr, "weight_decay": 0.0},
-    ]
-
-
-def build_optimizer_s1(model: nn.Module, lr: float) -> optim.AdamW:
-    return optim.AdamW(_wd_groups(model.named_parameters(), lr))
-
-
-def build_optimizer_s2(model: nn.Module, head_lr: float, back_lr: float) -> optim.AdamW:
-    hp, bp = [], []
-    for n, p in model.named_parameters():
-        if not p.requires_grad:
-            continue
-        (hp if n.startswith("arcface_head") else bp).append((n, p))
-    return optim.AdamW(_wd_groups(hp, head_lr) + _wd_groups(bp, back_lr))
-
-
-def build_optimizer_s3(model: nn.Module, lr: float) -> optim.AdamW:
-    return optim.AdamW(_wd_groups(model.named_parameters(), lr))
-
-
-def sgdr_scheduler(
-    optimizer:   optim.Optimizer,
-    warmup_ep:   int   = 5,
-    T_0:         int   = 10,
-    T_mult:      int   = 2,
-    eta_min_frac: float = 1e-3,
-) -> optim.lr_scheduler.LambdaLR:
-    def _l(ep: int) -> float:
-        if ep < warmup_ep:
-            return max(ep / max(warmup_ep, 1), 1e-6)
-        t = ep - warmup_ep; clen = T_0; elapsed = 0
-        while t >= elapsed + clen:
-            elapsed += clen; clen = max(int(clen * T_mult), 1)
-        ratio = (t - elapsed) / max(clen, 1)
-        return eta_min_frac + 0.5 * (1 - eta_min_frac) * (1 + math.cos(math.pi * ratio))
-    return optim.lr_scheduler.LambdaLR(optimizer, _l)
-
-
-def arcface_margin(ep: int, m0: float, m_target: float, warmup_ep: int) -> float:
-    if ep >= warmup_ep:
-        return m_target
-    return m0 + (m_target - m0) * 0.5 * (1 - math.cos(math.pi * ep / max(warmup_ep, 1)))
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  AUXILIARY LOSS HELPERS
-# ══════════════════════════════════════════════════════════════════════
-
-def _aux_loss_weight(current_ep: int, total_ep: int) -> float:
-    """
-    Linearly decay the auxiliary branch loss weight from
-    """
-    progress = current_ep / max(total_ep, 1)
-    return (
-        CONFIG["aux_loss_weight_init"]
-        + (CONFIG["aux_loss_weight_final"] - CONFIG["aux_loss_weight_init"]) * progress
-    )
-
-
-def _compute_aux_loss(
-    criterion: nn.Module,
-    out: dict,
-    ya: torch.Tensor,
-    yb: torch.Tensor,
-    lam: float,
-    use_mixup: bool,
-) -> torch.Tensor:
-    """
-    Compute the summed auxiliary head loss across all four branches.
-    """
-    aux_keys = ["aux_a", "aux_b", "aux_c", "aux_d"]
-    total    = torch.zeros((), device=ya.device)
-    for k in aux_keys:
-        if k not in out:
-            continue
-        if use_mixup:
-            total = total + mixed_loss(criterion, out[k], ya, yb, lam)
-        else:
-            total = total + criterion(out[k], ya)
-    return total
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1594,6 +1252,7 @@ def train_one_epoch(
     scaler:        Optional[GradScaler],
     ema:           ModelEMA,
     device:        torch.device,
+    scheduler:     Optional[optim.lr_scheduler._LRScheduler] = None,
     use_mixup:     bool  = True,
     mixup_alpha:   float = 0.4,
     supcon:        Optional[nn.Module] = None,
@@ -1624,6 +1283,7 @@ def train_one_epoch(
 
         with autocast(device_type=device.type, enabled=use_amp):
 
+            # ── SupCon / ProtoNCE path ─────────────────────────────────
             if supcon is not None:
                 out    = model(x_in, ya, return_embed=True, arc_m=arc_m)
                 logits = out["main"] if isinstance(out, dict) else out[0]
@@ -1645,6 +1305,7 @@ def train_one_epoch(
                     + aux_w * aux_l
                 )
 
+            # ── Standard CE / Focal path ───────────────────────────────
             else:
                 arc_labels = ya if (model._use_arcface and not use_mixup) else None
                 out        = model(x_in, labels=arc_labels, arc_m=arc_m)
@@ -1678,6 +1339,11 @@ def train_one_epoch(
             optimizer.zero_grad(set_to_none=True)
             if ema:
                 ema.update(model)
+            if scheduler is not None:
+                if isinstance(scheduler, torch.optim.lr_scheduler.CosineAnnealingWarmRestarts):
+                    scheduler.step(step / len(loader))
+                else:
+                    scheduler.step()
 
         total_loss += loss.item()
         with torch.no_grad():
@@ -1702,7 +1368,7 @@ def train_one_epoch_sam(
     proto:         Optional[nn.Module] = None,
     proto_weight:  float = 0.0,
     arc_m:         Optional[float] = None,
-    aux_weight:    float = 0.0,
+    aux_weight:    float = 0.0,   # fixed aux weight for Stage 3 (typically small)
 ) -> Tuple[float, float]:
 
     torch.set_default_dtype(torch.float32)
@@ -1712,6 +1378,7 @@ def train_one_epoch_sam(
     for x, y in loader:
         x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
 
+        # ── SAM first step ────────────────────────────────────────────
         sam_opt.zero_grad()
         out    = model(x, labels=y, arc_m=arc_m, return_embed=(supcon is not None))
         logits = out["main"] if isinstance(out, dict) else out
@@ -1732,6 +1399,7 @@ def train_one_epoch_sam(
         nn.utils.clip_grad_norm_(model.parameters(), CONFIG["grad_clip"])
         sam_opt.first_step(zero_grad=True)
 
+        # ── SAM second step ───────────────────────────────────────────
         out2   = model(x, labels=y, arc_m=arc_m, return_embed=(supcon is not None))
         logits2 = out2["main"] if isinstance(out2, dict) else out2
 
@@ -1788,92 +1456,6 @@ def evaluate_per_class(
     return {i: float(v) for i, v in enumerate(f1_arr)}
 
 
-# ══════════════════════════════════════════════════════════════════════
-#  CHECKPOINT HELPERS
-# ══════════════════════════════════════════════════════════════════════
-
-def stage_ckpt_path(s: int) -> str:
-    return os.path.join(CONFIG["output_dir"], f"best_stage{s}.pth")
-
-
-def stage_meta_path(s: int) -> str:
-    return os.path.join(CONFIG["output_dir"], f"stage{s}_meta.json")
-
-
-def stage_exists(s: int) -> bool:
-    return os.path.isfile(stage_ckpt_path(s)) and os.path.isfile(stage_meta_path(s))
-
-
-def latest_completed_stage() -> int:
-    for s in (3, 2, 1):
-        if stage_exists(s):
-            return s
-    return 0
-
-
-def save_ckpt(
-    path: str, epoch: int, stage: str,
-    model: nn.Module, ema: ModelEMA,
-    val_f1: float, val_acc: float, **metadata
-) -> None:
-    bundle = {
-        "epoch": epoch, "stage": stage,
-        "model": model.state_dict(), "ema": ema.state_dict(),
-        "val_f1": val_f1, "val_acc": val_acc,
-        "use_arcface": model._use_arcface,
-        **metadata,
-    }
-    torch.save(bundle, path)
-    sidecar = {k: v for k, v in bundle.items()
-               if k not in ("model", "ema") and _is_json_serialisable(v)}
-    sn = int(stage.split()[-1]) if stage.split()[-1].isdigit() else 0
-    with open(stage_meta_path(sn), "w") as f:
-        _json.dump(sidecar, f, indent=2)
-
-
-def _is_json_serialisable(v) -> bool:
-    try:
-        _json.dumps(v); return True
-    except (TypeError, ValueError):
-        return False
-
-
-def load_stage_meta(s: int) -> dict:
-    p = stage_meta_path(s)
-    if not os.path.isfile(p):
-        return {}
-    with open(p) as f:
-        raw = _json.load(f)
-    out = {}
-    for k, v in raw.items():
-        if isinstance(v, dict):
-            try:
-                out[k] = {int(kk): vv for kk, vv in v.items()}; continue
-            except (ValueError, TypeError):
-                pass
-        out[k] = v
-    return out
-
-
-def load_ckpt(path: str, model: nn.Module, ema: ModelEMA, device: torch.device) -> dict:
-    ckpt = torch.load(path, map_location=device, weights_only=False)
-    model.load_state_dict(ckpt["model"])
-    ema.load_state_dict(ckpt["ema"])
-    flag = ckpt.get("use_arcface", False)
-    model.use_arcface(flag); ema.shadow.use_arcface(flag)
-    return ckpt
-
-
-def update_bn_stats(loader: DataLoader, model: nn.Module, device: torch.device) -> None:
-    model.train()
-    for m in model.modules():
-        if isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d)):
-            m.reset_running_stats(); m.momentum = None
-    with torch.no_grad():
-        for x, _ in loader:
-            model(x.to(device, non_blocking=True))
-    model.eval()
-
 
 # ══════════════════════════════════════════════════════════════════════
 #  CLASS DIFFICULTY
@@ -1909,23 +1491,87 @@ def compute_class_difficulty(
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  STAGE 1 — SCHEDULER BUILDERS  (one per phase, all params from CONFIG)
+# ══════════════════════════════════════════════════════════════════════
+
+def _reset_lr(optimizer: optim.Optimizer, new_lr: float) -> None:
+    """Hard-reset every param-group's learning rate (used at phase boundaries)."""
+    for pg in optimizer.param_groups:
+        pg["lr"] = new_lr
+    print(f"[S1] LR reset → {new_lr:.2e}")
+
+
+def _build_s1_phase1_scheduler(
+    optimizer: optim.Optimizer,
+) -> optim.lr_scheduler.CosineAnnealingWarmRestarts:
+    """
+    Phase 1 scheduler: CosineAnnealingWarmRestarts.
+    Warm restarts drive exploration across the heavy-aug regime.
+    Params: s1_p1_T0, s1_p1_T_mult  (from CONFIG).
+    LR is reset to s1_max_lr before this scheduler is attached.
+    """
+    return torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        optimizer,
+        T_0   = CONFIG["s1_p1_T0"],
+        T_mult= CONFIG["s1_p1_T_mult"],
+    )
+
+
+def _build_s1_phase2_scheduler(
+    optimizer: optim.Optimizer,
+    phase2_epochs: int,
+) -> optim.lr_scheduler.CosineAnnealingLR:
+    """
+    Phase 2 scheduler: CosineAnnealingLR.
+    Smooth cosine decay over the entire Phase 2 duration for stable consolidation.
+    Params: s1_p2_min_lr  (from CONFIG); T_max derived from phase2_epochs.
+    LR is reset to s1_p2_lr before this scheduler is attached.
+    """
+    return torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max  = max(phase2_epochs, 1),
+        eta_min= CONFIG["s1_p2_min_lr"],
+    )
+
+
+def _build_s1_phase3_scheduler(
+    optimizer: optim.Optimizer,
+) -> optim.lr_scheduler.ReduceLROnPlateau:
+    """
+    Phase 3 scheduler: ReduceLROnPlateau.
+    Adaptive reduction when macro-F1 plateaus on hard classes.
+    Params: s1_p3_rlrop_factor, s1_p3_rlrop_patience, s1_p3_rlrop_min_lr  (from CONFIG).
+    LR is reset to s1_p3_lr before this scheduler is attached.
+    Note: caller must pass the current val-F1 to scheduler.step(metric).
+    """
+    return torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode     = "max",          # maximise macro-F1
+        factor   = CONFIG["s1_p3_rlrop_factor"],
+        patience = CONFIG["s1_p3_rlrop_patience"],
+        min_lr   = CONFIG["s1_p3_rlrop_min_lr"],
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
 #  STAGE 1 — 3-Phase Progressive Augmentation
 # ══════════════════════════════════════════════════════════════════════
 
 def run_stage1(
-    model:           nn.Module,
-    ema:             ModelEMA,
+    model:            nn.Module,
+    ema:              ModelEMA,
     loaders_by_phase: Dict[int, DataLoader],
-    val_ldr:         DataLoader,
-    device:          torch.device,
-    best_ckpt:       str,
+    val_ldr:          DataLoader,
+    device:           torch.device,
+    best_ckpt:        str,
 ) -> float:
     """
-    Phase 1 :   heavy aug  + mixup  + high LS   → explore representation
-    Phase 2 : medium aug + mixup  + decay LS  → robustness consolidation
-    Phase 3 : light aug  + Focal  + NO mixup  → discriminate hard classes
+    Phase 1 (0 → ~15%):   heavy aug  + mixup  + high LS   + CosineAnnealingWarmRestarts
+    Phase 2 (~15 → ~50%): medium aug + mixup  + decay LS  + CosineAnnealingLR
+    Phase 3 (~50 → 100%): light aug  + Focal  + NO mixup  + ReduceLROnPlateau
                           └─ Uses HardClassOversampledSampler built from Phase 2 F1 scores
 
+    Each phase resets the LR to its own peak value (all params from CONFIG).
     Deep supervision via per-branch AuxiliaryHeads with decaying weight.
     Primary metric: macro-F1 (not accuracy).
     """
@@ -1933,18 +1579,25 @@ def run_stage1(
     model.unfreeze_head("linear")
     model.freeze_head("arcface")
 
-    ep_total = CONFIG["s1_epochs"]
-    p1_end   = int(ep_total * CONFIG["s1_phase1_frac"])
-    p2_end   = int(ep_total * (CONFIG["s1_phase1_frac"] + CONFIG["s1_phase2_frac"]))
+    ep_total   = CONFIG["s1_epochs"]
+    p1_end     = int(ep_total * CONFIG["s1_phase1_frac"])
+    p2_end     = int(ep_total * (CONFIG["s1_phase1_frac"] + CONFIG["s1_phase2_frac"]))
+    p2_epochs  = p2_end - p1_end    # used to set T_max of CosineAnnealingLR
 
-    optimizer = build_optimizer_s1(model, CONFIG["s1_max_lr"] / 2)
+    # ── Single persistent optimizer — schedulers swap, optimizer persists ─
+    optimizer = build_optimizer_s1(model, CONFIG["s1_max_lr"])
+
+    # ── Per-phase schedulers (built once; activated at phase entry) ───
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            optimizer, T_0=20, T_mult=2
-        )
+        sched_p1 = _build_s1_phase1_scheduler(optimizer)
+        sched_p2 = _build_s1_phase2_scheduler(optimizer, p2_epochs)
+        sched_p3 = _build_s1_phase3_scheduler(optimizer)
 
-    scaler       = GradScaler("cuda")
+    # Active scheduler reference — starts as Phase 1
+    active_sched: optim.lr_scheduler._LRScheduler = sched_p1
+
+    scaler       = GradScaler()
     ls_hi        = CONFIG["s1_label_smooth_hi"]
     ls_lo        = CONFIG["s1_label_smooth_lo"]
     best_f1      = 0.0
@@ -1952,28 +1605,59 @@ def run_stage1(
     ema_reinited = [False, False]
 
     # Phase 3 loader — built lazily at the Phase 2 → 3 boundary
-    phase3_ldr:       Optional[DataLoader]   = None
-    class_f1_phase2:  Dict[int, float]       = {}
+    phase3_ldr:      Optional[DataLoader] = None
+    class_f1_phase2: Dict[int, float]    = {}
 
     w = 66
     print(f"\n{'═'*w}")
     print(f"  Stage 1 — 3-Phase Progressive Augmentation  [{ep_total} epochs max]")
     print(f"{'═'*w}")
-    print(f"  Phase 1: ep 1–{p1_end}         heavy aug + mixup")
-    print(f"  Phase 2: ep {p1_end+1}–{p2_end}       medium aug + mixup")
-    print(f"  Phase 3: ep {p2_end+1}–{ep_total}      light aug, Focal, class-oversample")
+    print(f"  Phase 1: ep 1–{p1_end}   heavy aug + mixup  | CosineAnnealingWarmRestarts "
+          f"(T0={CONFIG['s1_p1_T0']}, Tmult={CONFIG['s1_p1_T_mult']}, LR={CONFIG['s1_max_lr']:.1e})")
+    print(f"  Phase 2: ep {p1_end+1}–{p2_end}  medium aug + mixup  | CosineAnnealingLR "
+          f"(T_max={p2_epochs}, min_lr={CONFIG['s1_p2_min_lr']:.1e}, LR={CONFIG['s1_p2_lr']:.1e})")
+    print(f"  Phase 3: ep {p2_end+1}–{ep_total} light aug, Focal    | ReduceLROnPlateau "
+          f"(factor={CONFIG['s1_p3_rlrop_factor']}, patience={CONFIG['s1_p3_rlrop_patience']}, "
+          f"LR={CONFIG['s1_p3_lr']:.1e})")
     print(f"  Label smooth: {ls_hi} → {ls_lo}  |  Aux w: "
           f"{CONFIG['aux_loss_weight_init']} → {CONFIG['aux_loss_weight_final']}")
     print(f"  Oversample: {CONFIG['s1_p3_oversample']}  "
           f"power={CONFIG['s1_p3_oversample_power']}  "
           f"hard_thresh={CONFIG['s1_p3_hard_f1_thresh']}")
 
+    current_phase = 0   # track last activated phase to detect transitions
+
     for ep in range(1, ep_total + 1):
 
+        # ── Phase assignment ──────────────────────────────────────────
         if   ep <= p1_end: phase = 1
         elif ep <= p2_end: phase = 2
         else:              phase = 3
 
+        # ── Phase transition: LR reset + scheduler swap ───────────────
+        if phase != current_phase:
+            current_phase = phase
+
+            if phase == 1:
+                # Phase 1 entry — already initialised above; nothing extra needed
+                sched_p1.last_epoch = -1
+                active_sched = sched_p1
+                print(f"\n[S1] ── Phase 1 start (ep {ep}) ──")
+
+            elif phase == 2:
+                # Phase 2 entry — reset LR and activate CosineAnnealingLR
+                _reset_lr(optimizer, CONFIG["s1_p2_lr"])
+                sched_p2.last_epoch = -1
+                active_sched = sched_p2
+                print(f"\n[S1] ── Phase 2 start (ep {ep}) ──")
+
+            elif phase == 3:
+                # Phase 3 entry — reset LR and activate ReduceLROnPlateau
+                _reset_lr(optimizer, CONFIG["s1_p3_lr"])
+                active_sched = sched_p3
+                print(f"\n[S1] ── Phase 3 start (ep {ep}) ──")
+
+        # ── EMA re-init at phase boundaries ───────────────────────────
         if phase == 2 and not ema_reinited[0] and CONFIG["s1_ema_reinit_phases"]:
             ema.reinit_from(model)
             print(f"[INFO] EMA re-init at Phase 2 (ep {ep})")
@@ -1984,6 +1668,7 @@ def run_stage1(
             print(f"[INFO] EMA re-init at Phase 3 (ep {ep})")
             ema_reinited[1] = True
 
+        # ── Phase 3 loader construction (once, at first Phase-3 epoch) ─
         if phase == 3 and phase3_ldr is None:
             print(f"\n[INFO] Phase 2→3 boundary: measuring per-class F1 for oversampling ...")
             class_f1_phase2, _ = compute_class_difficulty(
@@ -1994,13 +1679,17 @@ def run_stage1(
                 class_f1 = class_f1_phase2,
             )
 
+        # ── Select active loader ──────────────────────────────────────
         if   phase == 1: cur_ldr = loaders_by_phase[1]
         elif phase == 2: cur_ldr = loaders_by_phase[2]
-        else:            cur_ldr = phase3_ldr
+        else:            cur_ldr = phase3_ldr   # oversampled Phase-3 loader
 
+        # ── Loss function ─────────────────────────────────────────────
         t      = (ep - 1) / max(ep_total - 1, 1)
         ls_now = ls_hi * (1 - t) + ls_lo * t
 
+        # Phase 3: Focal loss — sharpens focus on hard samples
+        # Phases 1–2: standard CrossEntropy + label smoothing
         if phase == 3:
             crit = FocalLoss(gamma=CONFIG["s1_focal_gamma"], label_smoothing=ls_now)
         else:
@@ -2008,15 +1697,21 @@ def run_stage1(
 
         use_mx = (phase != 3)   # no Mixup in Phase 3
 
+        # ── # Phase 1 & 2: stepped inside train_one_epoch
+        # ── Phase 3: ReduceLROnPlateau steps on val-F1 *after* eval
+        train_sched = active_sched if phase != 3 else None
+
         tl, ta = train_one_epoch(
             model, cur_ldr, optimizer, crit, scaler, ema, device,
-            use_mixup=use_mx,
-            mixup_alpha=CONFIG["s1_mixup"],
-            accum_steps=CONFIG["s1_accum"],
-            current_ep=ep,
-            total_ep=ep_total,
+            scheduler  = train_sched,
+            use_mixup  = use_mx,
+            mixup_alpha= CONFIG["s1_mixup"],
+            accum_steps= CONFIG["s1_accum"],
+            current_ep = ep,
+            total_ep   = ep_total,
         )
 
+        # ── Evaluate both live model and EMA ──────────────────────────
         f1_live, acc_live = evaluate(model,      val_ldr, device)
         f1_ema,  acc_ema  = evaluate(ema.shadow, val_ldr, device)
         best_ep_f1        = max(f1_live, f1_ema)
@@ -2025,8 +1720,13 @@ def run_stage1(
         aux_w_now         = _aux_loss_weight(ep, ep_total)
         saved             = ""
 
-        scheduler.step()
+        # ── Scheduler step ────────────────────────────────────────────
+        # Phase 1 & 2: already stepped inside train_one_epoch per batch.
+        # Phase 3: ReduceLROnPlateau needs the val metric here.
+        if phase == 3:
+            sched_p3.step(best_ep_f1)
 
+        # ── Checkpoint on F1 improvement ─────────────────────────────
         if best_ep_f1 > best_f1:
             best_f1, no_improve = best_ep_f1, 0
             _cf1, _cdws = compute_class_difficulty(ema.shadow, val_ldr, device, "S1")
@@ -2124,7 +1824,7 @@ def run_stage2(
 
         tl, ta = train_one_epoch(
             model, train_ldr, optimizer, focal, scaler=None, ema=ema,
-            device=device,
+            device=device, scheduler=None,
             use_mixup=False,
             supcon=supcon, supcon_weight=sc_now,
             proto=proto,   proto_weight=pt_now,
@@ -2180,11 +1880,8 @@ def run_stage3_swa(
     best_ckpt:    str,
     prev_best_f1: float,
 ) -> float:
-    # FIX-3: torch._dynamo.disable() with no args is a no-op (returns a decorator).
-    # main() already calls torch._dynamo.reset() before Stage 3, which is the
-    # correct way to stop recompilation. Use config flag for a true global disable.
     if hasattr(torch, "_dynamo"):
-        torch._dynamo.config.disable = True
+        torch._dynamo.disable()
 
     model.set_dropout(CONFIG["s2_dropout"])
     model.branch_drop_prob = 0.0
@@ -2223,8 +1920,8 @@ def run_stage3_swa(
 
         tl, ta = train_one_epoch_sam(
             model, train_ldr, sam, focal_s3, device,
-            supcon=supcon_s3, supcon_weight=CONFIG["s3_supcon_weight"],  # FIX-9: from CONFIG
-            proto=proto_s3,   proto_weight=CONFIG["s3_proto_weight"],   # FIX-9: from CONFIG
+            supcon=supcon_s3, supcon_weight=0.02,
+            proto=proto_s3,   proto_weight=0.01,
             arc_m=_s3_margin(ep),
             aux_weight=aux_w_s3,
         )
@@ -2286,82 +1983,6 @@ def run_stage3_swa(
     return f1_swa
 
 
-# ══════════════════════════════════════════════════════════════════════
-#  FINAL EVALUATION
-# ══════════════════════════════════════════════════════════════════════
-
-def final_evaluation(
-    model:      nn.Module,
-    ema:        ModelEMA,
-    test_ldr:   DataLoader,
-    device:     torch.device,
-    best_ckpt:  str,
-) -> None:
-    w = 66
-    print(f"\n{'═'*w}\n  FINAL TEST EVALUATION\n{'═'*w}")
-    ckpt       = load_ckpt(best_ckpt, model, ema, device)
-    eval_model = ema.shadow; eval_model.eval()
-
-    print(f"  ArcFace: {eval_model._use_arcface}  |  "
-          f"Checkpoint: ep {ckpt['epoch']} | {ckpt['stage']} | "
-          f"F1={ckpt.get('val_f1',0):.3f}  Acc={ckpt.get('val_acc',0):.1%}")
-    print(f"  TTA: {CONFIG['tta_spatial']} spatial + {CONFIG['tta_spectral']} spectral "
-          f"= {CONFIG['tta_spatial']+CONFIG['tta_spectral']} total views")
-
-    results = {}
-    for tag, use_tta in [("No TTA", False), ("TTA   ", True)]:
-        preds, targets = [], []
-        for x, y in test_ldr:
-            x = x.to(device, non_blocking=True)
-            logits = (
-                tta_predict(eval_model, x, CONFIG["tta_spatial"], CONFIG["tta_spectral"])
-                if use_tta else eval_model(x)
-            )
-            preds.append(logits.argmax(1).cpu()); targets.append(y)
-        p, t = torch.cat(preds).numpy(), torch.cat(targets).numpy()
-        results[tag] = (p, t)
-        print(
-            f"\n  [{tag}]  F1(macro)={f1_score(t,p,average='macro',zero_division=0):.4f}  "
-            f"F1(wt)={f1_score(t,p,average='weighted',zero_division=0):.4f}  "
-            f"Acc={accuracy_score(t,p):.1%}"
-        )
-
-    p_tta, t_tta = results["TTA   "]
-    print(f"\nClassification Report (TTA):\n")
-    print(classification_report(t_tta, p_tta, zero_division=0))
-
-    out = CONFIG["output_dir"]
-    np.save(f"{out}/test_preds_noTTA.npy", results["No TTA"][0])
-    np.save(f"{out}/test_preds_TTA.npy",   p_tta)
-    np.save(f"{out}/test_targets.npy",     t_tta)
-    print(f"\nOutputs saved → {out}")
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  BEST CHECKPOINT SELECTION
-# ══════════════════════════════════════════════════════════════════════
-
-def _pick_best_checkpoint(*ckpt_paths: str) -> str:
-    """Select checkpoint with highest val_f1 across all stages."""
-    best_val, best_path = -1.0, ckpt_paths[-1]
-    for p in ckpt_paths:
-        if not os.path.isfile(p):
-            continue
-        try:
-            sn   = int(os.path.basename(p).replace("best_stage", "").replace(".pth", ""))
-            meta = load_stage_meta(sn)
-            v    = meta.get("val_f1", meta.get("val_acc", None))
-        except (ValueError, KeyError):
-            v = None
-        if v is None:
-            try:
-                v = torch.load(p, map_location="cpu", weights_only=False).get("val_f1", 0.0)
-            except Exception:
-                v = 0.0
-        if v > best_val:
-            best_val, best_path = v, p
-    return best_path
-
 
 # ══════════════════════════════════════════════════════════════════════
 #  MAIN
@@ -2421,6 +2042,7 @@ def main() -> None:
         print(f"[GPU]  {props.name}  |  VRAM {props.total_memory//1024**3} GB  |  "
               f"TF32={torch.backends.cuda.matmul.allow_tf32}")
 
+    # ── Stage 1 phase loaders (per-phase aug profiles) ─────────────────
     def _s1_ldr(aug_str: str) -> DataLoader:
         ds = RiceSeedDataset(train_idx, aug_strength=aug_str)
         return DataLoader(
