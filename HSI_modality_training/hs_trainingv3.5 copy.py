@@ -1,4 +1,4 @@
-# code 2
+# code 1
 from __future__ import annotations
 
 import os
@@ -25,7 +25,7 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.filterwarnings("ignore", category=UserWarning, message=".*Online softmax is disabled.*")
 
 # ══════════════════════════════════════════════════════════════════════
-#  CONFIG  (all hyper-parameters centralised here)
+#  CONFIG
 # ══════════════════════════════════════════════════════════════════════
 
 WL_MIN: float = 385.0
@@ -51,7 +51,7 @@ CONFIG: dict = {
     "s1_max_lr":            2e-3,
     "s1_dropout":           0.10,
     "s1_mixup":             0.10,
-    "s1_patience":          120,
+    "s1_patience":          50,
     "s1_accum":             1,
     "s1_focal_gamma":       2.0,
     "s1_label_smooth_hi":   0.00,
@@ -63,7 +63,7 @@ CONFIG: dict = {
     "s1_p3_oversample_power":   0.75,
                                      
     "s1_p3_oversample_max_w":   5.0,
-    "s1_p3_hard_f1_thresh":     0.50,   # F1 < threshold → classified as "hard"
+    "s1_p3_hard_f1_thresh":     0.50,
     "s1_p3_oversample_eps":     0.05,   
 
     # ── Architecture ──────────────────────────────────────────────────
@@ -266,11 +266,11 @@ class RiceSeedDataset(Dataset):
     phase-aware spectral + spatial augmentation.
     """
     _PROFILES = {
-        # Phase 1 — representation shaping (moderate but safe)
+        # Phase 1 — representation shaping
         "heavy": dict(band_drop=0.08, cutout=0.06, noise=0.04, warp=0.03, mult=0.05),
         # Phase 2 — robustness consolidation
         "medium": dict(band_drop=0.05, cutout=0.04, noise=0.03, warp=0.02, mult=0.03),
-        # Phase 3 — fine refinement (spectrally clean)
+        # Phase 3 — fine refinement
         "light": dict(band_drop=0.0, cutout=0.0, noise=0.0, warp=0.0, mult=0.0),
         "none":  None,
     }
@@ -369,7 +369,6 @@ class RiceSeedDataset(Dataset):
 # ══════════════════════════════════════════════════════════════════════
 #  SAMPLERS
 # ══════════════════════════════════════════════════════════════════════
-
 class ClassBalancedBatchSampler(Sampler):
     """Draws n_cls classes per batch, n_spc samples per class, with optional CDWS weighting."""
 
@@ -2002,8 +2001,8 @@ def run_stage1(
     optimizer = build_optimizer_s1(model, CONFIG["s1_max_lr"] / 2)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            optimizer, T_0=20, T_mult=2
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=ep_total, eta_min=CONFIG["s1_max_lr"] * 1e-3
         )
 
     scaler       = GradScaler()
