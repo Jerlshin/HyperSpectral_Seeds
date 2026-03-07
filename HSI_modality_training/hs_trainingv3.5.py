@@ -1191,6 +1191,27 @@ def compute_branch_influence(
     return {k: float(influences[i]) for i, k in enumerate("ABCD")}
 
 
+def extract_grid_spectra(x: torch.Tensor, grid_size: int = 4) -> torch.Tensor:
+    """
+    Splits the 64x64 spatial dimensions into a grid and extracts the mean 
+    spectrum for each grid cell, actively ignoring zero-padded background pixels.
+    """
+    B, C, H, W = x.shape
+    
+    # Create a spatial mask (1 if seed, 0 if background)
+    mask = (x.abs().sum(dim=1, keepdim=True) > 1e-5).float() # (B, 1, H, W)
+    
+    # Pool the valid signal and the mask area separately
+    grid_sum = F.adaptive_avg_pool2d(x * mask, (grid_size, grid_size))
+    grid_mask_sum = F.adaptive_avg_pool2d(mask, (grid_size, grid_size))
+    
+    # Divide to get the true mean of valid pixels in that specific cell
+    # Clamp avoids division by zero for cells that are entirely background
+    grid_mean = grid_sum / grid_mask_sum.clamp(min=1e-5)
+    
+    # Reshape and transpose to (Batch, Regions, Channels)
+    return grid_mean.view(B, C, -1).transpose(1, 2)
+
 def masked_spectral_stats(
     x: torch.Tensor,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -1342,7 +1363,6 @@ class SpectralQuadNet(nn.Module):
         h = self.linear_head if which == "linear" else self.arcface_head
         for p in h.parameters(): p.requires_grad_(True)
 
-
     def forward(
         self,
         x: torch.Tensor,
@@ -1352,13 +1372,34 @@ class SpectralQuadNet(nn.Module):
         branch_mask: Optional[torch.Tensor] = None,
     ):
         x = self.se(x)
+        
+        # Global Stats (preserves statistical integrity for Branch B)
         ms, std, mx, skew, kurt = masked_spectral_stats(x)
+        
+        # Regional Grid Spectra (for Branches A and D)
+        grid_ms = extract_grid_spectra(x, grid_size=4)
+        B, N, C = grid_ms.shape
+        flat_grid_ms = grid_ms.reshape(B * N, C)
 
-        ba_raw = self.branch_a(ms)
+        # --- BRANCH A (Spectral Profile) ---
+        # Processes 16 regions independently, then averages the embeddings
+        ba_grid = self.branch_a(flat_grid_ms)
+        ba_raw = ba_grid.view(B, N, -1).mean(dim=1)
+
+        # --- BRANCH B (Spectral Stats) ---
+        # Processes global seed
         bb_raw = self.branch_b(ms, std, mx, skew, kurt)
-        bc_raw = self.branch_c(x)
-        bd_raw = self.branch_d(ms)
 
+        # --- BRANCH C (Spatial CNN) ---
+        # Processes full 64x64 cube
+        bc_raw = self.branch_c(x)
+
+        # --- BRANCH D (SpecFormer) ---
+        # Processes 16 regions independently, then averages the embeddings
+        bd_grid = self.branch_d(flat_grid_ms)
+        bd_raw = bd_grid.view(B, N, -1).mean(dim=1)
+
+        # --- Branch Masking (Deep Supervision Dropout) ---
         if branch_mask is not None:
             ba = ba_raw * branch_mask[0]; bb = bb_raw * branch_mask[1]
             bc = bc_raw * branch_mask[2]; bd = bd_raw * branch_mask[3]
@@ -1373,6 +1414,7 @@ class SpectralQuadNet(nn.Module):
         else:
             ba, bb, bc, bd = ba_raw, bb_raw, bc_raw, bd_raw
 
+        # --- Fusion ---
         joint_token = self.cross_interaction([ba, bb, bc, bd])
         emb         = self.embed_net(joint_token)
 
@@ -1396,8 +1438,7 @@ class SpectralQuadNet(nn.Module):
         if return_embed:
             return logits, F.normalize(emb, dim=1)
         return logits
-
-
+    
 # ══════════════════════════════════════════════════════════════════════
 #  TTA — 8 spatial + 4 spectral
 # ══════════════════════════════════════════════════════════════════════
@@ -1971,8 +2012,10 @@ def run_stage1(
     optimizer = build_optimizer_s1(model, CONFIG["s1_max_lr"] / 2)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            optimizer, T_0=20, T_mult=2
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=ep_total,
+            eta_min=CONFIG["s1_max_lr"]
         )
 
     scaler       = GradScaler("cuda")
