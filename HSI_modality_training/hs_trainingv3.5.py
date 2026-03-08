@@ -1,4 +1,4 @@
-# code2
+# code4
 from __future__ import annotations
 
 import copy, json as _json, math, os, random, warnings
@@ -45,9 +45,11 @@ CONFIG: dict = {
     "s1_epochs":            400,
     "s1_phase1_frac":       0.15,
     "s1_phase2_frac":       0.35,
+    "s1_warmup_epochs":     10,
                                  
     "s1_batch":             128,
-    "s1_max_lr":            2e-3,
+    "s1_max_lr":            1e-3,
+    "s1_min_lr":            1e-6,
     "s1_dropout":           0.10,
     "s1_mixup":             0.10,
     "s1_patience":          120,
@@ -59,7 +61,7 @@ CONFIG: dict = {
 
     # ── Stage 1 · Phase 3 — Hard-Class Oversampling ───────────────────
     "s1_p3_oversample":         True,
-    "s1_p3_oversample_power":   0.75,
+    "s1_p3_oversample_power":   0.40,
                                      
     "s1_p3_oversample_max_w":   5.0,
     "s1_p3_hard_f1_thresh":     0.50,
@@ -691,22 +693,42 @@ class AdaptiveSubcenterArcFaceHead(nn.Module):
 # ══════════════════════════════════════════════════════════════════════
 #  ARCHITECTURE BUILDING BLOCKS
 # ══════════════════════════════════════════════════════════════════════
-
-class SpectralSE(nn.Module):
-    """Channel attention using both mean and max pooling (stronger than mean-only)."""
-
-    def __init__(self, channels: int, reduction: int = 16) -> None:
+class MaskedSpectralECA(nn.Module):
+    """
+    Improved Residual Channel Attention for Hyperspectral data.
+    Prevents band suppression using background masking, local cross-band 
+    convolutions (ECA), and a residual connection.
+    """
+    def __init__(self, channels: int) -> None:
         super().__init__()
-        mid = max(channels // reduction, 16)
-        self.gate = nn.Sequential(
-            nn.Linear(channels * 2, mid, bias=False), nn.GELU(),
-            nn.Linear(mid, channels, bias=False),     nn.Sigmoid()
-        )
+        # Dynamically calculate ECA 1D-Conv kernel size based on channel count
+        t = int(abs(math.log2(channels) / 2.0 + 1.0))
+        k_size = t if t % 2 != 0 else t + 1
+        
+        # 1D Conv processes adjacent spectral bands together to find continuous features
+        self.conv = nn.Conv1d(2, 1, kernel_size=k_size, padding=k_size // 2, bias=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        g = torch.cat([x.mean([2, 3]), x.amax([2, 3])], dim=1)
-        return x * self.gate(g).view(x.shape[0], x.shape[1], 1, 1)
-
+        # 1. Background-Aware Masking
+        mask = (x.abs().sum(dim=1, keepdim=True) > 1e-5).float()
+        valid_pixels = mask.sum(dim=[2, 3]).clamp(min=1e-5)
+        
+        # 2. Extract accurate physical statistics (strictly ignoring the black background)
+        x_mean = (x * mask).sum(dim=[2, 3]) / valid_pixels
+        x_max = x.masked_fill(mask == 0, -1e4).amax(dim=[2, 3])
+        x_max = x_max.masked_fill(x_max == -1e4, 0.0)
+        
+        # 3. Stack for 1D Convolution: Shape (Batch, 2, Channels)
+        y = torch.stack([x_mean, x_max], dim=1)
+        
+        # 4. Local Cross-Band Interaction
+        # Output shape: (Batch, 1, Channels) -> permute to (Batch, Channels, 1, 1)
+        gate = torch.sigmoid(self.conv(y)).permute(0, 2, 1).unsqueeze(-1)
+        
+        # 5. Residual Excitation (Enhance, do not suppress)
+        # Weights range from 1.0x to 2.0x, ensuring no band is ever deleted.
+        return x + (x * gate)
+    
 class SEBlock1D(nn.Module):
     """1D Squeeze-and-Excitation to dynamically re-weight feature channels."""
     def __init__(self, channels: int, reduction: int = 8) -> None:
@@ -910,7 +932,7 @@ class SpectralStatsBranch(nn.Module):
         wl_pe_module: Optional[nn.Module] = None,
     ) -> None:
         super().__init__()
-        self.in_channels  = 5
+        self.in_channels  = 9
         self.wl_pe_module = wl_pe_module
 
         self.stat_attn = nn.Sequential(
@@ -957,14 +979,9 @@ class SpectralStatsBranch(nn.Module):
                     nn.init.zeros_(m.bias)
 
     def forward(
-        self,
-        ms:   torch.Tensor,
-        std:  torch.Tensor,
-        mx:   torch.Tensor,
-        skew: torch.Tensor,
-        kurt: torch.Tensor,
-    ) -> torch.Tensor:
-        stats    = torch.stack([ms, std, mx, skew, kurt], dim=1)
+        self, ms, std, mx, skew, kurt, p10, p25, p75, p90
+    ):
+        stats    = torch.stack([ms, std, mx, skew, kurt, p10, p25, p75, p90], dim=1)
         stats    = stats * self.stat_attn(stats)
         x        = self.input_proj(stats)
 
@@ -1212,35 +1229,41 @@ def extract_grid_spectra(x: torch.Tensor, grid_size: int = 4) -> torch.Tensor:
     # Reshape and transpose to (Batch, Regions, Channels)
     return grid_mean.view(B, C, -1).transpose(1, 2)
 
-def masked_spectral_stats(
-    x: torch.Tensor,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    x32  = x.float()
+def masked_spectral_stats(x: torch.Tensor):
+    x32 = x.float()
     B, C, H, W = x32.shape
     flat = x32.reshape(B, C, H * W)
 
-    mask = (flat.abs().sum(1, keepdim=True) > 1e-5).float()
-    cnt  = mask.sum(2).clamp(min=1.0)
+    mask = (flat.abs().sum(1, keepdim=True) > 1e-5).float() # (B, 1, HW)
+    cnt = mask.sum(2).clamp(min=1.0) # (B, 1)
 
-    mean     = (flat * mask).sum(2) / cnt
+    mean = (flat * mask).sum(2) / cnt
     centered = (flat - mean.unsqueeze(2)) * mask
-    var      = (centered ** 2).sum(2) / cnt
-    std      = torch.sqrt(var + 1e-5)
+    var = (centered ** 2).sum(2) / cnt
+    std = torch.sqrt(var + 1e-5)
+    mx = flat.masked_fill(mask.expand_as(flat) == 0, -1e4).max(2).values
+    mx = mx.masked_fill(mx < -9999.0, 0.0)
+    skew = torch.clamp(((centered**3).sum(2)/cnt) / (std**3 + 1e-4), -10.0, 10.0)
+    kurt = torch.clamp(((centered**4).sum(2)/cnt) / (std**4 + 1e-4), 0.0, 20.0)
 
-    mx  = flat.masked_fill(mask.expand_as(flat) == 0, -1e4).max(2).values
-    mx  = mx.masked_fill(mx < -9999.0, 0.0)
+    flat_masked = flat.masked_fill(mask.expand_as(flat) == 0, float("inf"))
+    sorted_vals, _ = torch.sort(flat_masked, dim=2)
 
-    m3  = (centered ** 3).sum(2) / cnt
-    m4  = (centered ** 4).sum(2) / cnt
-    skew = torch.clamp(m3 / (std ** 3 + 1e-4), -10.0, 10.0)
-    kurt = torch.clamp(m4 / (std ** 4 + 1e-4), 0.0, 20.0)
+    def gather_percentile(vals, p_frac):
+        idx = (cnt * p_frac).long().clamp(max=H * W - 1)
+        expanded_idx = idx.unsqueeze(2).expand(-1, C, -1)
+        return torch.gather(vals, 2, expanded_idx).squeeze(2)
+
+    p10, p25 = gather_percentile(sorted_vals, 0.10), gather_percentile(sorted_vals, 0.25)
+    p75, p90 = gather_percentile(sorted_vals, 0.75), gather_percentile(sorted_vals, 0.90)
 
     return (
         torch.nan_to_num(mean, 0), torch.nan_to_num(std, 0),
-        torch.nan_to_num(mx,   0), torch.nan_to_num(skew, 0),
-        torch.nan_to_num(kurt, 0),
-    )
-
+        torch.nan_to_num(mx, 0), torch.nan_to_num(skew, 0),
+        torch.nan_to_num(kurt, 0), torch.nan_to_num(p10, 0),
+        torch.nan_to_num(p25, 0), torch.nan_to_num(p75, 0),
+        torch.nan_to_num(p90, 0),
+    )    
 
 # ══════════════════════════════════════════════════════════════════════
 #  SPECTRALQUADNET
@@ -1285,7 +1308,7 @@ class SpectralQuadNet(nn.Module):
 
         self.branch_drop_prob = cfg.get("branch_drop_prob", 0.0)
 
-        self.se        = SpectralSE(num_bands, 16)
+        self.se        = MaskedSpectralECA(num_bands)
 
         self.wl_pe_cnn = PhysicalWavelengthPE(_PHYSICAL_WL, tower_ch)
 
@@ -1374,7 +1397,7 @@ class SpectralQuadNet(nn.Module):
         x = self.se(x)
         
         # Global Stats (preserves statistical integrity for Branch B)
-        ms, std, mx, skew, kurt = masked_spectral_stats(x)
+        ms, std, mx, skew, kurt, p10, p25, p75, p90 = masked_spectral_stats(x)
         
         # Regional Grid Spectra (for Branches A and D)
         grid_ms = extract_grid_spectra(x, grid_size=4)
@@ -1388,8 +1411,8 @@ class SpectralQuadNet(nn.Module):
 
         # --- BRANCH B (Spectral Stats) ---
         # Processes global seed
-        bb_raw = self.branch_b(ms, std, mx, skew, kurt)
-
+        bb_raw = self.branch_b(ms, std, mx, skew, kurt, p10, p25, p75, p90)
+        
         # --- BRANCH C (Spatial CNN) ---
         # Processes full 64x64 cube
         bc_raw = self.branch_c(x)
@@ -1984,6 +2007,8 @@ def compute_class_difficulty(
 #  STAGE 1 — 3-Phase Progressive Augmentation
 # ══════════════════════════════════════════════════════════════════════
 
+
+
 def run_stage1(
     model:           nn.Module,
     ema:             ModelEMA,
@@ -2009,15 +2034,15 @@ def run_stage1(
     p1_end   = int(ep_total * CONFIG["s1_phase1_frac"])
     p2_end   = int(ep_total * (CONFIG["s1_phase1_frac"] + CONFIG["s1_phase2_frac"]))
 
-    optimizer = build_optimizer_s1(model, CONFIG["s1_max_lr"] / 2)
+    
+    optimizer = build_optimizer_s1(model, CONFIG["s1_max_lr"])
+    
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer,
-            T_max=ep_total,
-            eta_min=CONFIG["s1_max_lr"]
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='max', factor=0.5, patience=15, min_lr=CONFIG["s1_min_lr"]
         )
-
+    
     scaler       = GradScaler("cuda")
     ls_hi        = CONFIG["s1_label_smooth_hi"]
     ls_lo        = CONFIG["s1_label_smooth_lo"]
@@ -2043,6 +2068,13 @@ def run_stage1(
           f"hard_thresh={CONFIG['s1_p3_hard_f1_thresh']}")
 
     for ep in range(1, ep_total + 1):
+        
+        if ep <= CONFIG["s1_warmup_epochs"]:
+            # Linear warmup from 1e-6 to max_lr
+            lr_warmup = (ep / CONFIG["s1_warmup_epochs"]) * CONFIG["s1_max_lr"]
+            for pg in optimizer.param_groups:
+                pg['lr'] = max(lr_warmup, 1e-6)
+
 
         if   ep <= p1_end: phase = 1
         elif ep <= p2_end: phase = 2
@@ -2099,7 +2131,8 @@ def run_stage1(
         aux_w_now         = _aux_loss_weight(ep, ep_total)
         saved             = ""
 
-        scheduler.step()
+        if ep > CONFIG["s1_warmup_epochs"]:
+            scheduler.step(f1_ema)
 
         if best_ep_f1 > best_f1:
             best_f1, no_improve = best_ep_f1, 0
