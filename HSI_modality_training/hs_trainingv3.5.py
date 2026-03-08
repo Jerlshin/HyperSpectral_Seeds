@@ -1,4 +1,4 @@
-# code4
+# code6
 from __future__ import annotations
 
 import copy, json as _json, math, os, random, warnings
@@ -55,12 +55,12 @@ CONFIG: dict = {
     "s1_patience":          120,
     "s1_accum":             1,
     "s1_focal_gamma":       2.0,
-    "s1_label_smooth_hi":   0.00,
-    "s1_label_smooth_lo":   0.00,
+    "s1_label_smooth_hi":   0.1,
+    "s1_label_smooth_lo":   0.05,
     "s1_ema_reinit_phases": True,
 
     # ── Stage 1 · Phase 3 — Hard-Class Oversampling ───────────────────
-    "s1_p3_oversample":         True,
+    "s1_p3_oversample":         False,
     "s1_p3_oversample_power":   0.40,
                                      
     "s1_p3_oversample_max_w":   5.0,
@@ -695,7 +695,7 @@ class AdaptiveSubcenterArcFaceHead(nn.Module):
 # ══════════════════════════════════════════════════════════════════════
 class MaskedSpectralECA(nn.Module):
     """
-    Improved Residual Channel Attention for Hyperspectral data.
+    Residual Channel Attention for Hyperspectral data.
     Prevents band suppression using background masking, local cross-band 
     convolutions (ECA), and a residual connection.
     """
@@ -827,14 +827,40 @@ class PhysicalWavelengthPE(nn.Module):
 # ══════════════════════════════════════════════════════════════════════
 #  BRANCH A — SPECTRAL PROFILE (signal + 1st/2nd derivatives)
 # ══════════════════════════════════════════════════════════════════════
+class LargeKernelBlock1D(nn.Module):
+    """
+    Modern ConvNeXt-inspired 1D block.
+    Uses Depthwise Large Kernels to continuously capture wide absorption valleys 
+    without the 'blind spots' of dilated convolutions.
+    """
+    def __init__(self, dim: int, kernel_size: int):
+        super().__init__()
+        # Depthwise convolution (groups=dim) makes large kernels highly parameter-efficient
+        self.dwconv = nn.Conv1d(dim, dim, kernel_size, padding=kernel_size//2, groups=dim, bias=False)
+        self.norm = nn.GroupNorm(1, dim)
+        
+        # Pointwise Feed-Forward Network (Inverted Bottleneck)
+        self.pw1 = nn.Conv1d(dim, dim * 4, 1, bias=False)
+        self.act = nn.GELU()
+        self.pw2 = nn.Conv1d(dim * 4, dim, 1, bias=False)
+        self.se = SEBlock1D(dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        res = x
+        x = self.dwconv(x)
+        x = self.norm(x)
+        x = self.pw1(x)
+        x = self.act(x)
+        x = self.pw2(x)
+        x = self.se(x)
+        return x + res
+
 
 class SpectralProfileBranch(nn.Module):
     """
-    Captures the raw signal alongside its 1st and 2nd derivatives.
-    Physical Wavelength Positional Encoding anchors features to nm.
-    Multi-scale dilated convolutions capture wide absorption valleys.
+    Advanced Spectral Profile Branch.
+    Fuses Signal + SG-Derivatives early, then processes via parallel Large Kernel ConvNeXt towers.
     """
-
     def __init__(
         self,
         out_dim: int = 256,
@@ -844,76 +870,79 @@ class SpectralProfileBranch(nn.Module):
         super().__init__()
         self.wl_pe_module = wl_pe_module
 
-        # Learnable derivative filters
-        self.d1_conv = nn.Conv1d(1, 1, kernel_size=5, padding=2, bias=False)
-        self.d2_conv = nn.Conv1d(1, 1, kernel_size=5, padding=2, bias=False)
+        # Savitzky-Golay derivative filters (wider window = robust to noise)
+        self.d1_conv = nn.Conv1d(1, 1, kernel_size=7, padding=3, bias=False)
+        self.d2_conv = nn.Conv1d(1, 1, kernel_size=7, padding=3, bias=False)
+        
         with torch.no_grad():
-            self.d1_conv.weight.zero_(); self.d2_conv.weight.zero_()
-            self.d1_conv.weight[0, 0, 1] = -1; self.d1_conv.weight[0, 0, 3] = 1
-            self.d2_conv.weight[0, 0, 0] =  1; self.d2_conv.weight[0, 0, 2] = -2
-            self.d2_conv.weight[0, 0, 4] =  1
+            # True 7-point, 2nd-order polynomial Savitzky-Golay weights
+            self.d1_conv.weight[0, 0] = torch.tensor([-3, -2, -1, 0, 1, 2, 3]).float() / 28.0
+            self.d2_conv.weight[0, 0] = torch.tensor([5, 0, -3, -4, -3, 0, 5]).float() / 42.0
 
-        branch_ch    = tower_ch // 3
-        self.proj_s  = self._make_proj(branch_ch)
-        self.proj_d1 = self._make_proj(branch_ch)
-        self.proj_d2 = self._make_proj(branch_ch)
-
-        self.tower_s = self._make_tower(tower_ch, 3, dilation=1)
-        self.tower_m = self._make_tower(tower_ch, 5, dilation=2)
-        self.tower_l = self._make_tower(tower_ch, 5, dilation=4)
-
-        self.fusion    = nn.Sequential(
-            ResBlock1D(tower_ch * 3, tower_ch, 5),
-            ResBlock1D(tower_ch, tower_ch, 5)
+        # Early Fusion Stem: Look at Signal, D1, and D2 simultaneously
+        self.stem = nn.Sequential(
+            nn.Conv1d(3, tower_ch, kernel_size=7, padding=3, bias=False),
+            nn.GroupNorm(1, tower_ch),
+            nn.GELU()
         )
+
+        # Parallel Large-Kernel processing to capture varying chemical absorption widths
+        self.tower_s = nn.Sequential(LargeKernelBlock1D(tower_ch, 7), LargeKernelBlock1D(tower_ch, 7))
+        self.tower_m = nn.Sequential(LargeKernelBlock1D(tower_ch, 15), LargeKernelBlock1D(tower_ch, 15))
+        self.tower_l = nn.Sequential(LargeKernelBlock1D(tower_ch, 31), LargeKernelBlock1D(tower_ch, 31))
+
+        self.fusion = nn.Sequential(
+            nn.Conv1d(tower_ch * 3, tower_ch, 1, bias=False),
+            nn.GroupNorm(1, tower_ch),
+            nn.GELU(),
+            LargeKernelBlock1D(tower_ch, 7) # Final smoothing interaction
+        )
+        
+        # Robust Attentive Pooling
         self.attn_pool = nn.Sequential(
             nn.Conv1d(tower_ch, tower_ch // 4, 1),
             nn.GELU(),
             nn.Conv1d(tower_ch // 4, 1, 1)
         )
+        
         self.proj = nn.Sequential(
             nn.Linear(tower_ch, out_dim), nn.LayerNorm(out_dim), nn.GELU(), nn.Dropout(0.15)
         )
         self._init_weights()
 
-    def _make_proj(self, ch: int) -> nn.Sequential:
-        return nn.Sequential(
-            nn.Conv1d(1, ch, 1, bias=False), nn.GroupNorm(1, ch), nn.GELU()
-        )
-
-    def _make_tower(self, ch: int, kernel: int, dilation: int) -> nn.Sequential:
-        return nn.Sequential(
-            ResBlock1D(ch, ch, kernel, dilation=dilation),
-            ResBlock1D(ch, ch, kernel, dilation=dilation)
-        )
-
     def _init_weights(self) -> None:
         for m in self.modules():
-            if isinstance(m, nn.Conv1d):
+            if isinstance(m, nn.Conv1d) and m not in [self.d1_conv, self.d2_conv]:
                 nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
             elif isinstance(m, nn.Linear):
                 nn.init.trunc_normal_(m.weight, std=0.02)
-                if m.bias is not None:  # FIX-4: guard against bias=False linears
+                if m.bias is not None:
                     nn.init.zeros_(m.bias)
 
     def forward(self, ms: torch.Tensor) -> torch.Tensor:
-        s        = ms.unsqueeze(1)
+        s = ms.unsqueeze(1)
+        # Gentle pre-smoothing
         s_smooth = F.avg_pool1d(s, kernel_size=5, stride=1, padding=2)
-        d1       = self.d1_conv(s_smooth)
-        d2       = self.d2_conv(d1)
 
-        x = torch.cat([self.proj_s(s), self.proj_d1(d1), self.proj_d2(d2)], dim=1)
+        # FIX: Apply both derivative operators directly to the smoothed signal
+        d1 = self.d1_conv(s_smooth)
+        d2 = self.d2_conv(s_smooth) 
+
+        # Early fusion: Stack into a 3-channel 1D sequence and project to tower_ch
+        x = torch.cat([s, d1, d2], dim=1)
+        x = self.stem(x)
 
         if self.wl_pe_module is not None:
             x = self.wl_pe_module(x)
 
+        # Multi-scale large kernel feature extraction
         x_fused = self.fusion(
             torch.cat([self.tower_s(x), self.tower_m(x), self.tower_l(x)], dim=1)
         )
+        
         w = torch.softmax(self.attn_pool(x_fused), dim=2)
         return self.proj(torch.sum(x_fused * w, dim=2))
-
-
+    
 # ══════════════════════════════════════════════════════════════════════
 #  BRANCH B — SPECTRAL STATISTICS (mean, std, max, skew, kurtosis)
 # ══════════════════════════════════════════════════════════════════════
