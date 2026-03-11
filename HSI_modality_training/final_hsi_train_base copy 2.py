@@ -637,6 +637,7 @@ class DifferentiableSpectralRouter(nn.Module):
         super().__init__()
         self.channels = channels
         self.stat_proj = nn.Linear(3, d_model)
+        self.norm1 = nn.LayerNorm(d_model)
         self.self_attn = nn.MultiheadAttention(embed_dim=d_model, num_heads=n_heads, batch_first=True)
         self.gate_proj = nn.Sequential(
             nn.LayerNorm(d_model),
@@ -662,8 +663,10 @@ class DifferentiableSpectralRouter(nn.Module):
         x_std = torch.sqrt(x_var + 1e-5)
         
         stats = torch.stack([x_mean, x_max, x_std], dim=-1)
-        tokens = self.stat_proj(stats) 
-        attn_out, _ = self.self_attn(tokens, tokens, tokens, need_weights=False)
+        tokens = self.stat_proj(stats)
+        
+        t_norm = self.norm1(tokens)
+        attn_out, _ = self.self_attn(t_norm, t_norm, t_norm, need_weights=False)
         tokens = tokens + attn_out
         
         logits = self.gate_proj(tokens).squeeze(-1) 
@@ -1283,7 +1286,7 @@ class DynamicGradientOrthogonalization(torch.autograd.Function):
         dom_idx = torch.argmax(torch.stack(confidences))
         ctx.save_for_backward(dom_idx)
 
-        return b_a.view_as(b_a), b_b.view_as(b_b), b_c.view_as(b_c), b_d.view_as(b_d)
+        return b_a.clone(), b_b.clone(), b_c.clone(), b_d.clone()
 
     @staticmethod
     def backward(ctx, g_a, g_b, g_c, g_d):
@@ -2603,19 +2606,19 @@ def main() -> None:
     print(f"Params : {sum(p.numel() for p in model.parameters() if p.requires_grad)/1e6:.2f}M")
     print(f"Device : {device}")
 
-    # if hasattr(torch, "compile"):
-    #     print("[INFO] Applying torch.compile to heavy modules ...")
+    if hasattr(torch, "compile"):
+        print("[INFO] Applying torch.compile to heavy modules ...")
 
-    #     model.branch_a = torch.compile(model.branch_a)
-    #     model.branch_b = torch.compile(model.branch_b)
-    #     model.branch_c = torch.compile(model.branch_c)
-    #     # model.branch_d = torch.compile(model.branch_d)
+        model.branch_a = torch.compile(model.branch_a)
+        model.branch_b = torch.compile(model.branch_b)
+        model.branch_c = torch.compile(model.branch_c)
+        # model.branch_d = torch.compile(model.branch_d)
 
-    #     model.cross_interaction = torch.compile(model.cross_interaction)
-    #     model.embed_net         = torch.compile(model.embed_net)
+        model.cross_interaction = torch.compile(model.cross_interaction)
+        model.embed_net         = torch.compile(model.embed_net)
 
-    # else:
-    #     print("[WARN] torch.compile unavailable")
+    else:
+        print("[WARN] torch.compile unavailable")
         
         
     if device.type == "cuda":

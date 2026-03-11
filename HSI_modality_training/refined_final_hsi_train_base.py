@@ -1,4 +1,4 @@
-# code2
+# code1
 from __future__ import annotations
 
 import copy, json as _json, math, os, random, warnings
@@ -76,8 +76,11 @@ CONFIG: dict = {
 
     # ── Auxiliary Classification Heads (per branch, Stage 1) ──────────
     "aux_head_hidden":       128,
-    "aux_loss_weight_init":  0.25,
-    "aux_loss_weight_final": 0.10,
+    "aux_loss_weight_init":  0.10,   # 4 aux heads × 0.10 = 0.40; main loss dominates
+    "aux_loss_weight_final": 0.05,
+
+    # ── GOAL: delay orthogonalisation until branches have a real signal ─
+    "goal_warmup_ep":        80,     # epochs before GOAL activates in Stage 1
 
     # ── Stage 2 ───────────────────────────────────────────────────────
     "s2_epochs":            120,
@@ -323,9 +326,25 @@ class RiceSeedDataset(Dataset):
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         ri    = self.indices[idx]
-        
-        patch_np = np.array(self.patches[ri])
-        patch = torch.from_numpy(patch_np).to(CONFIG["device"], non_blocking=True)
+
+        patch_np = np.array(self.patches[ri])          # (C, H, W) float32, CPU
+        patch    = torch.from_numpy(patch_np)           # stays on CPU during normalisation
+
+        # ── Per-pixel spectral L2 normalisation (foreground pixels only) ─────
+        # Each foreground pixel's 256-band vector is scaled to unit L2 norm.
+        # This removes reflectance-magnitude variation (affected by seed surface
+        # angle, moisture, etc.) while perfectly preserving the SPECTRAL SHAPE
+        # — the primary discriminative feature for rice variety identification.
+        # Background pixels (zeroed out during patch extraction) remain 0.
+        fg_mask = patch.abs().sum(dim=0) > 1e-5          # (H, W) bool
+        if fg_mask.any():
+            patch     = patch.clone()
+            fg_specs  = patch[:, fg_mask]                 # (C, N_fg)
+            norms     = fg_specs.norm(dim=0, p=2).clamp(min=1e-5)  # (N_fg,)
+            patch[:, fg_mask] = fg_specs / norms          # unit spectral norm per pixel
+        # ─────────────────────────────────────────────────────────────────────
+
+        patch = patch.to(CONFIG["device"], non_blocking=True)
         label = torch.tensor(int(self.labels[ri]), dtype=torch.long, device=CONFIG["device"])
 
         if self.profile is not None:
@@ -636,6 +655,10 @@ class DifferentiableSpectralRouter(nn.Module):
     def __init__(self, channels: int, d_model: int = 32, n_heads: int = 4) -> None:
         super().__init__()
         self.channels = channels
+        # LayerNorm on [mean, max, std] stats BEFORE projecting.
+        # Without it, unnormalised values produce Q×K products that saturate
+        # the softmax and kill attention gradients from the very first epoch.
+        self.stats_ln  = nn.LayerNorm(3)
         self.stat_proj = nn.Linear(3, d_model)
         self.self_attn = nn.MultiheadAttention(embed_dim=d_model, num_heads=n_heads, batch_first=True)
         self.gate_proj = nn.Sequential(
@@ -662,7 +685,8 @@ class DifferentiableSpectralRouter(nn.Module):
         x_std = torch.sqrt(x_var + 1e-5)
         
         stats = torch.stack([x_mean, x_max, x_std], dim=-1)
-        tokens = self.stat_proj(stats) 
+        stats  = self.stats_ln(stats)          # normalise per-channel stats
+        tokens = self.stat_proj(stats)
         attn_out, _ = self.self_attn(tokens, tokens, tokens, need_weights=False)
         tokens = tokens + attn_out
         
@@ -1435,6 +1459,7 @@ class SpectralQuadNet(nn.Module):
         )
         self._use_arcface = False
         self._use_goal    = True
+        self._current_epoch: int = 0   # set each epoch via set_epoch()
         self._init_weights()
 
     def _init_weights(self) -> None:
@@ -1452,6 +1477,10 @@ class SpectralQuadNet(nn.Module):
         for m in self.modules():
             if isinstance(m, nn.Dropout):
                 m.p = p
+
+    def set_epoch(self, ep: int) -> None:
+        """Broadcast current epoch so the model can gate epoch-dependent logic."""
+        self._current_epoch = ep
 
     def use_arcface(self, flag: bool) -> None:
         self._use_arcface = flag
@@ -1501,13 +1530,28 @@ class SpectralQuadNet(nn.Module):
         bb_raw = F.normalize(bb_raw, dim=1, eps=1e-4).contiguous()
         bc_raw = F.normalize(bc_raw, dim=1, eps=1e-4).contiguous()
         bd_raw = F.normalize(bd_raw, dim=1, eps=1e-4).contiguous()
-        
-        # ── Branch Masking (stochastic branch-drop during training) ──
+
+        # ── Step 1: Aux heads on TRUE raw features (pre-drop, pre-GOAL) ──────
+        # Must use *_raw, NOT the post-drop tensors: applying aux heads to a
+        # zeroed-out branch (e.g. branch C after 40 % drop) provides only
+        # bias-only logits that pollute GOAL's confidence estimator and cut
+        # up to 40 % of branch C's gradient signal.
+        aux_out: dict = {}
+        if self.training:
+            aux_out["aux_a"] = self.aux_head_a(ba_raw)
+            aux_out["aux_b"] = self.aux_head_b(bb_raw)
+            aux_out["aux_c"] = self.aux_head_c(bc_raw)
+            aux_out["aux_d"] = self.aux_head_d(bd_raw)
+
+        # ── Branch stochastic drop ────────────────────────────────────────────
+        # Branch C (spatial CNN) drop lowered 0.40 → 0.20: the spatial branch
+        # is already the hardest to learn; dropping it 40 % of batches starves
+        # it of gradient signal during the critical early epochs.
         if branch_mask is not None:
             ba = ba_raw * branch_mask[0]; bb = bb_raw * branch_mask[1]
             bc = bc_raw * branch_mask[2]; bd = bd_raw * branch_mask[3]
         elif self.training:
-            drop_probs = torch.tensor([0.10, 0.10, 0.40, 0.15], device=ba_raw.device)
+            drop_probs = torch.tensor([0.10, 0.10, 0.20, 0.10], device=ba_raw.device)
             keeps      = (torch.rand(4, device=ba_raw.device) > drop_probs).float()
             safe_idx   = torch.randint(0, 4, (), device=ba_raw.device)
             safe_mask  = F.one_hot(safe_idx, num_classes=4).float()
@@ -1517,16 +1561,13 @@ class SpectralQuadNet(nn.Module):
         else:
             ba, bb, bc, bd = ba_raw, bb_raw, bc_raw, bd_raw
 
-        # ── Step 1: Auxiliary heads on RAW (pre-GOAL) branch features ─
-        aux_out: dict = {}
-        if self.training:
-            aux_out["aux_a"] = self.aux_head_a(ba)
-            aux_out["aux_b"] = self.aux_head_b(bb)
-            aux_out["aux_c"] = self.aux_head_c(bc)
-            aux_out["aux_d"] = self.aux_head_d(bd)
-
-        # ── Step 2: GOAL — applied ONCE, only in Stages 1 & 2 ────────
-        if self.training and self._use_goal and labels is not None:
+        # ── Step 2: GOAL — gated by warmup epoch ─────────────────────────────
+        # Orthogonalising gradients from epoch 1 removes useful signal before
+        # any representation has formed. We gate GOAL behind goal_warmup_ep so
+        # all branches first develop a basic discriminative signal independently.
+        goal_warmup = CONFIG.get("goal_warmup_ep", 0)
+        goal_ready  = self._current_epoch >= goal_warmup
+        if self.training and self._use_goal and labels is not None and goal_ready:
             ba, bb, bc, bd = apply_goal(
                 ba, bb, bc, bd,
                 [aux_out["aux_a"], aux_out["aux_b"],
@@ -2123,7 +2164,7 @@ def run_stage1(
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='max', factor=0.5, patience=15, min_lr=CONFIG["s1_min_lr"]
+            optimizer, mode='max', factor=0.5, patience=50, min_lr=CONFIG["s1_min_lr"]
         )
     
     scaler       = GradScaler("cuda")
@@ -2150,7 +2191,11 @@ def run_stage1(
           f"hard_thresh={CONFIG['s1_p3_hard_f1_thresh']}")
 
     for ep in range(1, ep_total + 1):
-        
+
+        # ── Broadcast epoch so the model can gate epoch-dependent logic ──────
+        model.set_epoch(ep)
+        ema.shadow.set_epoch(ep)
+
         if ep <= CONFIG["s1_warmup_epochs"]:
             lr_warmup = (ep / CONFIG["s1_warmup_epochs"]) * CONFIG["s1_max_lr"]
             for pg in optimizer.param_groups:
@@ -2160,12 +2205,15 @@ def run_stage1(
         elif ep <= p2_end: phase = 2
         else:              phase = 3
 
-        if phase == 3:
-            model.use_goal(False)
-            ema.shadow.use_goal(False)
+        # ── GOAL: off during initial warmup and all of Phase 3 ──────────────
+        # GOAL in Phase 3 competes with Focal loss hard-class focusing;
+        # GOAL during early epochs (before any representation exists) just adds
+        # noise to gradients.  Both cases hurt convergence.
+        goal_ep = CONFIG.get("goal_warmup_ep", 0)
+        if phase == 3 or ep <= goal_ep:
+            model.use_goal(False);      ema.shadow.use_goal(False)
         else:
-            model.use_goal(True)
-            ema.shadow.use_goal(True)
+            model.use_goal(True);       ema.shadow.use_goal(True)
             
         if phase == 2 and not ema_reinited[0] and CONFIG["s1_ema_reinit_phases"]:
             ema.reinit_from(model)
@@ -2624,11 +2672,18 @@ def main() -> None:
               f"TF32={torch.backends.cuda.matmul.allow_tf32}")
 
     def _s1_ldr(aug_str: str) -> DataLoader:
-        ds = RiceSeedDataset(train_idx, aug_strength=aug_str)
-        return DataLoader(
-            ds, batch_size=CONFIG["s1_batch"],
-            shuffle=True, drop_last=True, num_workers=0
+        ds   = RiceSeedDataset(train_idx, aug_strength=aug_str)
+        # Use the same balanced sampler as Stage 2/3:
+        # without it, random shuffle gives ~1.4 samples per class per batch
+        # (90 classes, batch 128), leaving ~43 % of classes absent each batch.
+        # That uneven gradient signal causes mode collapse to a few dominant
+        # classes, which is why val F1 stays at 0.000 for dozens of epochs.
+        samp = ClassBalancedBatchSampler(
+            all_labels[train_idx],
+            CONFIG["bal_n_cls"],
+            CONFIG["bal_n_spc"],
         )
+        return DataLoader(ds, batch_sampler=samp, num_workers=0)
 
     if done_stage < 1:
         print("\n[RUN] Stage 1")
