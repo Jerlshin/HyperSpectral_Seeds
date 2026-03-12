@@ -88,7 +88,7 @@ CONFIG: dict = {
     "s2_sgdr_T0":           10,
     "s2_sgdr_Tmult":         2,
     "s2_dropout":            0.10,
-    "s2_patience":           60,
+    "s2_patience":           40,
     "s2_arcface_s":         32.0,
     "s2_arcface_m":          0.35,
     "s2_arcface_m0":         0.02,
@@ -694,6 +694,41 @@ class AdaptiveSubcenterArcFaceHead(nn.Module):
 # ══════════════════════════════════════════════════════════════════════
 #  ARCHITECTURE BUILDING BLOCKS
 # ══════════════════════════════════════════════════════════════════════
+class MaskedSpectralECA(nn.Module):
+    """
+    Residual Channel Attention for Hyperspectral data.
+    Prevents band suppression using background masking, local cross-band 
+    convolutions (ECA), and a residual connection.
+    """
+    def __init__(self, channels: int) -> None:
+        super().__init__()
+        # Dynamically calculate ECA 1D-Conv kernel size based on channel count
+        t = int(abs(math.log2(channels) / 2.0 + 1.0))
+        k_size = t if t % 2 != 0 else t + 1
+        
+        # 1D Conv processes adjacent spectral bands together to find continuous features
+        self.conv = nn.Conv1d(2, 1, kernel_size=k_size, padding=k_size // 2, bias=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # 1. Background-Aware Masking
+        mask = (x.abs().sum(dim=1, keepdim=True) > 1e-5).float()
+        valid_pixels = mask.sum(dim=[2, 3]).clamp(min=1e-5)
+        
+        # 2. Extract accurate physical statistics (strictly ignoring the black background)
+        x_mean = (x * mask).sum(dim=[2, 3]) / valid_pixels
+        x_max = x.masked_fill(mask == 0, -1e4).amax(dim=[2, 3])
+        x_max = x_max.masked_fill(x_max == -1e4, 0.0)
+        
+        # 3. Stack for 1D Convolution: Shape (Batch, 2, Channels)
+        y = torch.stack([x_mean, x_max], dim=1)
+        
+        # 4. Local Cross-Band Interaction
+        # Output shape: (Batch, 1, Channels) -> permute to (Batch, Channels, 1, 1)
+        gate = torch.sigmoid(self.conv(y)).permute(0, 2, 1).unsqueeze(-1)
+        
+        # 5. Residual Excitation (Enhance, do not suppress)
+        # Weights range from 1.0x to 2.0x, ensuring no band is ever deleted.
+        return x + (x * gate)
     
 class SEBlock1D(nn.Module):
     """1D Squeeze-and-Excitation to dynamically re-weight feature channels."""
@@ -1485,6 +1520,9 @@ class SpectralQuadNet(nn.Module):
 
         self.branch_drop_prob = cfg.get("branch_drop_prob", 0.0)
 
+        # ── Shared spectral attention ─────────────────────────────────
+        # self.se        = MaskedSpectralECA(num_bands)
+
         # ── Physical wavelength positional encoding (for 1-D CNN branches) ──
         self.wl_pe_cnn = PhysicalWavelengthPE(_PHYSICAL_WL, tower_ch)
 
@@ -1578,6 +1616,7 @@ class SpectralQuadNet(nn.Module):
         arc_m: Optional[float]             = None,
         branch_mask: Optional[torch.Tensor] = None,
     ):
+        # x = self.se(x)
         
         # Global Stats (preserves statistical integrity for Branch B)
         ms, std, mx, skew, kurt, p10, p25, p75, p90 = masked_spectral_stats(x)
@@ -2318,6 +2357,7 @@ def run_stage1(
         lr_now            = optimizer.param_groups[0]["lr"]
         aux_w_now         = _aux_loss_weight(ep, ep_total)
         saved             = ""
+
 
         # ── Checkpoint on F1 improvement ─────────────────────────────
         if best_ep_f1 > best_f1:
