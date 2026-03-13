@@ -1,4 +1,4 @@
-# code 2
+# code final
 from __future__ import annotations
 
 import os
@@ -81,23 +81,25 @@ CONFIG: dict = {
     # ── Stage 2 ───────────────────────────────────────────────────────
     "s2_epochs":            120,
     "s2_batch":             128,
-    "s2_head_lr":           2.5e-4, #
-    "s2_back_lr":           2.5e-5, #
+    "s2_head_lr":           2.5e-4,
+    "s2_back_lr":           2.5e-5,
     "s2_min_lr":            1e-6,
     "s2_warmup_ep":          5,
+    "s2_sgdr_T0":           10,
+    "s2_sgdr_Tmult":         2,
     "s2_dropout":            0.10,
-    "s2_patience":           60,
-    "s2_arcface_s":         32.0, #
-    "s2_arcface_m":          0.30, #
+    "s2_patience":           40,
+    "s2_arcface_s":         32.0,
+    "s2_arcface_m":          0.35,
     "s2_arcface_m0":         0.02,
-    "s2_arcface_m_delta":    0.10, #
+    "s2_arcface_m_delta":    0.10,
     "s2_margin_warmup_ep":   50,
     "s2_focal_gamma":         1.5,
     "cdws_max_weight":        3.0,
     "cdws_eps":               0.05,
-    "supcon_weight":           0.15, #
+    "supcon_weight":           0.25,
     "supcon_temp":             0.10,
-    "proto_weight":            0.05, #
+    "proto_weight":            0.12,
     "proto_temp":              0.10,
     "bal_n_cls":               16,
     "bal_n_spc":                8,
@@ -252,7 +254,7 @@ class RiceSeedDataset(Dataset):
         # Phase 2 — robustness consolidation
         "medium": dict(band_drop=0.05, cutout=0.04, noise=0.03, warp=0.02, mult=0.03),
         # Phase 3 — fine refinement
-        "light": dict(band_drop=0.02, cutout=0.02, noise=0.01, warp=0.01, mult=0.01),
+        "light": dict(band_drop=0.0, cutout=0.0, noise=0.0, warp=0.0, mult=0.0),
         "none":  None,
     }
 
@@ -692,41 +694,6 @@ class AdaptiveSubcenterArcFaceHead(nn.Module):
 # ══════════════════════════════════════════════════════════════════════
 #  ARCHITECTURE BUILDING BLOCKS
 # ══════════════════════════════════════════════════════════════════════
-class MaskedSpectralECA(nn.Module):
-    """
-    Residual Channel Attention for Hyperspectral data.
-    Prevents band suppression using background masking, local cross-band 
-    convolutions (ECA), and a residual connection.
-    """
-    def __init__(self, channels: int) -> None:
-        super().__init__()
-        # Dynamically calculate ECA 1D-Conv kernel size based on channel count
-        t = int(abs(math.log2(channels) / 2.0 + 1.0))
-        k_size = t if t % 2 != 0 else t + 1
-        
-        # 1D Conv processes adjacent spectral bands together to find continuous features
-        self.conv = nn.Conv1d(2, 1, kernel_size=k_size, padding=k_size // 2, bias=False)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # 1. Background-Aware Masking
-        mask = (x.abs().sum(dim=1, keepdim=True) > 1e-5).float()
-        valid_pixels = mask.sum(dim=[2, 3]).clamp(min=1e-5)
-        
-        # 2. Extract accurate physical statistics (strictly ignoring the black background)
-        x_mean = (x * mask).sum(dim=[2, 3]) / valid_pixels
-        x_max = x.masked_fill(mask == 0, -1e4).amax(dim=[2, 3])
-        x_max = x_max.masked_fill(x_max == -1e4, 0.0)
-        
-        # 3. Stack for 1D Convolution: Shape (Batch, 2, Channels)
-        y = torch.stack([x_mean, x_max], dim=1)
-        
-        # 4. Local Cross-Band Interaction
-        # Output shape: (Batch, 1, Channels) -> permute to (Batch, Channels, 1, 1)
-        gate = torch.sigmoid(self.conv(y)).permute(0, 2, 1).unsqueeze(-1)
-        
-        # 5. Residual Excitation (Enhance, do not suppress)
-        # Weights range from 1.0x to 2.0x, ensuring no band is ever deleted.
-        return x + (x * gate)
     
 class SEBlock1D(nn.Module):
     """1D Squeeze-and-Excitation to dynamically re-weight feature channels."""
@@ -1518,9 +1485,6 @@ class SpectralQuadNet(nn.Module):
 
         self.branch_drop_prob = cfg.get("branch_drop_prob", 0.0)
 
-        # ── Shared spectral attention ─────────────────────────────────
-        # self.se        = MaskedSpectralECA(num_bands)
-
         # ── Physical wavelength positional encoding (for 1-D CNN branches) ──
         self.wl_pe_cnn = PhysicalWavelengthPE(_PHYSICAL_WL, tower_ch)
 
@@ -1802,65 +1766,49 @@ def build_phase3_loader(
 def _wd_groups(named_params, lr: float) -> List[dict]:
     wd, no_wd = [], []
     for n, p in named_params:
-        if not p.requires_grad: continue
-        is_no_wd = (p.ndim == 1) or n.endswith(".bias") or ("arcface_head" in n and "weight" in n)
-        if is_no_wd: no_wd.append(p)
-        else: wd.append(p)
-    return [{"params": wd, "lr": lr, "weight_decay": CONFIG["weight_decay"]}, {"params": no_wd, "lr": lr, "weight_decay": 0.0},]
+        if not p.requires_grad:
+            continue
+        (no_wd if (p.ndim == 1 or n.endswith(".bias")) else wd).append(p)
+    return [
+        {"params": wd,    "lr": lr, "weight_decay": CONFIG["weight_decay"]},
+        {"params": no_wd, "lr": lr, "weight_decay": 0.0},
+    ]
+
 
 def build_optimizer_s1(model: nn.Module, lr: float) -> optim.AdamW:
     return optim.AdamW(_wd_groups(model.named_parameters(), lr))
 
 
 def build_optimizer_s2(model: nn.Module, head_lr: float, back_lr: float) -> optim.AdamW:
-    wd_back, no_wd_back = [], []
-    wd_head, no_wd_head = [], []
-
+    hp, bp = [], []
     for n, p in model.named_parameters():
         if not p.requires_grad:
             continue
-            
-        is_no_wd = (p.ndim == 1) or n.endswith(".bias") or ("arcface_head" in n and "weight" in n)
-        
-        if n.startswith("arcface_head") or n.startswith("linear_head"):
-            if is_no_wd:
-                no_wd_head.append(p)
-            else:
-                wd_head.append(p)
-        else:
-            if is_no_wd:
-                no_wd_back.append(p)
-            else:
-                wd_back.append(p)
-
-    groups = [
-        {"params": wd_back,    "lr": back_lr, "weight_decay": CONFIG["weight_decay"]},
-        {"params": no_wd_back, "lr": back_lr, "weight_decay": 0.0},
-        {"params": wd_head,    "lr": head_lr, "weight_decay": CONFIG["weight_decay"]},
-        {"params": no_wd_head, "lr": head_lr, "weight_decay": 0.0},
-    ]
-    return optim.AdamW(groups)
+        (hp if n.startswith("arcface_head") else bp).append((n, p))
+    return optim.AdamW(_wd_groups(hp, head_lr) + _wd_groups(bp, back_lr))
 
 
 def build_optimizer_s3(model: nn.Module, lr: float) -> optim.AdamW:
     return optim.AdamW(_wd_groups(model.named_parameters(), lr))
 
 
-def cosine_warmup_scheduler(
+def sgdr_scheduler(
     optimizer:   optim.Optimizer,
-    warmup_ep:   int,
-    total_ep:    int,
+    warmup_ep:   int   = 5,
+    T_0:         int   = 10,
+    T_mult:      int   = 2,
     eta_min_frac: float = 1e-3,
 ) -> optim.lr_scheduler.LambdaLR:
-    """Standard Metric Learning Schedule: Warmup -> Smooth Cosine Decay -> Stop"""
     def _l(ep: int) -> float:
-        # Linear Warmup
         if ep < warmup_ep:
             return max(ep / max(warmup_ep, 1), 1e-6)
-        # Cosine Decay
-        progress = (ep - warmup_ep) / max(total_ep - warmup_ep, 1)
-        return eta_min_frac + 0.5 * (1 - eta_min_frac) * (1 + math.cos(math.pi * progress))
+        t = ep - warmup_ep; clen = T_0; elapsed = 0
+        while t >= elapsed + clen:
+            elapsed += clen; clen = max(int(clen * T_mult), 1)
+        ratio = (t - elapsed) / max(clen, 1)
+        return eta_min_frac + 0.5 * (1 - eta_min_frac) * (1 + math.cos(math.pi * ratio))
     return optim.lr_scheduler.LambdaLR(optimizer, _l)
+
 
 def arcface_margin(ep: int, m0: float, m_target: float, warmup_ep: int) -> float:
     if ep >= warmup_ep:
@@ -2318,6 +2266,11 @@ def run_stage1(
             print(f"[INFO] EMA re-init at Phase 2 (ep {ep})")
             ema_reinited[0] = True
 
+        if phase == 3 and not ema_reinited[1] and CONFIG["s1_ema_reinit_phases"]:
+            ema.reinit_from(model)
+            print(f"[INFO] EMA re-init at Phase 3 (ep {ep})")
+            ema_reinited[1] = True
+
         # ── Phase 3 loader construction (once, at first Phase-3 epoch) ─
         if phase == 3 and phase3_ldr is None:
             print(f"\n[INFO] Phase 2→3 boundary: measuring per-class F1 for oversampling ...")
@@ -2345,13 +2298,13 @@ def run_stage1(
         else:
             crit = nn.CrossEntropyLoss(label_smoothing=ls_now)
 
-        current_mixup = CONFIG["s1_mixup"] if phase != 3 else 0.02
+        use_mx = (phase != 3)   # no Mixup in Phase 3
 
         tl, ta = train_one_epoch(
             model, cur_ldr, optimizer, crit, scaler, ema, device,
             scheduler=None,
-            use_mixup=True,
-            mixup_alpha=current_mixup,
+            use_mixup=use_mx,
+            mixup_alpha=CONFIG["s1_mixup"],
             accum_steps=CONFIG["s1_accum"],
             current_ep=ep,
             total_ep=ep_total,
@@ -2425,11 +2378,11 @@ def run_stage2(
     proto  = ProtoNCELoss(temperature=CONFIG["proto_temp"])
 
     optimizer = build_optimizer_s2(model, CONFIG["s2_head_lr"], CONFIG["s2_back_lr"])
-    
-    scheduler = cosine_warmup_scheduler(
+    scheduler = sgdr_scheduler(
         optimizer,
         warmup_ep=CONFIG["s2_warmup_ep"],
-        total_ep=CONFIG["s2_epochs"],
+        T_0=CONFIG["s2_sgdr_T0"],
+        T_mult=CONFIG["s2_sgdr_Tmult"],
         eta_min_frac=CONFIG["s2_min_lr"] / CONFIG["s2_head_lr"],
     )
 
@@ -2437,12 +2390,16 @@ def run_stage2(
     ep_total = CONFIG["s2_epochs"]
     best_f1  = 0.0; no_improve = 0
 
+    r1 = CONFIG["s2_warmup_ep"] + CONFIG["s2_sgdr_T0"]
+    r2 = r1 + CONFIG["s2_sgdr_T0"] * CONFIG["s2_sgdr_Tmult"]
+
     w = 66
     print(f"\n{'═'*w}")
-    print(f"  Stage 2 — Sub-ctr ArcFace + SupCon + ProtoNCE + CDWS  [{ep_total} ep]")
+    print(f"  Stage 2 — Sub-ctr ArcFace + SupCon + ProtoNCE + CDWS + SGDR  [{ep_total} ep]")
     print(f"{'═'*w}")
     print(f"  hLR={CONFIG['s2_head_lr']:.1e}  bLR={CONFIG['s2_back_lr']:.1e}  "
-          f"Schedule: {CONFIG['s2_warmup_ep']}ep Warmup → Cosine Decay")
+          f"SGDR T0={CONFIG['s2_sgdr_T0']} Tmult={CONFIG['s2_sgdr_Tmult']} "
+          f"→ restarts ep {r1} & {r2}")
     print(f"  ArcFace K={CONFIG['subcenter_K']}  "
           f"m={CONFIG['s2_arcface_m0']}→{CONFIG['s2_arcface_m']}+Δ{CONFIG['s2_arcface_m_delta']}")
     print(f"  Losses: Focal(γ={CONFIG['s2_focal_gamma']}) + SupCon(w={sc_w}) + ProtoNCE(w={pt_w})")
@@ -2491,10 +2448,11 @@ def run_stage2(
         else:
             no_improve += 1
 
+        rf = " ↻R1" if ep == r1 else (" ↻R2" if ep == r2 else "")
         print(
             f"Ep {ep:03d}/{ep_total} │ Loss {tl:.4f}  Tr {ta:.1%} │ "
             f"F1 {f1_live:.3f}/{f1_ema:.3f}  Acc {acc_live:.1%}/{acc_ema:.1%} │ "
-            f"hLR {head_lr:.1e} bLR {back_lr:.1e}  m={m_now:.3f}{saved}"
+            f"hLR {head_lr:.1e} bLR {back_lr:.1e}  m={m_now:.3f}{saved}{rf}"
         )
 
         if no_improve >= CONFIG["s2_patience"]:
@@ -2502,6 +2460,7 @@ def run_stage2(
 
     model.unfreeze_head("linear")
     return best_f1
+
 
 # ══════════════════════════════════════════════════════════════════════
 #  STAGE 3 — SAM + Greedy SWA
