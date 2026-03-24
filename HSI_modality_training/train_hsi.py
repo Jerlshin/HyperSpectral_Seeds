@@ -76,7 +76,7 @@ CONFIG: dict = {
     # ── Auxiliary Classification Heads (per branch, Stage 1) ──────────
     "aux_head_hidden":       128,
     "aux_loss_weight_init":  0.50,
-    "aux_loss_weight_final": 0.15,
+    "aux_loss_weight_final": 0.30,
 
     # ── Stage 2 ───────────────────────────────────────────────────────
     "s2_epochs":            120,
@@ -90,9 +90,9 @@ CONFIG: dict = {
     "s2_dropout":            0.10,
     "s2_patience":           40,
     "s2_arcface_s":         32.0,
-    "s2_arcface_m":          0.35,
+    "s2_arcface_m":          0.45,
     "s2_arcface_m0":         0.02,
-    "s2_arcface_m_delta":    0.10,
+    "s2_arcface_m_delta":    0.15,
     "s2_margin_warmup_ep":   50,
     "s2_focal_gamma":         1.5,
     "cdws_max_weight":        3.0,
@@ -333,7 +333,11 @@ class RiceSeedDataset(Dataset):
         patch_np = np.array(self.patches[ri])
         patch = torch.from_numpy(patch_np).to(CONFIG["device"], non_blocking=True)
         label = torch.tensor(int(self.labels[ri]), dtype=torch.long, device=CONFIG["device"])
-
+        
+        # inside dataset __getitem__
+        patch = (patch - patch.mean(dim=(1,2), keepdim=True)) / \
+            (patch.std(dim=(1,2), keepdim=True) + 1e-6)
+        
         if self.profile is not None:
             p = self.profile
             if torch.rand(1) < p["band_drop"]:
@@ -694,6 +698,41 @@ class AdaptiveSubcenterArcFaceHead(nn.Module):
 # ══════════════════════════════════════════════════════════════════════
 #  ARCHITECTURE BUILDING BLOCKS
 # ══════════════════════════════════════════════════════════════════════
+class MaskedSpectralECA(nn.Module):
+    """
+    Residual Channel Attention for Hyperspectral data.
+    Prevents band suppression using background masking, local cross-band 
+    convolutions (ECA), and a residual connection.
+    """
+    def __init__(self, channels: int) -> None:
+        super().__init__()
+        # Dynamically calculate ECA 1D-Conv kernel size based on channel count
+        t = int(abs(math.log2(channels) / 2.0 + 1.0))
+        k_size = t if t % 2 != 0 else t + 1
+        
+        # 1D Conv processes adjacent spectral bands together to find continuous features
+        self.conv = nn.Conv1d(2, 1, kernel_size=k_size, padding=k_size // 2, bias=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # 1. Background-Aware Masking
+        mask = (x.abs().sum(dim=1, keepdim=True) > 1e-5).float()
+        valid_pixels = mask.sum(dim=[2, 3]).clamp(min=1e-5)
+        
+        # 2. Extract accurate physical statistics (strictly ignoring the black background)
+        x_mean = (x * mask).sum(dim=[2, 3]) / valid_pixels
+        x_max = x.masked_fill(mask == 0, -1e4).amax(dim=[2, 3])
+        x_max = x_max.masked_fill(x_max == -1e4, 0.0)
+        
+        # 3. Stack for 1D Convolution: Shape (Batch, 2, Channels)
+        y = torch.stack([x_mean, x_max], dim=1)
+        
+        # 4. Local Cross-Band Interaction
+        # Output shape: (Batch, 1, Channels) -> permute to (Batch, Channels, 1, 1)
+        gate = torch.sigmoid(self.conv(y)).permute(0, 2, 1).unsqueeze(-1)
+        
+        # 5. Residual Excitation (Enhance, do not suppress)
+        # Weights range from 1.0x to 2.0x, ensuring no band is ever deleted.
+        return x + (x * gate)
     
 class SEBlock1D(nn.Module):
     """1D Squeeze-and-Excitation to dynamically re-weight feature channels."""
@@ -1484,6 +1523,9 @@ class SpectralQuadNet(nn.Module):
         tower_ch = 96
 
         self.branch_drop_prob = cfg.get("branch_drop_prob", 0.0)
+
+        # ── Shared spectral attention ─────────────────────────────────
+        # self.se        = MaskedSpectralECA(num_bands)
 
         # ── Physical wavelength positional encoding (for 1-D CNN branches) ──
         self.wl_pe_cnn = PhysicalWavelengthPE(_PHYSICAL_WL, tower_ch)

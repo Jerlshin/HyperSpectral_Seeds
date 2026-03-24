@@ -1,4 +1,4 @@
-# code final
+# code 1
 from __future__ import annotations
 
 import os
@@ -70,8 +70,8 @@ CONFIG: dict = {
     # ── Architecture ──────────────────────────────────────────────────
     "branch_drop_prob":    0.20,
     "subcenter_K":          3,
-    "max_cutout_bands":     8,
-    "noise_std":            0.02,
+    "max_cutout_bands":     5,
+    "noise_std":            0.0193,
 
     # ── Auxiliary Classification Heads (per branch, Stage 1) ──────────
     "aux_head_hidden":       128,
@@ -250,11 +250,11 @@ class RiceSeedDataset(Dataset):
     """
     _PROFILES = {
         # Phase 1 — representation shaping
-        "heavy": dict(band_drop=0.08, cutout=0.06, noise=0.04, warp=0.03, mult=0.05),
+        "heavy": dict(band_drop=0.0886, cutout=0.2101, noise=0.0838, warp=0.0794, mult=0.0214),
         # Phase 2 — robustness consolidation
-        "medium": dict(band_drop=0.05, cutout=0.04, noise=0.03, warp=0.02, mult=0.03),
+        "medium": dict(band_drop=0.0211, cutout=0.0798, noise=0.0723, warp=0.0512, mult=0.0160),
         # Phase 3 — fine refinement
-        "light": dict(band_drop=0.0, cutout=0.0, noise=0.0, warp=0.0, mult=0.0),
+        "light": dict(band_drop=0.0013, cutout=0.0340, noise=0.0270, warp=0.0139, mult=0.0012),
         "none":  None,
     }
 
@@ -694,6 +694,41 @@ class AdaptiveSubcenterArcFaceHead(nn.Module):
 # ══════════════════════════════════════════════════════════════════════
 #  ARCHITECTURE BUILDING BLOCKS
 # ══════════════════════════════════════════════════════════════════════
+class MaskedSpectralECA(nn.Module):
+    """
+    Residual Channel Attention for Hyperspectral data.
+    Prevents band suppression using background masking, local cross-band 
+    convolutions (ECA), and a residual connection.
+    """
+    def __init__(self, channels: int) -> None:
+        super().__init__()
+        # Dynamically calculate ECA 1D-Conv kernel size based on channel count
+        t = int(abs(math.log2(channels) / 2.0 + 1.0))
+        k_size = t if t % 2 != 0 else t + 1
+        
+        # 1D Conv processes adjacent spectral bands together to find continuous features
+        self.conv = nn.Conv1d(2, 1, kernel_size=k_size, padding=k_size // 2, bias=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # 1. Background-Aware Masking
+        mask = (x.abs().sum(dim=1, keepdim=True) > 1e-5).float()
+        valid_pixels = mask.sum(dim=[2, 3]).clamp(min=1e-5)
+        
+        # 2. Extract accurate physical statistics (strictly ignoring the black background)
+        x_mean = (x * mask).sum(dim=[2, 3]) / valid_pixels
+        x_max = x.masked_fill(mask == 0, -1e4).amax(dim=[2, 3])
+        x_max = x_max.masked_fill(x_max == -1e4, 0.0)
+        
+        # 3. Stack for 1D Convolution: Shape (Batch, 2, Channels)
+        y = torch.stack([x_mean, x_max], dim=1)
+        
+        # 4. Local Cross-Band Interaction
+        # Output shape: (Batch, 1, Channels) -> permute to (Batch, Channels, 1, 1)
+        gate = torch.sigmoid(self.conv(y)).permute(0, 2, 1).unsqueeze(-1)
+        
+        # 5. Residual Excitation (Enhance, do not suppress)
+        # Weights range from 1.0x to 2.0x, ensuring no band is ever deleted.
+        return x + (x * gate)
     
 class SEBlock1D(nn.Module):
     """1D Squeeze-and-Excitation to dynamically re-weight feature channels."""
@@ -1484,6 +1519,9 @@ class SpectralQuadNet(nn.Module):
         tower_ch = 96
 
         self.branch_drop_prob = cfg.get("branch_drop_prob", 0.0)
+
+        # ── Shared spectral attention ─────────────────────────────────
+        # self.se        = MaskedSpectralECA(num_bands)
 
         # ── Physical wavelength positional encoding (for 1-D CNN branches) ──
         self.wl_pe_cnn = PhysicalWavelengthPE(_PHYSICAL_WL, tower_ch)

@@ -1,4 +1,4 @@
-# code final
+# code 2
 from __future__ import annotations
 
 import os
@@ -44,8 +44,8 @@ CONFIG: dict = {
 
     # ── Stage 1 — 3-Phase Progressive Augmentation ────────────────────
     "s1_epochs":            400,
-    "s1_phase1_frac":       0.15,
-    "s1_phase2_frac":       0.35,
+    "s1_phase1_frac":       0.22,
+    "s1_phase2_frac":       0.38,
                                  
     "s1_batch":             128,
     "s1_max_lr":            5e-4,
@@ -54,29 +54,30 @@ CONFIG: dict = {
     "s1_mixup":             0.10,
     "s1_patience":          120,
     "s1_accum":             1,
+
     "s1_focal_gamma":       1.5,
-    "s1_label_smooth_hi":   0.00,
-    "s1_label_smooth_lo":   0.00,
+    "s1_label_smooth_hi":   0.0,
+    "s1_label_smooth_lo":   0.0,
     "s1_ema_reinit_phases": True,
 
     # ── Stage 1 · Phase 3 — Hard-Class Oversampling ───────────────────
     "s1_p3_oversample":         False,
-    "s1_p3_oversample_power":   0.40,
-                                     
+    "s1_p3_oversample_power":   0.50,
     "s1_p3_oversample_max_w":   5.0,
     "s1_p3_hard_f1_thresh":     0.50,
     "s1_p3_oversample_eps":     0.05,   
 
     # ── Architecture ──────────────────────────────────────────────────
-    "branch_drop_prob":    0.20,
-    "subcenter_K":          3,
+    "branch_drop_prob":    0.20, #
+    "subcenter_K":          3, #
     "max_cutout_bands":     8,
-    "noise_std":            0.02,
+    "noise_std":            0.02, # 
 
     # ── Auxiliary Classification Heads (per branch, Stage 1) ──────────
     "aux_head_hidden":       128,
     "aux_loss_weight_init":  0.50,
-    "aux_loss_weight_final": 0.15,
+    "aux_loss_weight_final": 0.10,
+    "aux_branch_weights":    {"aux_a": 1.0, "aux_b": 1.0, "aux_c": 1.0, "aux_d": 1.0},
 
     # ── Stage 2 ───────────────────────────────────────────────────────
     "s2_epochs":            120,
@@ -85,21 +86,19 @@ CONFIG: dict = {
     "s2_back_lr":           2.5e-5,
     "s2_min_lr":            1e-6,
     "s2_warmup_ep":          5,
-    "s2_sgdr_T0":           10,
-    "s2_sgdr_Tmult":         2,
     "s2_dropout":            0.10,
-    "s2_patience":           40,
+    "s2_patience":           60,
     "s2_arcface_s":         32.0,
-    "s2_arcface_m":          0.35,
+    "s2_arcface_m":          0.30,
     "s2_arcface_m0":         0.02,
     "s2_arcface_m_delta":    0.10,
     "s2_margin_warmup_ep":   50,
     "s2_focal_gamma":         1.5,
     "cdws_max_weight":        3.0,
     "cdws_eps":               0.05,
-    "supcon_weight":           0.25,
+    "supcon_weight":           0.15,
     "supcon_temp":             0.10,
-    "proto_weight":            0.12,
+    "proto_weight":            0.05,
     "proto_temp":              0.10,
     "bal_n_cls":               16,
     "bal_n_spc":                8,
@@ -254,7 +253,7 @@ class RiceSeedDataset(Dataset):
         # Phase 2 — robustness consolidation
         "medium": dict(band_drop=0.05, cutout=0.04, noise=0.03, warp=0.02, mult=0.03),
         # Phase 3 — fine refinement
-        "light": dict(band_drop=0.0, cutout=0.0, noise=0.0, warp=0.0, mult=0.0),
+        "light": dict(band_drop=0.02, cutout=0.02, noise=0.01, warp=0.01, mult=0.01),
         "none":  None,
     }
 
@@ -272,8 +271,6 @@ class RiceSeedDataset(Dataset):
 
     def __len__(self) -> int:
         return len(self.indices)
-
-    # ── Augmentation primitives ───────────────────────────────────────
 
     def _band_dropout(self, x: torch.Tensor, prob: float) -> torch.Tensor:
         C    = x.shape[0]
@@ -387,24 +384,6 @@ class ClassBalancedBatchSampler(Sampler):
 
 
 class HardClassOversampledSampler(Sampler):
-    """
-    Stage 1 · Phase 3 — Class-Specific Oversampling Sampler.
-
-    Hard classes (low per-class F1 from Phase 2 evaluation) are assigned
-    higher sampling weight via inverse-F1 re-weighting.  The weight is
-    raised to ``oversample_power`` to control the aggressiveness of the
-    boost, and capped at ``max_weight`` to prevent pathological imbalance.
-
-    Args:
-        labels:            Integer class label for every training sample.
-        class_f1:          Per-class F1 scores from Phase 2 EMA evaluation.
-        num_samples:       Total samples to draw per epoch (with replacement).
-        oversample_power:  Exponent on inverse-F1 weight (1.0 = full inverse).
-        max_weight:        Ceiling on any single class multiplier.
-        hard_f1_thresh:    Classes below this F1 are logged as "hard".
-        eps:               Smoothing term in the denominator (avoids div-by-zero).
-    """
-
     def __init__(
         self,
         labels:           np.ndarray,
@@ -417,7 +396,6 @@ class HardClassOversampledSampler(Sampler):
     ) -> None:
         self.num_samples = num_samples
 
-        # ── Build per-class weights ────────────────────────────────────
         num_classes   = int(np.max(labels)) + 1
         raw_weights: Dict[int, float] = {}
         for c in range(num_classes):
@@ -425,17 +403,14 @@ class HardClassOversampledSampler(Sampler):
             w  = (1.0 / (f1 + eps)) ** oversample_power
             raw_weights[c] = min(w, max_weight)
 
-        # Normalise so the mean weight stays at 1.0 (no overall rate change)
         mean_w = float(np.mean(list(raw_weights.values())))
         norm_weights = {c: w / mean_w for c, w in raw_weights.items()}
 
-        # ── Assign per-sample weights ──────────────────────────────────
         sample_weights         = np.array(
             [norm_weights.get(int(lbl), 1.0) for lbl in labels], dtype=np.float32
         )
         self._weights          = torch.from_numpy(sample_weights)
 
-        # ── Diagnostics ───────────────────────────────────────────────
         n_hard = sum(1 for f in class_f1.values() if f < hard_f1_thresh)
         hard_classes = sorted(
             [c for c, f in class_f1.items() if f < hard_f1_thresh],
@@ -490,6 +465,20 @@ def mixed_aug(
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, float]:
     return _mixup(x, y, alpha)
 
+
+def spec_cutmix(
+    x: torch.Tensor, y: torch.Tensor, cut_frac: float = 0.25
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, float]:
+    B, C, H, W = x.shape
+    idx   = torch.randperm(B, device=x.device)
+    width = max(1, int(np.random.uniform(0.0, cut_frac) * C))
+    start = torch.randint(0, max(1, C - width), (1,)).item()
+
+    mixed = x.clone()
+    mixed[:, start:start + width, :, :] = x[idx, start:start + width, :, :]
+    lam   = 1.0 - width / C
+    return mixed, y, y[idx], lam
+
 def mixed_loss(
     crit: nn.Module,
     logits: torch.Tensor,
@@ -505,11 +494,6 @@ def mixed_loss(
 # ══════════════════════════════════════════════════════════════════════
 
 class FocalLoss(nn.Module):
-    """
-    Focal loss with optional label smoothing.
-    Soft targets from LS, then focal modulation (1-pt)^γ preserves
-    regularisation while sharpening focus on hard examples.
-    """
     def __init__(self, gamma: float = 1.5, label_smoothing: float = 0.0) -> None:
         super().__init__()
         self.gamma = gamma
@@ -528,9 +512,15 @@ class FocalLoss(nn.Module):
         return ((1.0 - torch.exp(-ce)) ** self.gamma * ce).mean()
 
 
+class SpectralConsistencyLoss(nn.Module):
+    def forward(self, feat_a: torch.Tensor, feat_d: torch.Tensor) -> torch.Tensor:
+        na = F.normalize(feat_a, dim=1)
+        nd = F.normalize(feat_d, dim=1)
+        return 1.0 - (na * nd).sum(dim=1).mean()
+
+
 class SupConLoss(nn.Module):
     """Supervised Contrastive Loss. Expects L2-normalised features."""
-
     def __init__(self, temperature: float = 0.10) -> None:
         super().__init__()
         self.temperature = temperature
@@ -552,7 +542,6 @@ class SupConLoss(nn.Module):
 
 class ProtoNCELoss(nn.Module):
     """Class-mean prototype contrastive CE."""
-
     def __init__(self, temperature: float = 0.10) -> None:
         super().__init__()
         self.temperature = temperature
@@ -711,8 +700,6 @@ class SEBlock1D(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return x * self.se(x)
     
-
-
 class ResBlock1D(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, kernel: int = 7, dilation: int = 1) -> None:
         super().__init__()
@@ -770,7 +757,6 @@ class ResBlock2D(nn.Module):
             self.skip(x)
         )
 
-
 class PhysicalWavelengthPE(nn.Module):
     def __init__(self, physical_wl: torch.Tensor, d_model: int) -> None:
         super().__init__()
@@ -793,18 +779,11 @@ class PhysicalWavelengthPE(nn.Module):
 #  BRANCH A — SPECTRAL PROFILE (signal + 1st/2nd derivatives)
 # ══════════════════════════════════════════════════════════════════════
 class LargeKernelBlock1D(nn.Module):
-    """
-    Modern ConvNeXt-inspired 1D block.
-    Uses Depthwise Large Kernels to continuously capture wide absorption valleys 
-    without the 'blind spots' of dilated convolutions.
-    """
     def __init__(self, dim: int, kernel_size: int):
         super().__init__()
-        # Depthwise convolution (groups=dim) makes large kernels highly parameter-efficient
         self.dwconv = nn.Conv1d(dim, dim, kernel_size, padding=kernel_size//2, groups=dim, bias=False)
         self.norm = nn.GroupNorm(1, dim)
         
-        # Pointwise Feed-Forward Network (Inverted Bottleneck)
         self.pw1 = nn.Conv1d(dim, dim * 4, 1, bias=False)
         self.act = nn.GELU()
         self.pw2 = nn.Conv1d(dim * 4, dim, 1, bias=False)
@@ -822,10 +801,6 @@ class LargeKernelBlock1D(nn.Module):
 
 
 class SpectralProfileBranch(nn.Module):
-    """
-    Advanced Spectral Profile Branch.
-    Fuses Signal + SG-Derivatives early, then processes via parallel Large Kernel ConvNeXt towers.
-    """
     def __init__(
         self,
         out_dim: int = 256,
@@ -835,23 +810,20 @@ class SpectralProfileBranch(nn.Module):
         super().__init__()
         self.wl_pe_module = wl_pe_module
 
-        # Savitzky-Golay derivative filters (wider window = robust to noise)
+        # Savitzky-Golay derivative filters
         self.d1_conv = nn.Conv1d(1, 1, kernel_size=7, padding=3, bias=False)
         self.d2_conv = nn.Conv1d(1, 1, kernel_size=7, padding=3, bias=False)
         
         with torch.no_grad():
-            # True 7-point, 2nd-order polynomial Savitzky-Golay weights
             self.d1_conv.weight[0, 0] = torch.tensor([-3, -2, -1, 0, 1, 2, 3]).float() / 28.0
             self.d2_conv.weight[0, 0] = torch.tensor([5, 0, -3, -4, -3, 0, 5]).float() / 42.0
 
-        # Early Fusion Stem: Look at Signal, D1, and D2 simultaneously
         self.stem = nn.Sequential(
             nn.Conv1d(3, tower_ch, kernel_size=7, padding=3, bias=False),
             nn.GroupNorm(1, tower_ch),
             nn.GELU()
         )
 
-        # Parallel Large-Kernel processing to capture varying chemical absorption widths
         self.tower_s = nn.Sequential(LargeKernelBlock1D(tower_ch, 7), LargeKernelBlock1D(tower_ch, 7))
         self.tower_m = nn.Sequential(LargeKernelBlock1D(tower_ch, 15), LargeKernelBlock1D(tower_ch, 15))
         self.tower_l = nn.Sequential(LargeKernelBlock1D(tower_ch, 31), LargeKernelBlock1D(tower_ch, 31))
@@ -860,10 +832,9 @@ class SpectralProfileBranch(nn.Module):
             nn.Conv1d(tower_ch * 3, tower_ch, 1, bias=False),
             nn.GroupNorm(1, tower_ch),
             nn.GELU(),
-            LargeKernelBlock1D(tower_ch, 7) # Final smoothing interaction
+            LargeKernelBlock1D(tower_ch, 7)
         )
         
-        # Robust Attentive Pooling
         self.attn_pool = nn.Sequential(
             nn.Conv1d(tower_ch, tower_ch // 4, 1),
             nn.GELU(),
@@ -886,25 +857,21 @@ class SpectralProfileBranch(nn.Module):
 
     def forward(self, ms: torch.Tensor) -> torch.Tensor:
         s = ms.unsqueeze(1)
-        # Gentle pre-smoothing
         s_smooth = F.avg_pool1d(s, kernel_size=5, stride=1, padding=2)
 
-        # FIX: Apply both derivative operators directly to the smoothed signal
         d1 = self.d1_conv(s_smooth)
-        d2 = self.d2_conv(s_smooth) 
+        d2 = self.d2_conv(s_smooth)
 
-        # Early fusion: Stack into a 3-channel 1D sequence and project to tower_ch
         x = torch.cat([s, d1, d2], dim=1)
         x = self.stem(x)
 
         if self.wl_pe_module is not None:
             x = self.wl_pe_module(x)
 
-        # Multi-scale large kernel feature extraction
         x_fused = self.fusion(
             torch.cat([self.tower_s(x), self.tower_m(x), self.tower_l(x)], dim=1)
         )
-        
+
         w = torch.softmax(self.attn_pool(x_fused), dim=2)
         return self.proj(torch.sum(x_fused * w, dim=2))
 
@@ -915,11 +882,6 @@ class SpectralProfileBranch(nn.Module):
 
 
 class SpectralStatsBranch(nn.Module):
-    """
-    Masked statistical spectral branch.  Pre-computed masked stats
-    prevent modal collapse and background dilution.
-    """
-
     def __init__(
         self,
         num_bands: int,
@@ -971,7 +933,7 @@ class SpectralStatsBranch(nn.Module):
                 nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
             elif isinstance(m, nn.Linear):
                 nn.init.trunc_normal_(m.weight, std=0.02)
-                if m.bias is not None:  # FIX-4: guard against bias=False linears
+                if m.bias is not None:
                     nn.init.zeros_(m.bias)
 
     def forward(
@@ -1033,8 +995,6 @@ class SpatialCNNBranch(nn.Module):
 class MultiScaleSpectralTokenizer(nn.Module):
     def __init__(self, in_channels: int, d_model: int, stride: int = 8):
         super().__init__()
-        # 3 parallel tokenizers with different receptive fields to capture 
-        # narrow absorption lines and broad spectral shapes
         out_c = d_model // 3
         rem   = d_model - (out_c * 2)
         
@@ -1046,12 +1006,10 @@ class MultiScaleSpectralTokenizer(nn.Module):
         self.act  = nn.GELU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: [Batch, Channels, Length]
         t_s = self.proj_small(x)
         t_m = self.proj_medium(x)
         t_l = self.proj_large(x)
         
-        # Ensure identical sequence lengths by truncating to the shortest
         min_len = min(t_s.size(2), t_m.size(2), t_l.size(2))
         t_s, t_m, t_l = t_s[..., :min_len], t_m[..., :min_len], t_l[..., :min_len]
         
@@ -1079,15 +1037,11 @@ class _PreLNBlock(nn.Module):
 
 
 class SpecFormerBranch(nn.Module):
-    """
-    State-of-the-Art Spatial-Spectral Factorised Transformer.
-    Processes Multi-Scale Spectral features first, then correlates Spatial grids.
-    """
     def __init__(
         self,
         physical_wl: torch.Tensor,
         num_bands:  int = 256,
-        patch_size: int = 16, # Kept for API compatibility, handled by MultiScale
+        patch_size: int = 16,
         stride:     int = 8,
         d_model:    int = 128,
         n_heads:    int = 4,
@@ -1096,25 +1050,19 @@ class SpecFormerBranch(nn.Module):
         dropout:    float = 0.15,
     ) -> None:
         super().__init__()
-        # Input features: 1 (Raw) + 1 (First Derivative) = 2
         self.tokenizer = MultiScaleSpectralTokenizer(in_channels=2, d_model=d_model, stride=stride)
         
-        # Spectral cls token and positional embedding
         self.spec_cls = nn.Parameter(torch.zeros(1, 1, d_model))
         nn.init.trunc_normal_(self.spec_cls, std=0.02)
         
-        # Estimate number of tokens (approx num_bands // stride)
         n_tokens = (num_bands // stride) + 2 
         self.spec_pos_embed = nn.Parameter(torch.randn(1, n_tokens, d_model) * 0.02)
 
-        # Factorized Transformer Stages
-        # 1. Spectral Attention (Local chemical composition)
         self.spectral_blocks = nn.ModuleList([
             _PreLNBlock(d_model, n_heads, d_model * 2, dropout)
             for _ in range(n_layers // 2)
         ])
         
-        # 2. Spatial Attention (Global seed morphology)
         self.spatial_cls = nn.Parameter(torch.zeros(1, 1, d_model))
         nn.init.trunc_normal_(self.spatial_cls, std=0.02)
         
@@ -1129,25 +1077,18 @@ class SpecFormerBranch(nn.Module):
         )
 
     def forward(self, grid_ms: torch.Tensor) -> torch.Tensor:
-        # Expected input: [B, N, C] where N is number of spatial grids (e.g., 16)
         B, N, C = grid_ms.shape
         
-        # 1. Infuse 1st Derivative (Gradient of the spectrum)
-        # Calculates difference between adjacent bands; pads the last band
         deriv = torch.diff(grid_ms, dim=2)
         deriv = F.pad(deriv, (0, 1), mode='replicate') 
         
-        # Combine Raw + Deriv -> [B*N, 2, C]
         x_combo = torch.stack([grid_ms, deriv], dim=2).view(B * N, 2, C)
 
-        # 2. Multi-Scale Tokenization
         tokens = self.tokenizer(x_combo).transpose(1, 2) # [B*N, Seq, d_model]
         
-        # 3. Spectral Stage (Within each grid cell)
         cls_tokens = self.spec_cls.expand(B * N, -1, -1)
         tokens = torch.cat([cls_tokens, tokens], dim=1)
-        
-        # Add Positional Embedding safely
+
         seq_len = tokens.size(1)
         if seq_len <= self.spec_pos_embed.size(1):
             tokens = tokens + self.spec_pos_embed[:, :seq_len, :]
@@ -1155,12 +1096,8 @@ class SpecFormerBranch(nn.Module):
         for blk in self.spectral_blocks:
             tokens = blk(tokens)
             
-        # Extract the spectral CLS token to represent the entire grid cell's spectrum
-        grid_features = tokens[:, 0, :] # [B*N, d_model]
-        
-        # 4. Spatial Stage (Across grid cells)
-        # Reshape back to separate batch and spatial dimensions
-        spatial_tokens = grid_features.view(B, N, -1) # [B, N, d_model]
+        grid_features = tokens[:, 0, :]
+        spatial_tokens = grid_features.view(B, N, -1)
         
         spatial_cls = self.spatial_cls.expand(B, -1, -1)
         spatial_tokens = torch.cat([spatial_cls, spatial_tokens], dim=1)
@@ -1168,7 +1105,6 @@ class SpecFormerBranch(nn.Module):
         for blk in self.spatial_blocks:
             spatial_tokens = blk(spatial_tokens)
             
-        # Final classification token representing the whole Spatio-Spectral object
         global_feature = self.norm(spatial_tokens[:, 0, :])
         
         return self.proj(global_feature)
@@ -1179,18 +1115,6 @@ class SpecFormerBranch(nn.Module):
 # ══════════════════════════════════════════════════════════════════════
 
 class CrossModalInteraction(nn.Module):
-    """
-    Latent Cross-Modal Attention Fusion
-
-    Modern multimodal fusion module inspired by:
-    Perceiver IO, Flamingo, and Multimodal Transformers.
-
-    Design goals:
-    • preserve modality structure
-    • enable cross-modal reasoning
-    • scalable to more branches
-    """
-
     def __init__(
         self,
         num_modalities: int = 4,
@@ -1205,12 +1129,10 @@ class CrossModalInteraction(nn.Module):
         self.num_modalities = num_modalities
         self.d = d
 
-        # normalize each modality independently
         self.branch_norms = nn.ModuleList(
             [nn.LayerNorm(d) for _ in range(num_modalities)]
         )
 
-        # learned latent tokens (Perceiver-style fusion space)
         self.latents = nn.Parameter(torch.randn(latent_tokens, d) * 0.02)
 
         self.blocks = nn.ModuleList([])
@@ -1256,11 +1178,9 @@ class CrossModalInteraction(nn.Module):
 
         B = branches[0].shape[0]
 
-        # normalize branches
         tokens = torch.stack(
             [norm(b) for norm, b in zip(self.branch_norms, branches)], dim=1
         )
-        # shape: [B, M, D]
 
         # latent tokens
         latents = self.latents.unsqueeze(0).expand(B, -1, -1)
@@ -1606,11 +1526,15 @@ class SpectralQuadNet(nn.Module):
         bd_raw = self.branch_d(grid_ms)
 
         # --- Branch Masking (Deep Supervision Dropout) ---
+        # Branch C (spatial CNN) drop probability raised from 0.25 → 0.40 so
+        # the fusion layer cannot always rely on the dominant spatial signal.
+        # Spectral branches A/B are almost never dropped (0.02) so they are
+        # forced to remain individually discriminative under strong branch C.
         if branch_mask is not None:
             ba = ba_raw * branch_mask[0]; bb = bb_raw * branch_mask[1]
             bc = bc_raw * branch_mask[2]; bd = bd_raw * branch_mask[3]
         elif self.training:
-            drop_probs = torch.tensor([0.05, 0.05, 0.25, 0.10], device=ba_raw.device)
+            drop_probs = torch.tensor([0.02, 0.02, 0.40, 0.15], device=ba_raw.device)
             keeps      = (torch.rand(4, device=ba_raw.device) > drop_probs).float()
             safe_idx   = torch.randint(0, 4, (), device=ba_raw.device)
             safe_mask  = F.one_hot(safe_idx, num_classes=4).float()
@@ -1637,6 +1561,9 @@ class SpectralQuadNet(nn.Module):
                 "aux_b": self.aux_head_b(bb_raw),
                 "aux_c": self.aux_head_c(bc_raw),
                 "aux_d": self.aux_head_d(bd_raw),
+                # Raw branch embeddings for spectral consistency loss (A↔D)
+                "feat_a": ba_raw,
+                "feat_d": bd_raw,
             }
             if return_embed:
                 out["emb"] = F.normalize(emb, dim=1)
@@ -1766,49 +1693,65 @@ def build_phase3_loader(
 def _wd_groups(named_params, lr: float) -> List[dict]:
     wd, no_wd = [], []
     for n, p in named_params:
-        if not p.requires_grad:
-            continue
-        (no_wd if (p.ndim == 1 or n.endswith(".bias")) else wd).append(p)
-    return [
-        {"params": wd,    "lr": lr, "weight_decay": CONFIG["weight_decay"]},
-        {"params": no_wd, "lr": lr, "weight_decay": 0.0},
-    ]
-
+        if not p.requires_grad: continue
+        is_no_wd = (p.ndim == 1) or n.endswith(".bias") or ("arcface_head" in n and "weight" in n)
+        if is_no_wd: no_wd.append(p)
+        else: wd.append(p)
+    return [{"params": wd, "lr": lr, "weight_decay": CONFIG["weight_decay"]}, {"params": no_wd, "lr": lr, "weight_decay": 0.0},]
 
 def build_optimizer_s1(model: nn.Module, lr: float) -> optim.AdamW:
     return optim.AdamW(_wd_groups(model.named_parameters(), lr))
 
 
 def build_optimizer_s2(model: nn.Module, head_lr: float, back_lr: float) -> optim.AdamW:
-    hp, bp = [], []
+    wd_back, no_wd_back = [], []
+    wd_head, no_wd_head = [], []
+
     for n, p in model.named_parameters():
         if not p.requires_grad:
             continue
-        (hp if n.startswith("arcface_head") else bp).append((n, p))
-    return optim.AdamW(_wd_groups(hp, head_lr) + _wd_groups(bp, back_lr))
+            
+        is_no_wd = (p.ndim == 1) or n.endswith(".bias") or ("arcface_head" in n and "weight" in n)
+        
+        if n.startswith("arcface_head") or n.startswith("linear_head"):
+            if is_no_wd:
+                no_wd_head.append(p)
+            else:
+                wd_head.append(p)
+        else:
+            if is_no_wd:
+                no_wd_back.append(p)
+            else:
+                wd_back.append(p)
+
+    groups = [
+        {"params": wd_back,    "lr": back_lr, "weight_decay": CONFIG["weight_decay"]},
+        {"params": no_wd_back, "lr": back_lr, "weight_decay": 0.0},
+        {"params": wd_head,    "lr": head_lr, "weight_decay": CONFIG["weight_decay"]},
+        {"params": no_wd_head, "lr": head_lr, "weight_decay": 0.0},
+    ]
+    return optim.AdamW(groups)
 
 
 def build_optimizer_s3(model: nn.Module, lr: float) -> optim.AdamW:
     return optim.AdamW(_wd_groups(model.named_parameters(), lr))
 
 
-def sgdr_scheduler(
+def cosine_warmup_scheduler(
     optimizer:   optim.Optimizer,
-    warmup_ep:   int   = 5,
-    T_0:         int   = 10,
-    T_mult:      int   = 2,
+    warmup_ep:   int,
+    total_ep:    int,
     eta_min_frac: float = 1e-3,
 ) -> optim.lr_scheduler.LambdaLR:
+    """Standard Metric Learning Schedule: Warmup -> Smooth Cosine Decay -> Stop"""
     def _l(ep: int) -> float:
+        # Linear Warmup
         if ep < warmup_ep:
             return max(ep / max(warmup_ep, 1), 1e-6)
-        t = ep - warmup_ep; clen = T_0; elapsed = 0
-        while t >= elapsed + clen:
-            elapsed += clen; clen = max(int(clen * T_mult), 1)
-        ratio = (t - elapsed) / max(clen, 1)
-        return eta_min_frac + 0.5 * (1 - eta_min_frac) * (1 + math.cos(math.pi * ratio))
+        # Cosine Decay
+        progress = (ep - warmup_ep) / max(total_ep - warmup_ep, 1)
+        return eta_min_frac + 0.5 * (1 - eta_min_frac) * (1 + math.cos(math.pi * progress))
     return optim.lr_scheduler.LambdaLR(optimizer, _l)
-
 
 def arcface_margin(ep: int, m0: float, m_target: float, warmup_ep: int) -> float:
     if ep >= warmup_ep:
@@ -1845,20 +1788,25 @@ def _compute_aux_loss(
     use_mixup: bool,
 ) -> torch.Tensor:
     """
-    Compute the summed auxiliary head loss across all four branches.
+    Compute the weighted auxiliary head loss across all four branches.
 
-    Handles both standard CE and Mixup-interpolated targets.
-    Branches A, B, C, D each contribute equally.
+    Branch-specific multipliers are read from CONFIG["aux_branch_weights"].
+    Spectral branches A and B are upweighted (3×/2.5×) to counteract the
+    spatial CNN (C) dominance observed in the branch-influence logs —
+    where Branch C contributes 50–65 % while A contributes < 1 %.
+    Branches A/B must be discriminative *before* fusion collapses them.
     """
-    aux_keys = ["aux_a", "aux_b", "aux_c", "aux_d"]
-    total    = torch.zeros((), device=ya.device)
-    for k in aux_keys:
+    branch_w = CONFIG.get("aux_branch_weights",
+                          {"aux_a": 1.0, "aux_b": 1.0, "aux_c": 1.0, "aux_d": 1.0})
+    total = torch.zeros((), device=ya.device)
+    for k in ["aux_a", "aux_b", "aux_c", "aux_d"]:
         if k not in out:
             continue
+        w = branch_w.get(k, 1.0)
         if use_mixup:
-            total = total + mixed_loss(criterion, out[k], ya, yb, lam)
+            total = total + w * mixed_loss(criterion, out[k], ya, yb, lam)
         else:
-            total = total + criterion(out[k], ya)
+            total = total + w * criterion(out[k], ya)
     return total
 
 
@@ -1877,6 +1825,9 @@ def train_one_epoch(
     scheduler:     Optional[optim.lr_scheduler._LRScheduler] = None,
     use_mixup:     bool  = True,
     mixup_alpha:   float = 0.4,
+    speccut_frac:  float = 0.0,
+    spec_con_loss: Optional[nn.Module] = None,   # SpectralConsistencyLoss instance
+    spec_con_w:    float = 0.08,                 # weight for the A↔D alignment term
     supcon:        Optional[nn.Module] = None,
     supcon_weight: float = 0.0,
     proto:         Optional[nn.Module] = None,
@@ -1901,7 +1852,18 @@ def train_one_epoch(
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
 
-        x_in, ya, yb, lam = mixed_aug(x, y, mixup_alpha) if use_mixup else (x, y, y, 1.0)
+        # ── Augmentation selection ────────────────────────────────────
+        # SpecCutMix (Phase 3): replace a contiguous spectral band segment.
+        # Mixup (Phases 1-2): soft interpolation between two samples.
+        if speccut_frac > 0.0:
+            x_in, ya, yb, lam = spec_cutmix(x, y, cut_frac=speccut_frac)
+            _use_mix = True
+        elif use_mixup:
+            x_in, ya, yb, lam = mixed_aug(x, y, mixup_alpha)
+            _use_mix = True
+        else:
+            x_in, ya, yb, lam = x, y, y, 1.0
+            _use_mix = False
 
         with autocast(device_type=device.type, enabled=use_amp):
 
@@ -1929,13 +1891,17 @@ def train_one_epoch(
 
             # ── Standard CE / Focal path ───────────────────────────────
             else:
-                arc_labels = ya if (model._use_arcface and not use_mixup) else None
+                arc_labels = ya if (model._use_arcface and not _use_mix) else None
                 out        = model(x_in, labels=arc_labels, arc_m=arc_m)
 
                 if isinstance(out, dict):
                     l_main = mixed_loss(criterion, out["main"], ya, yb, lam)
-                    aux_l  = _compute_aux_loss(criterion, out, ya, yb, lam, use_mixup)
-                    loss   = l_main + aux_w * aux_l
+                    aux_l  = _compute_aux_loss(criterion, out, ya, yb, lam, _use_mix)
+                    # Spectral consistency: keep Branch A aligned with Branch D.
+                    sc_l = torch.zeros((), device=device)
+                    if spec_con_loss is not None and "feat_a" in out and "feat_d" in out:
+                        sc_l = spec_con_loss(out["feat_a"], out["feat_d"])
+                    loss   = l_main + aux_w * aux_l + spec_con_w * sc_l
                     logits = out["main"]
                 else:
                     logits = out
@@ -2221,20 +2187,33 @@ def run_stage1(
     ep_total = CONFIG["s1_epochs"]
     p1_end   = int(ep_total * CONFIG["s1_phase1_frac"])
     p2_end   = int(ep_total * (CONFIG["s1_phase1_frac"] + CONFIG["s1_phase2_frac"]))
+    p3_start_lr = CONFIG["s1_max_lr"] * 0.12   # LR when Phase 3 begins
 
     optimizer = build_optimizer_s1(model, CONFIG["s1_max_lr"])
+
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=ep_total, eta_min=CONFIG["s1_min_lr"]
+        # Phases 1+2: cosine from max_lr down to p3_start_lr at the boundary.
+        sched_p12 = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=p2_end,
+            eta_min=p3_start_lr,
         )
-
-    scaler       = GradScaler()
+        # Phase 3: SGDR with 20-ep cycles. Each restart resets LR to
+        # p3_start_lr, then cosines down to min_lr — the model can escape
+        # sharp local minima that a monotonic decay would trap it in.
+        sched_p3 = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            optimizer, T_0=20, T_mult=1,
+            eta_min=CONFIG["s1_min_lr"],
+        )
     ls_hi        = CONFIG["s1_label_smooth_hi"]
     ls_lo        = CONFIG["s1_label_smooth_lo"]
+    scaler       = GradScaler()
     best_f1      = 0.0
     no_improve   = 0
     ema_reinited = [False, False]
+
+    # Spectral consistency loss — shared singleton, stateless forward pass
+    _spec_con_loss = SpectralConsistencyLoss().to(device)
 
     # Phase 3 loader — built lazily at the Phase 2 → 3 boundary
     phase3_ldr:       Optional[DataLoader]   = None
@@ -2244,11 +2223,12 @@ def run_stage1(
     print(f"\n{'═'*w}")
     print(f"  Stage 1 — 3-Phase Progressive Augmentation  [{ep_total} epochs max]")
     print(f"{'═'*w}")
-    print(f"  Phase 1: ep 1–{p1_end}         heavy aug + mixup")
-    print(f"  Phase 2: ep {p1_end+1}–{p2_end}       medium aug + mixup")
-    print(f"  Phase 3: ep {p2_end+1}–{ep_total}      light aug, Focal, class-oversample")
-    print(f"  Label smooth: {ls_hi} → {ls_lo}  |  Aux w: "
+    print(f"  Phase 1: ep 1–{p1_end}         heavy aug + Mixup(α=0.10)")
+    print(f"  Phase 2: ep {p1_end+1}–{p2_end}       medium aug + Mixup(α=0.10)")
+    print(f"  Phase 3: ep {p2_end+1}–{ep_total}      light aug + SpecCutMix + Focal + SGDR")
+    print(f"  Label smooth: {ls_hi:.2f} → {ls_lo:.2f}  |  Aux w: "
           f"{CONFIG['aux_loss_weight_init']} → {CONFIG['aux_loss_weight_final']}")
+    print(f"  Aux branch weights: {CONFIG.get('aux_branch_weights', {})}")
     print(f"  Oversample: {CONFIG['s1_p3_oversample']}  "
           f"power={CONFIG['s1_p3_oversample_power']}  "
           f"hard_thresh={CONFIG['s1_p3_hard_f1_thresh']}")
@@ -2266,9 +2246,15 @@ def run_stage1(
             print(f"[INFO] EMA re-init at Phase 2 (ep {ep})")
             ema_reinited[0] = True
 
-        if phase == 3 and not ema_reinited[1] and CONFIG["s1_ema_reinit_phases"]:
-            ema.reinit_from(model)
-            print(f"[INFO] EMA re-init at Phase 3 (ep {ep})")
+        # ── Phase 3 initialisation (once, at the first Phase-3 epoch) ─
+        if phase == 3 and not ema_reinited[1]:
+            # Reset LR to p3_start_lr so SGDR has full amplitude from cycle 1.
+            for pg in optimizer.param_groups:
+                pg["lr"] = p3_start_lr
+            # Fresh EMA so Phase-3 average is not diluted by Phase-2 weights.
+            if CONFIG["s1_ema_reinit_phases"]:
+                ema.reinit_from(model)
+                print(f"[INFO] EMA re-init at Phase 3 (ep {ep})")
             ema_reinited[1] = True
 
         # ── Phase 3 loader construction (once, at first Phase-3 epoch) ─
@@ -2298,18 +2284,41 @@ def run_stage1(
         else:
             crit = nn.CrossEntropyLoss(label_smoothing=ls_now)
 
-        use_mx = (phase != 3)   # no Mixup in Phase 3
+        # Augmentation strategy per phase:
+        #   Phase 1/2 — Mixup (alpha=0.10) for soft representation shaping.
+        #   Phase 3    — SpecCutMix (band-segment swap, cut_frac=0.25).
+        #                Hard spectral occlusion forces branches A/B to classify
+        #                from partial spectra; much stronger than alpha=0.02 Mixup.
+        if phase == 3:
+            use_mixup     = False
+            mixup_alpha   = 0.0
+            speccut_frac  = 0.25
+        else:
+            use_mixup     = True
+            mixup_alpha   = CONFIG["s1_mixup"]
+            speccut_frac  = 0.0
 
         tl, ta = train_one_epoch(
             model, cur_ldr, optimizer, crit, scaler, ema, device,
             scheduler=None,
-            use_mixup=use_mx,
-            mixup_alpha=CONFIG["s1_mixup"],
+            use_mixup=use_mixup,
+            mixup_alpha=mixup_alpha,
+            speccut_frac=speccut_frac,
+            spec_con_loss=_spec_con_loss,
+            spec_con_w=0.08,
             accum_steps=CONFIG["s1_accum"],
             current_ep=ep,
             total_ep=ep_total,
         )
-        scheduler.step()
+
+        # Advance the scheduler that belongs to the current phase.
+        if phase < 3:
+            sched_p12.step()
+        else:
+            # SGDR: pass the absolute epoch-within-Phase-3.
+            # CosineAnnealingWarmRestarts handles the cycle-reset internally.
+            ep_in_p3 = float(ep - p2_end - 1)
+            sched_p3.step(ep_in_p3)
 
         # ── Evaluate both live model and EMA ──────────────────────────
         f1_live, acc_live = evaluate(model,      val_ldr, device)
@@ -2378,11 +2387,11 @@ def run_stage2(
     proto  = ProtoNCELoss(temperature=CONFIG["proto_temp"])
 
     optimizer = build_optimizer_s2(model, CONFIG["s2_head_lr"], CONFIG["s2_back_lr"])
-    scheduler = sgdr_scheduler(
+    
+    scheduler = cosine_warmup_scheduler(
         optimizer,
         warmup_ep=CONFIG["s2_warmup_ep"],
-        T_0=CONFIG["s2_sgdr_T0"],
-        T_mult=CONFIG["s2_sgdr_Tmult"],
+        total_ep=CONFIG["s2_epochs"],
         eta_min_frac=CONFIG["s2_min_lr"] / CONFIG["s2_head_lr"],
     )
 
@@ -2390,16 +2399,12 @@ def run_stage2(
     ep_total = CONFIG["s2_epochs"]
     best_f1  = 0.0; no_improve = 0
 
-    r1 = CONFIG["s2_warmup_ep"] + CONFIG["s2_sgdr_T0"]
-    r2 = r1 + CONFIG["s2_sgdr_T0"] * CONFIG["s2_sgdr_Tmult"]
-
     w = 66
     print(f"\n{'═'*w}")
-    print(f"  Stage 2 — Sub-ctr ArcFace + SupCon + ProtoNCE + CDWS + SGDR  [{ep_total} ep]")
+    print(f"  Stage 2 — Sub-ctr ArcFace + SupCon + ProtoNCE + CDWS  [{ep_total} ep]")
     print(f"{'═'*w}")
     print(f"  hLR={CONFIG['s2_head_lr']:.1e}  bLR={CONFIG['s2_back_lr']:.1e}  "
-          f"SGDR T0={CONFIG['s2_sgdr_T0']} Tmult={CONFIG['s2_sgdr_Tmult']} "
-          f"→ restarts ep {r1} & {r2}")
+          f"Schedule: {CONFIG['s2_warmup_ep']}ep Warmup → Cosine Decay")
     print(f"  ArcFace K={CONFIG['subcenter_K']}  "
           f"m={CONFIG['s2_arcface_m0']}→{CONFIG['s2_arcface_m']}+Δ{CONFIG['s2_arcface_m_delta']}")
     print(f"  Losses: Focal(γ={CONFIG['s2_focal_gamma']}) + SupCon(w={sc_w}) + ProtoNCE(w={pt_w})")
@@ -2448,11 +2453,10 @@ def run_stage2(
         else:
             no_improve += 1
 
-        rf = " ↻R1" if ep == r1 else (" ↻R2" if ep == r2 else "")
         print(
             f"Ep {ep:03d}/{ep_total} │ Loss {tl:.4f}  Tr {ta:.1%} │ "
             f"F1 {f1_live:.3f}/{f1_ema:.3f}  Acc {acc_live:.1%}/{acc_ema:.1%} │ "
-            f"hLR {head_lr:.1e} bLR {back_lr:.1e}  m={m_now:.3f}{saved}{rf}"
+            f"hLR {head_lr:.1e} bLR {back_lr:.1e}  m={m_now:.3f}{saved}"
         )
 
         if no_improve >= CONFIG["s2_patience"]:
@@ -2460,7 +2464,6 @@ def run_stage2(
 
     model.unfreeze_head("linear")
     return best_f1
-
 
 # ══════════════════════════════════════════════════════════════════════
 #  STAGE 3 — SAM + Greedy SWA
