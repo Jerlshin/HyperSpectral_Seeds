@@ -5,3 +5,7 @@ defaults:
 
 backend: tensorboard
 log_dir: ${output_dir}/tensorboard
+
+# As with wandb.yaml, this backend is machine-channel only. Pair it with the
+# console renderer via:
+#   python train.py tracking.backend=multi tracking.backends=[console,tensorboard]

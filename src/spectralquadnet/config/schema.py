@@ -208,7 +208,11 @@ class TrackingConfig:
 
     Has no pre-refactor ``CONFIG`` ancestor (the monolith used bare ``print``), so
     it is excluded from the §3.3 round-trip key diff and carries real defaults.
-    Backends are implemented in Phase 4; Phase 1 only fixes their config surface.
+
+    ``show_diagnostics`` and ``log_grad_norms`` were added in Phase 4 alongside
+    the §4.2 diagnostics. Both default to console output that matches the
+    pre-refactor line density: gradient norms *are* computed and sent to the
+    machine channel, but the console stays quiet about them unless asked.
     """
 
     backend: str = "console"
@@ -217,6 +221,14 @@ class TrackingConfig:
     log_dir: str | None = None
     watch_model: bool = False
     backends: list[str] = field(default_factory=list)  # used by backend == "multi"
+
+    # ── §4.2 diagnostics ──────────────────────────────────────────────
+    #: Compute per-branch gradient norms each optimiser step and log the epoch
+    #: mean. Costs one extra pass over ``named_parameters()`` per step.
+    log_grad_norms: bool = True
+    #: Echo scalar diagnostics to the console backend as well as to the
+    #: structured backends. Off by default — see ``console_tracker`` docstring.
+    show_diagnostics: bool = False
 
 
 # ══════════════════════════════════════════════════════════════════════
