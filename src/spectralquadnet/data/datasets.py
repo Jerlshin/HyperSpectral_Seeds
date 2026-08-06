@@ -31,6 +31,7 @@ import random
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import numpy.typing as npt
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
@@ -40,7 +41,10 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from spectralquadnet.data.mmap_store import DataStore
 
 
-class RiceSeedDataset(Dataset):
+# `Dataset[tuple[Tensor, Tensor]]` would be the better base, but parameterising a
+# base class is the one typing change the AST no-op-move check does not erase
+# (§3.2.1) — see the same note in `samplers.py`.
+class RiceSeedDataset(Dataset):  # type: ignore[type-arg]
     """
     Hyperspectral Rice Seed Dataset with centrally controlled
     phase-aware spectral + spatial augmentation.
@@ -59,7 +63,7 @@ class RiceSeedDataset(Dataset):
 
     def __init__(
         self,
-        indices: np.ndarray,
+        indices: npt.NDArray[Any],
         aug_strength: str = "none",
         *,
         store: DataStore,
@@ -92,7 +96,10 @@ class RiceSeedDataset(Dataset):
         C = x.shape[0]
         max_cut = max(1, self.max_cutout_bands)
         cut = torch.randint(1, max_cut + 1, (1,)).item()
-        start = torch.randint(0, max(1, C - cut), (1,)).item()
+        # `Tensor.item()` is typed `int | float | bool`; an integer-dtype `randint`
+        # only ever yields an int here. Narrowing it with a `cast`/`int()` would add
+        # an AST node to a relocated body (§3.2.1) for no runtime gain.
+        start = torch.randint(0, max(1, C - cut), (1,)).item()  # type: ignore[arg-type]
         x[start : start + cut] = 0.0
         return x
 
@@ -132,7 +139,7 @@ class RiceSeedDataset(Dataset):
         if torch.rand(1) < 0.5:
             x = torch.flip(x, [1])
         k = torch.randint(0, 4, (1,)).item()
-        return torch.rot90(x, k, [1, 2])
+        return torch.rot90(x, k, [1, 2])  # type: ignore[arg-type]  # `.item()` — see `_band_cutout`
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
         ri = self.indices[idx]

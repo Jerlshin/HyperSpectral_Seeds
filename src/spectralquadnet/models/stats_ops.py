@@ -41,7 +41,26 @@ def extract_grid_spectra(x: torch.Tensor, grid_size: int = 4) -> torch.Tensor:
     return grid_mean.view(B, C, -1).transpose(1, 2)
 
 
-def masked_spectral_stats(x: torch.Tensor):
+def masked_spectral_stats(
+    x: torch.Tensor,
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+]:
+    """Nine background-masked per-band statistics, each ``(B, C)``.
+
+    Returns:
+        ``(mean, std, max, skew, kurtosis, p10, p25, p75, p90)`` — the order
+        :class:`~spectralquadnet.models.branches.spectral_stats.SpectralStatsBranch`
+        concatenates them in.
+    """
     x32 = x.float()
     B, C, H, W = x32.shape
     flat = x32.reshape(B, C, H * W)
@@ -61,7 +80,7 @@ def masked_spectral_stats(x: torch.Tensor):
     flat_masked = flat.masked_fill(mask.expand_as(flat) == 0, float("inf"))
     sorted_vals, _ = torch.sort(flat_masked, dim=2)
 
-    def gather_percentile(vals, p_frac):
+    def gather_percentile(vals: torch.Tensor, p_frac: float) -> torch.Tensor:
         idx = (cnt * p_frac).long().clamp(max=H * W - 1)
         expanded_idx = idx.unsqueeze(2).expand(-1, C, -1)
         return torch.gather(vals, 2, expanded_idx).squeeze(2)

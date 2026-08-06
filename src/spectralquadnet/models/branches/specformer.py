@@ -48,7 +48,7 @@ class MultiScaleSpectralTokenizer(nn.Module):
         t_s, t_m, t_l = t_s[..., :min_len], t_m[..., :min_len], t_l[..., :min_len]
 
         tokens = torch.cat([t_s, t_m, t_l], dim=1)
-        return self.act(self.norm(tokens))
+        return self.act(self.norm(tokens))  # type: ignore[no-any-return]  # `nn.Module.__call__` -> Any
 
 
 class _PreLNBlock(nn.Module):
@@ -66,7 +66,7 @@ class _PreLNBlock(nn.Module):
         lx = self.ln1(x)
         h, _ = self.attn(lx, lx, lx, need_weights=False)
         x = x + self.drop(h)
-        return x + self.drop(self.ff(self.ln2(x)))
+        return x + self.drop(self.ff(self.ln2(x)))  # type: ignore[no-any-return]  # `nn.Module.__call__` -> Any
 
 
 class SpecFormerBranch(nn.Module):
@@ -152,4 +152,4 @@ class SpecFormerBranch(nn.Module):
         # Final classification token representing the whole Spatio-Spectral object
         global_feature = self.norm(spatial_tokens[:, 0, :])
 
-        return self.proj(global_feature)
+        return self.proj(global_feature)  # type: ignore[no-any-return]  # `nn.Module.__call__` -> Any

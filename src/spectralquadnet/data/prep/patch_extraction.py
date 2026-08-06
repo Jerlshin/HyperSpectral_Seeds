@@ -31,9 +31,11 @@ import tempfile
 import traceback
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import cv2
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from tqdm import tqdm
 
@@ -42,7 +44,7 @@ from spectralquadnet.data.prep.download import download
 from spectralquadnet.data.prep.segmentation import preprocess_raw, segment
 
 
-def pad_to_square(p: np.ndarray) -> np.ndarray:
+def pad_to_square(p: npt.NDArray[Any]) -> npt.NDArray[Any]:
     h, w, c = p.shape
     s = max(h, w)
     out = np.zeros((s, s, c), dtype=p.dtype)
@@ -53,7 +55,7 @@ def pad_to_square(p: np.ndarray) -> np.ndarray:
     return out
 
 
-def resize_patch(p: np.ndarray, patch_size: int) -> np.ndarray:
+def resize_patch(p: npt.NDArray[Any], patch_size: int) -> npt.NDArray[np.float32]:
     out = np.zeros((patch_size, patch_size, p.shape[2]), dtype=np.float32)
     for i in range(p.shape[2]):
         out[:, :, i] = cv2.resize(
@@ -75,8 +77,8 @@ def build_patch_dataset(cfg: PrepConfig | None = None) -> None:
     wl = None
     for m in zf.infolist():
         if m.filename.endswith("wavelengths.csv"):
-            with tempfile.TemporaryDirectory() as tmp:
-                tmp = Path(tmp)
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                tmp = Path(tmp_dir)
                 with zf.open(m) as src, open(tmp / "wl.csv", "wb") as dst:
                     shutil.copyfileobj(src, dst)
                 wl_df = pd.read_csv(tmp / "wl.csv")
@@ -116,8 +118,8 @@ def build_patch_dataset(cfg: PrepConfig | None = None) -> None:
     print("\nPass 1 — Counting patches...")
     total_patches = 0
 
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp = Path(tmp)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp = Path(tmp_dir)
 
         for row in tqdm(df.itertuples(), total=len(df)):
             try:
@@ -188,8 +190,8 @@ def build_patch_dataset(cfg: PrepConfig | None = None) -> None:
     print("\nPass 2 — Writing patches...")
     patch_index = 0
 
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp = Path(tmp)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp = Path(tmp_dir)
 
         for row in tqdm(df.itertuples(), total=len(df)):
             try:

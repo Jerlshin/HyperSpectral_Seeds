@@ -87,7 +87,7 @@ class CrossModalInteraction(nn.Module):
             nn.Dropout(drop),
         )
 
-    def forward(self, branches: list[torch.Tensor]):
+    def forward(self, branches: list[torch.Tensor]) -> torch.Tensor:
         B = branches[0].shape[0]
 
         # normalize branches
@@ -103,17 +103,19 @@ class CrossModalInteraction(nn.Module):
         # latent tokens
         latents = self.latents.unsqueeze(0).expand(B, -1, -1)
 
+        # `nn.ModuleList` iterates as `Module`, which is not indexable to the type
+        # checker; every element is the `nn.ModuleDict` built in `__init__`.
         for blk in self.blocks:
             # cross attention: latent queries modalities
-            attn_out, _ = blk["cross_attn"](latents, tokens, tokens)
+            attn_out, _ = blk["cross_attn"](latents, tokens, tokens)  # type: ignore[index]
             latents = latents + attn_out
 
             # latent self-attention
-            sa_out, _ = blk["self_attn"](latents, latents, latents)
+            sa_out, _ = blk["self_attn"](latents, latents, latents)  # type: ignore[index]
             latents = latents + sa_out
 
             # feedforward
-            latents = latents + blk["ff"](latents)
+            latents = latents + blk["ff"](latents)  # type: ignore[index]
 
         # pooled fusion token
         fused = latents.mean(dim=1)
@@ -125,11 +127,11 @@ class CrossModalInteraction(nn.Module):
 
         fused = fused + weighted_modal
 
-        return self.output_proj(fused)
+        return self.output_proj(fused)  # type: ignore[no-any-return]
 
 
 class EmbedNet(nn.Module):
-    def __init__(self, dim=256, hidden=512, drop=0.1):
+    def __init__(self, dim: int = 256, hidden: int = 512, drop: float = 0.1) -> None:
         super().__init__()
 
         self.norm1 = nn.LayerNorm(dim)
@@ -144,6 +146,6 @@ class EmbedNet(nn.Module):
         self.norm2 = nn.LayerNorm(dim)
         self.drop = nn.Dropout(drop)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x + self.drop(self.mlp(self.norm1(x)))
-        return self.norm2(x)
+        return self.norm2(x)  # type: ignore[no-any-return]

@@ -219,7 +219,17 @@ class SpectralQuadNet(nn.Module):
         return_embed: bool = False,
         arc_m: float | None = None,
         branch_mask: torch.Tensor | None = None,
-    ):
+    ) -> dict[str, torch.Tensor] | tuple[torch.Tensor, torch.Tensor] | torch.Tensor:
+        """Run the four branches, fuse them and classify.
+
+        Returns:
+            In ``.train()`` mode a dict of the main logits plus the four
+            auxiliary heads' logits (and ``"emb"`` when ``return_embed``); in
+            ``.eval()`` mode the logits alone, or ``(logits, embedding)`` when
+            ``return_embed``. Every caller in ``engine/`` branches on exactly
+            this shape, so it is part of the contract, not an implementation
+            detail.
+        """
         # Apply shared spectral channel attention before branching
         x = self.se(x)
 
@@ -290,4 +300,4 @@ class SpectralQuadNet(nn.Module):
 
         if return_embed:
             return logits, F.normalize(emb, dim=1)
-        return logits
+        return logits  # type: ignore[no-any-return]  # head is `nn.Module.__call__` -> Any

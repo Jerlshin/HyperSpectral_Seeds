@@ -100,6 +100,8 @@ files = ["src", "scripts", "train.py"]
 strict = true
 warn_unused_configs = true
 # Third-party scientific stack ships incomplete or absent stubs.
+# `spectral`, `cv2`, `skimage` and `tqdm` are `[prep]` extras — the offline dataset
+# pipeline only; training never imports them.
 # `causal_conv1d_cuda`/`mamba_ssm` are the kernels `scripts/install_mamba_kernels.py`
 # exists to build: they are absent until it runs, and unused by the current model.
 [[tool.mypy.overrides]]
@@ -110,6 +112,10 @@ module = [
     "wandb.*",
     "tensorboard.*",
     "matplotlib.*",
+    "spectral.*",
+    "cv2.*",
+    "skimage.*",
+    "tqdm.*",
     "causal_conv1d_cuda",
     "mamba_ssm",
 ]

@@ -29,6 +29,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import numpy.typing as npt
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Dataset
 
@@ -44,7 +45,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 def build_splits(
     cfg: ExperimentConfig | Any,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[npt.NDArray[Any], npt.NDArray[Any], npt.NDArray[Any], npt.NDArray[Any]]:
     labels = np.load(cfg.data.labels_path)
     indices = np.arange(len(labels))
     tr, tmp = train_test_split(indices, test_size=0.3, stratify=labels, random_state=42)
@@ -56,16 +57,19 @@ def build_loaders(
     cfg: ExperimentConfig | Any,
     store: DataStore,
     device: torch.device | str,
-    train_idx: np.ndarray,
-    val_idx: np.ndarray,
-    test_idx: np.ndarray,
+    train_idx: npt.NDArray[Any],
+    val_idx: npt.NDArray[Any],
+    test_idx: npt.NDArray[Any],
     batch_train: int,
     balanced: bool = False,
-    all_labels: np.ndarray | None = None,
+    all_labels: npt.NDArray[Any] | None = None,
     train_aug: str = "none",
     class_weights: dict[int, float] | None = None,
-) -> tuple[DataLoader, DataLoader, DataLoader]:
-    kw = dict(store=store, data_cfg=cfg.data, device=device)
+) -> tuple[DataLoader[Any], DataLoader[Any], DataLoader[Any]]:
+    # Annotated rather than inferred: the inferred value type is the union of the
+    # three entries, which cannot be checked against `RiceSeedDataset`'s distinct
+    # keyword types when unpacked with `**`.
+    kw: dict[str, Any] = dict(store=store, data_cfg=cfg.data, device=device)
 
     ds = RiceSeedDataset(train_idx, aug_strength=train_aug, **kw)
 
@@ -92,9 +96,9 @@ def build_loaders(
 def build_phase3_loader(
     cfg: ExperimentConfig | Any,
     store: DataStore,
-    train_ds: Dataset,
+    train_ds: Dataset[Any],
     class_f1: dict[int, float],
-) -> DataLoader:
+) -> DataLoader[Any]:
     """
     Build the Phase-3 DataLoader with hard-class oversampling.
 
@@ -108,8 +112,10 @@ def build_phase3_loader(
         )
 
     labels = store.require_labels()
+    # `.indices` is `RiceSeedDataset`'s, but the parameter keeps the baseline's
+    # duck-typed `Dataset` so `DataLoader.dataset` can be handed straight in.
     train_labels = np.array(
-        [int(labels[train_ds.indices[i]]) for i in range(len(train_ds.indices))]
+        [int(labels[train_ds.indices[i]]) for i in range(len(train_ds.indices))]  # type: ignore[attr-defined]
     )
     sampler = HardClassOversampledSampler(
         labels=train_labels,

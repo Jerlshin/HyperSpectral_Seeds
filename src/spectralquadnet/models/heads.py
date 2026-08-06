@@ -24,6 +24,12 @@ import torch.nn.functional as F
 
 
 class AdaptiveSubcenterArcFaceHead(nn.Module):
+    #: Declares the `register_buffer` below for the type checker. `nn.Module`'s
+    #: `__getattr__` is typed `Tensor | Module`, so without this every use of
+    #: `self.margins` reads as possibly-a-Module. A bare annotation creates no
+    #: attribute and is erased by the AST no-op-move check (§3.2.1).
+    margins: torch.Tensor
+
     def __init__(
         self,
         in_dim: int,
@@ -99,10 +105,13 @@ class AuxiliaryHead(nn.Module):
             nn.Linear(hidden_dim, num_classes),
         )
         # Conservative init: smaller std avoids saturating softmax early
-        nn.init.trunc_normal_(self.net[0].weight, std=0.02)
-        nn.init.zeros_(self.net[0].bias)
-        nn.init.trunc_normal_(self.net[2].weight, std=0.02)
-        nn.init.zeros_(self.net[2].bias)
+        # `nn.Sequential.__getitem__` is typed `-> Module`, so `.weight`/`.bias` on
+        # the indexed layer widen to `Tensor | Module`. Both are `nn.Linear` here.
+        nn.init.trunc_normal_(self.net[0].weight, std=0.02)  # type: ignore[arg-type]
+        nn.init.zeros_(self.net[0].bias)  # type: ignore[arg-type]
+        nn.init.trunc_normal_(self.net[2].weight, std=0.02)  # type: ignore[arg-type]
+        nn.init.zeros_(self.net[2].bias)  # type: ignore[arg-type]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
+        # `nn.Module.__call__` is typed `-> Any` in torch's stubs.
+        return self.net(x)  # type: ignore[no-any-return]
