@@ -93,6 +93,24 @@ RELOCATIONS: dict[str, dict[str, str]] = {
         "build_splits": "data/loaders.py",
         "build_loaders": "data/loaders.py",
         "build_phase3_loader": "data/loaders.py",
+        # ── losses/ ────────────────────────────────────────────────────
+        "build_cdws_weights": "losses/cdws.py",
+        "_mixup": "losses/mixup.py",
+        "mixed_aug": "losses/mixup.py",
+        "mixed_loss": "losses/mixup.py",
+        "FocalLoss": "losses/focal.py",
+        "SupConLoss": "losses/contrastive.py",
+        "ProtoNCELoss": "losses/contrastive.py",
+        "_aux_loss_weight": "losses/auxiliary.py",
+        "_compute_aux_loss": "losses/auxiliary.py",
+        # ── optim/ ─────────────────────────────────────────────────────
+        "SAM": "optim/sam.py",
+        "_wd_groups": "optim/param_groups.py",
+        "build_optimizer_s1": "optim/param_groups.py",
+        "build_optimizer_s2": "optim/param_groups.py",
+        "build_optimizer_s3": "optim/param_groups.py",
+        "sgdr_scheduler": "optim/schedulers.py",
+        "arcface_margin": "optim/schedulers.py",
         # ── utils/ ─────────────────────────────────────────────────────
         # §2.1 rows pulled forward from Phase 4: the Phase 2 gate's golden
         # capture cannot run without `set_seed`.
@@ -160,6 +178,15 @@ DECLARED_DEVIATIONS: dict[str, str] = {
     "build_phase3_loader": (
         "`CONFIG['s1_*']` → `cfg.stage1.*`; `_GLOBAL_LABELS` → `store.require_labels()`."
     ),
+    # ── losses / optim ─────────────────────────────────────────────────
+    "_aux_loss_weight": (
+        "§5 `CONFIG['aux_loss_weight_{init,final}']` → `cfg.stage1.*`; the "
+        "`max(...)` floor and the 0.7 decay factor are untouched."
+    ),
+    "_wd_groups": "§5 `CONFIG['weight_decay']` → `cfg.weight_decay`.",
+    "build_optimizer_s1": "`_wd_groups` gains its leading `cfg` argument.",
+    "build_optimizer_s2": "`_wd_groups` gains its leading `cfg` argument (both call sites).",
+    "build_optimizer_s3": "`_wd_groups` gains its leading `cfg` argument.",
     # ── data/prep ──────────────────────────────────────────────────────
     "download": "module-level `ZIP_FILE`/`DATA_URL` globals → `PrepConfig` fields.",
     "load_hsi": (
