@@ -9,6 +9,8 @@ where ``dataset/`` and ``outputs/`` are gitignored.
 from __future__ import annotations
 
 import json
+import sys
+import types
 from pathlib import Path
 
 import numpy as np
@@ -16,12 +18,51 @@ import pytest
 import torch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+SCRIPTS = REPO_ROOT / "scripts"
 GOLDEN = Path(__file__).resolve().parent / "regression" / "golden"
 OUTPUTS = REPO_ROOT / "outputs" / "output_v12_spa40"
 
 SEED = 42
 BATCH = 4
 SPATIAL = 64
+
+# `scripts/` is migration scaffolding, not part of the installed package, but the
+# §3.2.3 gates need its baseline loader. Adding it to the path here keeps the
+# `_baseline` import in the fixtures below plain and unconditional.
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  The pre-refactor baseline
+# ══════════════════════════════════════════════════════════════════════
+
+
+@pytest.fixture(scope="session")
+def baseline() -> types.ModuleType:
+    """The pre-refactor ``hsi_training.py``, executed side-effect-free from git.
+
+    ``scripts/_baseline.py`` reads the file at SHA ``886560f`` and runs only its
+    declarations, so importing it neither seeds the RNG nor writes to disk. The
+    §3.2.3 tests call the functions on this module object rather than compare
+    against transcribed constants — a transcription could itself carry the drift
+    the test exists to catch.
+    """
+    from _baseline import load_baseline_module
+
+    return load_baseline_module("hsi_training")
+
+
+@pytest.fixture(scope="session")
+def baseline_src() -> str:
+    """Source text of the baseline monolith, for reaching nested closures.
+
+    ``phase_aware_lr`` and ``_s3_margin`` are defined *inside* ``run_stage1`` /
+    ``run_stage3_swa``, so they cannot be read off the module object.
+    """
+    from _baseline import baseline_source
+
+    return baseline_source("hsi_training")
 
 
 # ══════════════════════════════════════════════════════════════════════
