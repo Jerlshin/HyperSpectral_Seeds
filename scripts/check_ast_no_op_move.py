@@ -111,6 +111,25 @@ RELOCATIONS: dict[str, dict[str, str]] = {
         "build_optimizer_s3": "optim/param_groups.py",
         "sgdr_scheduler": "optim/schedulers.py",
         "arcface_margin": "optim/schedulers.py",
+        # ── engine/ ────────────────────────────────────────────────────
+        "train_one_epoch": "engine/train_epoch.py",
+        "train_one_epoch_sam": "engine/train_epoch.py",
+        "_run_eval": "engine/evaluate.py",
+        "evaluate": "engine/evaluate.py",
+        "evaluate_per_class": "engine/evaluate.py",
+        "tta_predict": "engine/tta.py",
+        "stage_ckpt_path": "engine/checkpoint.py",
+        "stage_meta_path": "engine/checkpoint.py",
+        "stage_exists": "engine/checkpoint.py",
+        "latest_completed_stage": "engine/checkpoint.py",
+        "save_ckpt": "engine/checkpoint.py",
+        "_is_json_serialisable": "engine/checkpoint.py",
+        "load_stage_meta": "engine/checkpoint.py",
+        "load_ckpt": "engine/checkpoint.py",
+        "update_bn_stats": "engine/checkpoint.py",
+        "_pick_best_checkpoint": "engine/checkpoint.py",
+        "compute_branch_influence": "engine/diagnostics.py",
+        "compute_class_difficulty": "engine/diagnostics.py",
         # ── utils/ ─────────────────────────────────────────────────────
         # §2.1 rows pulled forward from Phase 4: the Phase 2 gate's golden
         # capture cannot run without `set_seed`.
@@ -187,6 +206,24 @@ DECLARED_DEVIATIONS: dict[str, str] = {
     "build_optimizer_s1": "`_wd_groups` gains its leading `cfg` argument.",
     "build_optimizer_s2": "`_wd_groups` gains its leading `cfg` argument (both call sites).",
     "build_optimizer_s3": "`_wd_groups` gains its leading `cfg` argument.",
+    # ── engine ─────────────────────────────────────────────────────────
+    "train_one_epoch": (
+        "§5 `CONFIG['grad_clip']` → `cfg.grad_clip`; `_aux_loss_weight` gains its "
+        "leading `cfg` argument. The loss algebra, the accumulation boundary, the "
+        "non-finite skip and the EMA update site are untouched."
+    ),
+    "train_one_epoch_sam": "§5 `CONFIG['grad_clip']` → `cfg.grad_clip` (both clip call sites).",
+    "stage_ckpt_path": "§3.5 `CONFIG['output_dir']` → `cfg.output_dir`; filename template unchanged.",
+    "stage_meta_path": "§3.5 `CONFIG['output_dir']` → `cfg.output_dir`; filename template unchanged.",
+    "stage_exists": "`stage_{ckpt,meta}_path` gain their leading `cfg` argument.",
+    "latest_completed_stage": "`stage_exists` gains its leading `cfg` argument; 3→2→1 order kept.",
+    "save_ckpt": "`stage_meta_path` gains its leading `cfg` argument; bundle schema unchanged.",
+    "load_stage_meta": "`stage_meta_path` gains its leading `cfg` argument.",
+    "_pick_best_checkpoint": "`load_stage_meta` gains its leading `cfg` argument.",
+    "compute_class_difficulty": (
+        "§5 `CONFIG['num_classes']` → `cfg.data.num_classes` and "
+        "`CONFIG['cdws_{max_weight,eps}']` → `cfg.stage2.cdws_*`."
+    ),
     # ── data/prep ──────────────────────────────────────────────────────
     "download": "module-level `ZIP_FILE`/`DATA_URL` globals → `PrepConfig` fields.",
     "load_hsi": (
