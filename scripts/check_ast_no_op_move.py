@@ -130,6 +130,11 @@ RELOCATIONS: dict[str, dict[str, str]] = {
         "_pick_best_checkpoint": "engine/checkpoint.py",
         "compute_branch_influence": "engine/diagnostics.py",
         "compute_class_difficulty": "engine/diagnostics.py",
+        # ── engine/stages/ ─────────────────────────────────────────────
+        "run_stage1": "engine/stages/stage1_progressive.py",
+        "run_stage2": "engine/stages/stage2_arcface.py",
+        "run_stage3_swa": "engine/stages/stage3_sam_swa.py",
+        "final_evaluation": "engine/stages/final_eval.py",
         # ── utils/ ─────────────────────────────────────────────────────
         # §2.1 rows pulled forward from Phase 4: the Phase 2 gate's golden
         # capture cannot run without `set_seed`.
@@ -224,6 +229,29 @@ DECLARED_DEVIATIONS: dict[str, str] = {
         "§5 `CONFIG['num_classes']` → `cfg.data.num_classes` and "
         "`CONFIG['cdws_{max_weight,eps}']` → `cfg.stage2.cdws_*`."
     ),
+    # ── engine/stages ──────────────────────────────────────────────────
+    "run_stage1": (
+        "§5 `CONFIG[...]` → `cfg.stage1.*` (`CONFIG.get('s1_p3_dropout', 0.25)` → "
+        "`cfg.stage1.p3_dropout`, whose YAML value is 0.25); collaborators gain "
+        "their leading `cfg`/`store` arguments; the `phase_aware_lr` closure moved "
+        "to `optim/schedulers.py` as a factory (§2 tree, §3.2.3) and is called "
+        "here instead of defined here — `tests/unit/test_schedulers.py` proves all "
+        "600 epochs of the schedule are unchanged. Phase boundaries, EMA re-init "
+        "points, loss selection and the checkpoint condition are untouched."
+    ),
+    "run_stage2": (
+        "§5 `CONFIG[...]` → `cfg.stage2.*` / `cfg.model.subcenter_K`; "
+        "collaborators gain their leading `cfg` argument. The margin warmup "
+        "switch, the 10-epoch contrastive ramp and the param_groups[0]/[2] LR "
+        "readout are unchanged."
+    ),
+    "run_stage3_swa": (
+        "§5 `CONFIG[...]` → `cfg.stage3.*` / `cfg.stage2.dropout` / "
+        "`cfg.weight_decay`; collaborators gain their leading `cfg` argument. The "
+        "greedy 0.98 acceptance rule, the running SWA average, the hardcoded "
+        "gamma/SupCon/ProtoNCE literals and `_s3_margin` are unchanged."
+    ),
+    "final_evaluation": "§5 `CONFIG['tta_*']` → `cfg.tta_*`, `CONFIG['output_dir']` → `cfg.output_dir`.",
     # ── data/prep ──────────────────────────────────────────────────────
     "download": "module-level `ZIP_FILE`/`DATA_URL` globals → `PrepConfig` fields.",
     "load_hsi": (

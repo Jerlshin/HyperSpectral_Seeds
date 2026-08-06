@@ -192,6 +192,33 @@ def test_phase_aware_lr_matches_baseline(baseline, baseline_src, cfg):
         assert actual(ep_idx) == expected(ep_idx), f"ep_idx={ep_idx}"
 
 
+def test_s3_margin_schedule_matches_baseline(baseline, baseline_src, cfg):
+    """Stage 3's ArcFace margin schedule is identical for all 120 epochs.
+
+    ``_s3_margin`` stays a closure inside ``run_stage3_swa`` on both sides — only
+    ``phase_aware_lr`` was lifted out — so both are recovered from source. It is
+    included here because it is the second of the two "dynamic margin schedules"
+    §3.2.3 promises are unchanged, and because a ``cfg.stage3.epochs`` typo would
+    otherwise be invisible until a Stage 3 run diverged.
+    """
+    import inspect
+
+    from spectralquadnet.engine.stages import stage3_sam_swa
+
+    expected = nested_function(
+        baseline_src, "run_stage3_swa", "_s3_margin", {"CONFIG": baseline.CONFIG, "math": math}
+    )
+    actual = nested_function(
+        inspect.getsource(stage3_sam_swa),
+        "run_stage3_swa",
+        "_s3_margin",
+        {"cfg": cfg, "math": math},
+    )
+
+    for ep in range(cfg.stage3.epochs + 1):
+        assert actual(ep) == expected(ep), f"ep={ep}: {actual(ep)!r} != {expected(ep)!r}"
+
+
 def test_phase_aware_lr_covers_all_three_phases(cfg):
     """Guards the test above: the epoch grid must actually reach every branch.
 

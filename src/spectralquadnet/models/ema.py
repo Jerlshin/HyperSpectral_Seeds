@@ -16,6 +16,7 @@ shares every attribute-name constraint listed in REFACTOR_PLAN.md §3.1.
 from __future__ import annotations
 
 import copy
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -25,7 +26,10 @@ class ModelEMA:
     def __init__(self, model: nn.Module, decay: float = 0.9999) -> None:
         self.max_decay = decay
         self._num_updates = 0
-        self.shadow = copy.deepcopy(model).eval()
+        # Deliberately `Any`: ModelEMA is model-agnostic, but callers reach through
+        # the shadow to the wrapped model's own API (`use_arcface`, `arcface_head`,
+        # `branch_drop_prob`), which a plain `nn.Module` annotation would reject.
+        self.shadow: Any = copy.deepcopy(model).eval()
         for p in self.shadow.parameters():
             p.requires_grad_(False)
 
@@ -56,8 +60,8 @@ class ModelEMA:
             if isinstance(m, nn.Dropout):
                 m.p = p
 
-    def state_dict(self) -> dict:
-        return self.shadow.state_dict()
+    def state_dict(self) -> dict[str, Any]:
+        return self.shadow.state_dict()  # type: ignore[no-any-return]
 
-    def load_state_dict(self, sd: dict) -> None:
+    def load_state_dict(self, sd: dict[str, Any]) -> None:
         self.shadow.load_state_dict(sd)
