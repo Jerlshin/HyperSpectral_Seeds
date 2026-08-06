@@ -7,12 +7,12 @@ Captured from the **pre-refactor** code by `scripts/capture_golden.py`
 |---|---|
 | Source git SHA | `886560fe531c99197f20c2ebd06e0bc7ded8ac8f` |
 | Source file | `HSI_modality_training/hsi_training.py` |
-| Captured (UTC) | 2026-08-06 16:09:01 |
+| Captured (UTC) | 2026-08-06 16:46:18 |
 | torch | 2.13.0 |
 | numpy | 2.1.3 |
 | Device | `cpu` |
 
-## Procedure
+## Forward-pass procedure
 
 Defined once in `capture_golden.py::forward_pass` and run identically against the
 baseline and the refactored model:
@@ -31,6 +31,20 @@ baseline and the refactored model:
    how much RNG construction consumed.
 5. One `torch.no_grad()` forward pass.
 
+## Training-step procedure
+
+Defined once in `capture_golden.py::train_step` (§3.2.2's second artifact, the
+Phase 3 gate). Same construction as above, then:
+
+1. `ModelEMA(model, decay=0.999)` and `build_optimizer_s1(model, s1_max_lr)`.
+2. `CrossEntropyLoss(label_smoothing=0.10)` and mixup on — Stage 1 Phase 1's
+   exact configuration, so the mixup draw, the four auxiliary heads, gradient
+   clipping, the AdamW weight-decay split and the EMA update all execute.
+3. `set_seed(42)` again, immediately before the epoch, so the epoch's own
+   randomness starts from a known state.
+4. One `train_one_epoch` over 32 synthetic samples in batches of
+   8 (`scaler=None` — the non-AMP path is the deterministic one on CPU).
+
 ## Files
 
 | File | Contents |
@@ -38,13 +52,10 @@ baseline and the refactored model:
 | `physical_wl_spa40.npy` | `float32 (40,)` — min-max-normalised wavelengths from `./dataset/wavelengths_spa_40b.csv`. Committed so the test never needs the gitignored `dataset/`. |
 | `forward_logits_seed42.npy` | `float32 (4, 90)` — eval-mode logits. |
 | `init_state_sha256.json` | SHA-256 per initialised state-dict tensor (352 entries) plus `__combined__`. Catches construction-order drift that a 4-sample forward could average away. |
+| `stage1_epoch1_loss_seed42.json` | Scalar loss/accuracy plus combined SHA-256 of the model and EMA weights *after* the step. |
 
 Combined init digest: `174577e1f6be92042f5c8cdab4fdcb77071a973fc55c529fc5cb2ca64c8be983`
-
-## Not yet captured
-
-`stage1_epoch1_loss_seed42.json` — §3.2.2's second artifact. It needs
-`train_one_epoch`, which Phase 3 relocates; the Phase 3 gate captures it.
+Stage-1 epoch-1 loss: `21.918561935424805`
 
 ## Regenerating
 

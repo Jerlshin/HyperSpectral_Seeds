@@ -12,6 +12,7 @@ import json
 import sys
 import types
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -112,6 +113,28 @@ def golden_init_digests() -> dict[str, str]:
     if not path.exists():
         pytest.skip(f"{path} missing — run `python scripts/capture_golden.py`")
     return json.loads(path.read_text())
+
+
+@pytest.fixture(scope="session")
+def golden_stage1_loss() -> dict[str, Any]:
+    path = GOLDEN / "stage1_epoch1_loss_seed42.json"
+    if not path.exists():
+        pytest.skip(f"{path} missing — run `python scripts/capture_golden.py`")
+    return json.loads(path.read_text())
+
+
+@pytest.fixture(scope="session")
+def stage1_train_step(cfg, physical_wl) -> dict[str, Any]:
+    """One fixed-seed Stage-1 epoch through the *relocated* ``train_one_epoch``.
+
+    The procedure is imported from ``scripts/capture_golden.py`` rather than
+    re-implemented, so the test and the capture that produced the golden file
+    cannot drift apart in setup. Session-scoped: it trains a real 15M-parameter
+    model for four steps on CPU (~8 s).
+    """
+    from capture_golden import refactored_train_step
+
+    return refactored_train_step(cfg, physical_wl)
 
 
 # ══════════════════════════════════════════════════════════════════════
