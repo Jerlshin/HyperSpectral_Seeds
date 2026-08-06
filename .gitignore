@@ -1,0 +1,23 @@
+# ── Python ───────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# ── OS ───────────────────────────────────────────────────────────────
+.DS_Store
+
+# ── Large binaries & run artifacts (REFACTOR_PLAN.md §2) ─────────────
+dataset/
+outputs/
+*.pth
+
+# ── Hydra ────────────────────────────────────────────────────────────
+multirun/
+.hydra/
