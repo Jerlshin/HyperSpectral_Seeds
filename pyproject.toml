@@ -32,6 +32,16 @@ dependencies = [
 # Optional experiment-tracking backends (REFACTOR_PLAN.md §4.1). The default
 # `console` tracker needs nothing beyond `rich`, which is a core dependency.
 tracking = ["wandb>=0.16", "tensorboard>=2.14"]
+# Offline dataset preparation only (`spectralquadnet.data.prep.*`): ENVI cube
+# reading, seed segmentation and mRMR/SPA band selection. Training and evaluation
+# never import these, so they stay out of the core dependency set.
+prep = [
+    "opencv-python>=4.8",
+    "scikit-image>=0.22",
+    "scipy>=1.11",
+    "spectral>=0.23",
+    "tqdm>=4.66",
+]
 dev = [
     "pytest>=7.4",
     "ruff>=0.4",
@@ -54,6 +64,22 @@ spectralquadnet = ["py.typed"]
 line-length = 100
 src = ["src", "scripts", "tests"]
 target-version = "py310"
+# The pre-refactor originals are frozen reference material until Phase 5 signs off
+# and deletes them: the regression gates compare the relocated code against these
+# files, and `scripts/capture_golden.py` executes `hsi_training.py` verbatim out of
+# git. Auto-formatting them would churn the very baseline the checks depend on.
+# Notebooks are exploratory output, not shipped code.
+extend-exclude = [
+    "HSI_modality_training/",
+    "band_selection.py",
+    "data_setup_v3.py",
+    "installation.py",
+    "notebooks/",
+    # `ruff format` rewrites Python code fences inside Markdown. REFACTOR_PLAN.md is
+    # the governing spec and its snippets are quoted verbatim in commit messages and
+    # module docstrings, so it must not be reflowed by a formatter run.
+    "*.md",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
