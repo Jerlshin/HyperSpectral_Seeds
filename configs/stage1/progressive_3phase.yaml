@@ -1,0 +1,40 @@
+# Stage 1 — 3-phase progressive augmentation with per-branch deep supervision.
+# Source: CONFIG["s1_*"] + aux_loss_weight_{init,final} (monolith lines 46-76, 85-86).
+defaults:
+  - base_stage1
+  - _self_
+
+epochs: 600
+phase1_frac: 0.30
+phase2_frac: 0.38
+
+batch: 128
+max_lr: 5.0e-4
+mid_lr: 2.5e-4
+min_lr: 5.0e-6
+dropout: 0.15
+mixup: 0.35
+patience: 160
+accum: 1
+focal_gamma: 1.5
+label_smooth_hi: 0.10
+label_smooth_lo: 0.04
+ema_reinit_phases: true
+
+# ── Phase 3 · contrastive losses ──────────────────────────────────────
+p3_supcon_weight: 0.35
+p3_proto_weight: 0.15
+
+# ── Phase 3 · hard-class oversampling ─────────────────────────────────
+p3_oversample: true
+p3_oversample_power: 0.65
+p3_oversample_max_w: 7.0
+p3_hard_f1_thresh: 0.80
+p3_oversample_eps: 0.05
+
+# ── Phase 3 · dropout boost ───────────────────────────────────────────
+p3_dropout: 0.25
+
+# ── Auxiliary-head loss weight decay (init → final) ───────────────────
+aux_loss_weight_init: 0.65
+aux_loss_weight_final: 0.25

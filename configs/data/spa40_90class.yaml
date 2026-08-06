@@ -1,0 +1,18 @@
+# 40-band SPA-selected VIS-NIR patches, 90 rice-seed varieties.
+# Source: CONFIG["patches_data" … "noise_std"] (monolith lines 36-43, 80-81).
+defaults:
+  - base_data
+  - _self_
+
+# ── Paths (relative to the process CWD, exactly as pre-refactor) ──────
+patches_data: ./dataset/patches_spa_40b.npy
+labels_path: ./dataset/labels.npy
+wavelength_path: ./dataset/wavelengths_spa_40b.csv
+
+# ── Geometry ──────────────────────────────────────────────────────────
+num_bands: 40
+num_classes: 90
+
+# ── Input perturbation used by RiceSeedDataset augmentation ───────────
+max_cutout_bands: 3
+noise_std: 0.02
