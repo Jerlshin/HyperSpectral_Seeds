@@ -1,0 +1,7 @@
+# Default backend: Rich console rendering of the same information the
+# pre-refactor script printed. Zero external services, works offline.
+defaults:
+  - base_tracking
+  - _self_
+
+backend: console

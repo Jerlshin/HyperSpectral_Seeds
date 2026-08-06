@@ -1,0 +1,7 @@
+# TensorBoard backend. Requires the `tracking` extra: pip install -e ".[tracking]"
+defaults:
+  - base_tracking
+  - _self_
+
+backend: tensorboard
+log_dir: ${output_dir}/tensorboard

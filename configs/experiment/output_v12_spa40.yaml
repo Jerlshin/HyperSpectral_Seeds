@@ -1,0 +1,46 @@
+# @package _global_
+# ══════════════════════════════════════════════════════════════════════
+#  output_v12_spa40 — the reference experiment
+#
+#  Reproduces the run that produced outputs/output_v12_spa40/ (Macro F1
+#  0.8745 / Acc 0.8745 on the held-out test split, per stage3_meta.json).
+#  Every value below is transcribed verbatim from the pre-refactor CONFIG
+#  dict (hsi_training.py lines 34-143 @ baseline SHA 886560f); see
+#  docs/config_rename_table.md for the complete key mapping.
+#
+#  Usage:  python train.py                              # (Phase 4)
+#          python train.py stage1.max_lr=1e-4           # single override
+#          python train.py -m stage1.max_lr=1e-4,5.0e-4 # sweep
+# ══════════════════════════════════════════════════════════════════════
+defaults:
+  - /base_experiment
+  - /data: spa40_90class
+  - /model: spectral_quadnet_v4
+  - /stage1: progressive_3phase
+  - /stage2: arcface_supcon
+  - /stage3: sam_swa
+  - /tracking: console
+  - _self_
+
+# ── Run identity & output location ────────────────────────────────────
+# REFACTOR_PLAN.md §4.3: replaces CONFIG["output_dir"]'s hardcoded absolute
+# path. Resolves to outputs/output_v12_spa40 — the Phase 1 relocation target
+# of HSI_modality_training/output_v12_SPA40, so auto-resume finds the three
+# existing stage checkpoints unchanged (§3.5).
+run_name: output_v12_spa40
+output_root: outputs
+output_dir: ${output_root}/${run_name}
+
+# ── Shared training knobs (CONFIG lines 123-125) ──────────────────────
+weight_decay: 2.0e-4
+grad_clip: 1.0
+ema_decay: 0.999
+
+# ── Test-time augmentation (CONFIG lines 128-129) ─────────────────────
+tta_spatial: 8
+tta_spectral: 4
+
+# ── Reproducibility & placement (CONFIG lines 141-142) ────────────────
+# "auto" reproduces torch.device("cuda" if torch.cuda.is_available() else "cpu").
+device: auto
+seed: 42

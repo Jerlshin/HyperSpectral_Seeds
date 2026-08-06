@@ -1,0 +1,9 @@
+# Weights & Biases backend. Requires the `tracking` extra: pip install -e ".[tracking]"
+defaults:
+  - base_tracking
+  - _self_
+
+backend: wandb
+project: spectralquadnet
+entity: null
+watch_model: false

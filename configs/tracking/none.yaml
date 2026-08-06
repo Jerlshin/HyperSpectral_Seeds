@@ -1,0 +1,6 @@
+# No experiment tracking — silent run (useful for tests / CI smoke runs).
+defaults:
+  - base_tracking
+  - _self_
+
+backend: none
