@@ -207,6 +207,16 @@ DECLARED_DEVIATIONS: dict[str, str] = {
         "§5 `CONFIG['aux_loss_weight_{init,final}']` → `cfg.stage1.*`; the "
         "`max(...)` floor and the 0.7 decay factor are untouched."
     ),
+    "_compute_aux_loss": (
+        "§4.2 (Phase 4) per-branch loss diagnostic: the weighted term is bound to "
+        "a local before being summed, so the same tensor can also be recorded in "
+        "`components`, which is returned alongside the total under the new "
+        "`return_components=False` flag. Default-off, so every pre-existing call "
+        "site and return value is unchanged; the accumulation order, the "
+        "`branch_weights` table and the arithmetic are untouched, making the sum "
+        "bit-identical — `tests/regression/test_golden_forward_pass.py`'s Stage-1 "
+        "loss gate covers exactly this path."
+    ),
     "_wd_groups": "§5 `CONFIG['weight_decay']` → `cfg.weight_decay`.",
     "build_optimizer_s1": "`_wd_groups` gains its leading `cfg` argument.",
     "build_optimizer_s2": "`_wd_groups` gains its leading `cfg` argument (both call sites).",
@@ -215,9 +225,19 @@ DECLARED_DEVIATIONS: dict[str, str] = {
     "train_one_epoch": (
         "§5 `CONFIG['grad_clip']` → `cfg.grad_clip`; `_aux_loss_weight` gains its "
         "leading `cfg` argument. The loss algebra, the accumulation boundary, the "
-        "non-finite skip and the EMA update site are untouched."
+        "non-finite skip and the EMA update site are untouched. §4.2 (Phase 4) "
+        "adds an optional `tracker`: when it is None — how every regression gate "
+        "calls this — no diagnostic is accumulated and the code path is the "
+        "pre-refactor one. When present, per-branch aux losses and pre-clip "
+        "per-branch gradient norms are summed as device tensors and resolved once "
+        "at epoch end."
     ),
-    "train_one_epoch_sam": "§5 `CONFIG['grad_clip']` → `cfg.grad_clip` (both clip call sites).",
+    "train_one_epoch_sam": (
+        "§5 `CONFIG['grad_clip']` → `cfg.grad_clip` (both clip call sites); §4.2 "
+        "adds the same optional `tracker` and `current_ep` as `train_one_epoch`, "
+        "inert when no tracker is passed. Gradient norms are sampled on the SAM "
+        "ascent step, before its clip."
+    ),
     "stage_ckpt_path": "§3.5 `CONFIG['output_dir']` → `cfg.output_dir`; filename template unchanged.",
     "stage_meta_path": "§3.5 `CONFIG['output_dir']` → `cfg.output_dir`; filename template unchanged.",
     "stage_exists": "`stage_{ckpt,meta}_path` gain their leading `cfg` argument.",
@@ -227,7 +247,11 @@ DECLARED_DEVIATIONS: dict[str, str] = {
     "_pick_best_checkpoint": "`load_stage_meta` gains its leading `cfg` argument.",
     "compute_class_difficulty": (
         "§5 `CONFIG['num_classes']` → `cfg.data.num_classes` and "
-        "`CONFIG['cdws_{max_weight,eps}']` → `cfg.stage2.cdws_*`."
+        "`CONFIG['cdws_{max_weight,eps}']` → `cfg.stage2.cdws_*`. §4.1/§4.2 "
+        "(Phase 4): the `print` became `tracker.log_message`, and the branch "
+        "influence dict `compute_branch_influence` already returned is now also "
+        "routed to `tracker.log_scalars` plus a `hardest_classes_report` table. "
+        "Every computation above those calls is untouched."
     ),
     # ── engine/stages ──────────────────────────────────────────────────
     "run_stage1": (
@@ -238,20 +262,30 @@ DECLARED_DEVIATIONS: dict[str, str] = {
         "here instead of defined here — `tests/unit/test_schedulers.py` proves all "
         "600 epochs of the schedule are unchanged. Phase boundaries, EMA re-init "
         "points, loss selection and the checkpoint condition are untouched."
+        "§4.1 (Phase 4): the banner block became `tracker.banner`, the `[INFO]` notices `tracker.log_message`, and the per-epoch line a `log_row`/`log_scalars` pair. Observability-only — every logged value was already a local."
     ),
     "run_stage2": (
         "§5 `CONFIG[...]` → `cfg.stage2.*` / `cfg.model.subcenter_K`; "
         "collaborators gain their leading `cfg` argument. The margin warmup "
         "switch, the 10-epoch contrastive ramp and the param_groups[0]/[2] LR "
         "readout are unchanged."
+        "§4.1 (Phase 4): prints → tracker calls; the SGDR restart marker moved from a string suffix on the epoch line to its own row cell."
     ),
     "run_stage3_swa": (
         "§5 `CONFIG[...]` → `cfg.stage3.*` / `cfg.stage2.dropout` / "
         "`cfg.weight_decay`; collaborators gain their leading `cfg` argument. The "
         "greedy 0.98 acceptance rule, the running SWA average, the hardcoded "
         "gamma/SupCon/ProtoNCE literals and `_s3_margin` are unchanged."
+        "§4.1 (Phase 4): prints → tracker calls; the snapshot accept/reject marker moved from a string suffix on the epoch line to its own row cell."
     ),
-    "final_evaluation": "§5 `CONFIG['tta_*']` → `cfg.tta_*`, `CONFIG['output_dir']` → `cfg.output_dir`.",
+    "final_evaluation": (
+        "§5 `CONFIG['tta_*']` → `cfg.tta_*`, `CONFIG['output_dir']` → "
+        "`cfg.output_dir`. §4.1/§4.2 (Phase 4): prints → tracker calls, the three "
+        "metrics per TTA mode also go to `log_scalars`, and the bottom-K classes "
+        "of the same per-class F1 the classification report already tabulates are "
+        "emitted as a `log_table`. The predictions and the three saved `.npy` "
+        "files are produced by the same code as before."
+    ),
     # ── data/prep ──────────────────────────────────────────────────────
     "download": "module-level `ZIP_FILE`/`DATA_URL` globals → `PrepConfig` fields.",
     "load_hsi": (

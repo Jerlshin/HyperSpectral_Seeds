@@ -20,6 +20,10 @@ promoting them to config as part of a mechanical move): ``FocalLoss(gamma=1.0)``
 the SupCon/ProtoNCE weights ``0.02``/``0.01``, and the ``0.98`` greedy-acceptance
 factor.
 
+Phase 4 (REFACTOR_PLAN.md §4.1) replaced every ``print`` here one-for-one with a
+``tracker`` call; the snapshot accept/reject marker that used to be appended to
+the epoch line is now its own row cell. Observability-only.
+
 The SWA average is *greedy*: a cycle-end snapshot only joins the running mean if
 its live F1 is within 2% of the best seen so far, otherwise it is rejected and
 counted. ``update_bn_stats`` then re-estimates BatchNorm statistics for the
@@ -47,6 +51,7 @@ from spectralquadnet.losses.focal import FocalLoss
 from spectralquadnet.models.ema import ModelEMA
 from spectralquadnet.optim.param_groups import _wd_groups
 from spectralquadnet.optim.sam import SAM
+from spectralquadnet.tracking.base import ExperimentTracker, NullTracker
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from spectralquadnet.config.schema import ExperimentConfig
@@ -62,7 +67,9 @@ def run_stage3_swa(
     device: torch.device,
     best_ckpt: str,
     prev_best_f1: float,
+    tracker: ExperimentTracker | None = None,
 ) -> float:
+    trk = tracker if tracker is not None else NullTracker()
     if hasattr(torch, "_dynamo"):
         torch._dynamo.disable()  # type: ignore[no-untyped-call]
 
@@ -91,13 +98,12 @@ def run_stage3_swa(
     best_live_f1 = 0.0
     aux_w_s3 = cfg.stage3.aux_loss_weight
 
-    w = 66
-    print(f"\n{'═' * w}")
-    print(f"  Stage 3 — SAM + Greedy SWA  [{cfg.stage3.epochs} epochs]")
-    print(f"{'═' * w}")
-    print(
-        f"  SAM ρ={cfg.stage3.sam_rho}  Cycle={cfg.stage3.cycle_len} ep  "
-        f"Peak LR={cfg.stage3.swa_lr:.0e}  aux_w={aux_w_s3}"
+    trk.banner(
+        f"Stage 3 — SAM + Greedy SWA  [{cfg.stage3.epochs} epochs]",
+        [
+            f"SAM ρ={cfg.stage3.sam_rho}  Cycle={cfg.stage3.cycle_len} ep  "
+            f"Peak LR={cfg.stage3.swa_lr:.0e}  aux_w={aux_w_s3}"
+        ],
     )
 
     def _s3_margin(ep: int) -> float:
@@ -124,6 +130,8 @@ def run_stage3_swa(
             proto_weight=0.01,
             arc_m=_s3_margin(ep),
             aux_weight=aux_w_s3,
+            current_ep=ep,
+            tracker=trk,
         )
 
         f1_live, acc_live = evaluate(model, val_ldr, device)
@@ -143,19 +151,42 @@ def run_stage3_swa(
                             swa_state[k].mul_(1.0 - beta).add_(sd[k], alpha=beta)
                         else:
                             swa_state[k].copy_(sd[k])
-                snap_info = f"  ★ snap {n_snap}"
+                snap_info = f"★ snap {n_snap}"
             else:
                 n_rejected += 1
-                snap_info = f"  ✗ rejected (F1 {f1_live:.3f} < {best_live_f1 * 0.98:.3f})"
+                snap_info = f"✗ rejected (F1 {f1_live:.3f} < {best_live_f1 * 0.98:.3f})"
 
-        print(
-            f"Ep {ep:03d}/{cfg.stage3.epochs} │ Loss {tl:.4f}  Tr {ta:.1%} │ "
-            f"F1 {f1_live:.3f}  Acc {acc_live:.1%} │ LR {lr_now:.2e}{snap_info}"
+        trk.log_row(
+            "stage3",
+            {
+                "Ep": f"{ep:03d}/{cfg.stage3.epochs}",
+                "Loss": f"{tl:.4f}",
+                "Tr": f"{ta:.1%}",
+                "F1": f"{f1_live:.3f}",
+                "Acc": f"{acc_live:.1%}",
+                "LR": f"{lr_now:.2e}",
+                "swa": snap_info,
+            },
+            step=ep,
+        )
+        trk.log_scalars(
+            {
+                "train/loss": tl,
+                "train/acc": ta,
+                "val/f1_live": f1_live,
+                "val/acc_live": acc_live,
+                "val/f1_best": best_live_f1,
+                "sched/lr": lr_now,
+                "sched/arcface_margin": _s3_margin(ep),
+                "swa/n_snapshots": float(n_snap),
+                "swa/n_rejected": float(n_rejected),
+            },
+            step=ep,
         )
 
-    print(f"\nUpdating BN stats ({n_snap} accepted, {n_rejected} rejected) ...")
+    trk.log_message(f"Updating BN stats ({n_snap} accepted, {n_rejected} rejected) ...")
     if swa_state is None:
-        print("[WARN] No snapshots accepted — using final live model.")
+        trk.log_message("No snapshots accepted — using final live model.", level="warn")
         swa_state = copy.deepcopy(model.state_dict())
 
     swa_model = copy.deepcopy(model)
@@ -163,7 +194,8 @@ def run_stage3_swa(
     swa_model.use_arcface(True)
     update_bn_stats(train_ldr, swa_model, device)
     f1_swa, acc_swa = evaluate(swa_model, val_ldr, device)
-    print(f"SWA val: F1={f1_swa:.3f}  Acc={acc_swa:.1%}")
+    trk.log_message(f"SWA val: F1={f1_swa:.3f}  Acc={acc_swa:.1%}", level="plain")
+    trk.log_scalars({"swa/f1": f1_swa, "swa/acc": acc_swa}, step=cfg.stage3.epochs)
 
     ema.shadow.load_state_dict(swa_model.state_dict())
     ema.shadow.use_arcface(True)
@@ -171,9 +203,15 @@ def run_stage3_swa(
     note = ""
     if f1_swa <= prev_best_f1:
         note = "val_f1 did not beat Stage 2; Stage 2 ckpt preferred for eval"
-        print(f"Stage 3 F1 {f1_swa:.3f} ≤ Stage 2 best {prev_best_f1:.3f} — Stage 2 preferred.")
+        trk.log_message(
+            f"Stage 3 F1 {f1_swa:.3f} ≤ Stage 2 best {prev_best_f1:.3f} — Stage 2 preferred.",
+            level="plain",
+        )
     else:
-        print(f"Stage 3 F1 {f1_swa:.3f} > Stage 2 best {prev_best_f1:.3f} → saving.")
+        trk.log_message(
+            f"Stage 3 F1 {f1_swa:.3f} > Stage 2 best {prev_best_f1:.3f} → saving.",
+            level="plain",
+        )
 
     save_ckpt(
         cfg,

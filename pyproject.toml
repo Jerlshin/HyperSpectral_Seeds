@@ -96,12 +96,23 @@ target-version = ["py310"]
 
 [tool.mypy]
 python_version = "3.12"
-files = ["src", "scripts"]
+files = ["src", "scripts", "train.py"]
 strict = true
 warn_unused_configs = true
 # Third-party scientific stack ships incomplete or absent stubs.
+# `causal_conv1d_cuda`/`mamba_ssm` are the kernels `scripts/install_mamba_kernels.py`
+# exists to build: they are absent until it runs, and unused by the current model.
 [[tool.mypy.overrides]]
-module = ["sklearn.*", "pandas.*", "scipy.*", "wandb.*", "tensorboard.*", "matplotlib.*"]
+module = [
+    "sklearn.*",
+    "pandas.*",
+    "scipy.*",
+    "wandb.*",
+    "tensorboard.*",
+    "matplotlib.*",
+    "causal_conv1d_cuda",
+    "mamba_ssm",
+]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

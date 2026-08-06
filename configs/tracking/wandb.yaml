@@ -7,3 +7,7 @@ backend: wandb
 project: spectralquadnet
 entity: null
 watch_model: false
+
+# Selecting `wandb` alone leaves the terminal quiet: WandbTracker implements the
+# machine channel only. To keep the pre-refactor console output alongside it:
+#   python train.py tracking.backend=multi tracking.backends=[console,wandb]
