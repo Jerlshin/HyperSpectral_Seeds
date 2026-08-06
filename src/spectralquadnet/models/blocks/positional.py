@@ -22,6 +22,10 @@ import torch.nn as nn
 
 
 class PhysicalWavelengthPE(nn.Module):
+    #: Declares the `register_buffer("pe", ...)` below for the type checker; see
+    #: the same note on `AdaptiveSubcenterArcFaceHead.margins`.
+    pe: torch.Tensor
+
     def __init__(self, physical_wl: torch.Tensor, d_model: int) -> None:
         super().__init__()
         dev = physical_wl.device

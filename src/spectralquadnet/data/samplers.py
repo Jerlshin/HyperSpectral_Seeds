@@ -21,18 +21,27 @@ preserved as-is; seeding it would be a behaviour change, not a relocation.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import torch
 from torch.utils.data import Sampler
 
+# `Sampler` is generic, and both classes below inherit it bare — exactly as the
+# baseline wrote them. Parameterising the base (`Sampler[list[int]]`) would be
+# the better annotation, but it is the one typing change that is *not* erased by
+# the AST no-op-move check (§3.2.1 normalises annotations, not base classes), so
+# it would register as drift on a relocated class header. The ignore keeps the
+# relocation bit-identical and the check at full strength.
 
-class ClassBalancedBatchSampler(Sampler):
+
+class ClassBalancedBatchSampler(Sampler):  # type: ignore[type-arg]
     """Draws n_cls classes per batch, n_spc samples per class, with optional CDWS weighting."""
 
     def __init__(
         self,
-        train_labels: np.ndarray,
+        train_labels: npt.NDArray[Any],
         n_cls: int = 16,
         n_spc: int = 8,
         class_weights: dict[int, float] | None = None,
@@ -62,10 +71,10 @@ class ClassBalancedBatchSampler(Sampler):
         return self._n
 
 
-class HardClassOversampledSampler(Sampler):
+class HardClassOversampledSampler(Sampler):  # type: ignore[type-arg]
     def __init__(
         self,
-        labels: np.ndarray,
+        labels: npt.NDArray[Any],
         class_f1: dict[int, float],
         num_samples: int,
         oversample_power: float = 0.75,

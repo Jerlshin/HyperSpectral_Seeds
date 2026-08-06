@@ -83,7 +83,18 @@ class SpectralStatsBranch(nn.Module):
                 if m.bias is not None:  # FIX-4: guard against bias=False linears
                     nn.init.zeros_(m.bias)
 
-    def forward(self, ms, std, mx, skew, kurt, p10, p25, p75, p90):
+    def forward(
+        self,
+        ms: torch.Tensor,
+        std: torch.Tensor,
+        mx: torch.Tensor,
+        skew: torch.Tensor,
+        kurt: torch.Tensor,
+        p10: torch.Tensor,
+        p25: torch.Tensor,
+        p75: torch.Tensor,
+        p90: torch.Tensor,
+    ) -> torch.Tensor:
         stats = torch.stack([ms, std, mx, skew, kurt, p10, p25, p75, p90], dim=1)
         stats = stats * self.stat_attn(stats)
         x = self.input_proj(stats)
@@ -93,4 +104,4 @@ class SpectralStatsBranch(nn.Module):
 
         x_fused = self.fusion(torch.cat([self.tower_s(x), self.tower_m(x), self.tower_l(x)], dim=1))
         w = torch.softmax(self.pool_attn(x_fused), dim=2)
-        return self.proj(torch.sum(x_fused * w, dim=2))
+        return self.proj(torch.sum(x_fused * w, dim=2))  # type: ignore[no-any-return]  # `nn.Module.__call__` -> Any

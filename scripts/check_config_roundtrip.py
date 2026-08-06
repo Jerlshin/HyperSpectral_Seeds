@@ -207,11 +207,12 @@ def load_baseline_config(ref: str) -> dict[str, Any]:
         assert isinstance(node.value, ast.Dict)
         out: dict[str, Any] = {}
         for k, v in zip(node.value.keys, node.value.values, strict=True):
-            assert isinstance(k, ast.Constant), f"non-literal CONFIG key: {ast.dump(k)}"
+            assert isinstance(k, ast.Constant), f"non-literal CONFIG key: {k!r}"
+            key = str(k.value)
             try:
-                out[k.value] = ast.literal_eval(v)
+                out[key] = ast.literal_eval(v)
             except ValueError:
-                out[k.value] = f"<expr> {ast.unparse(v)}"
+                out[key] = f"<expr> {ast.unparse(v)}"
         return out
     raise RuntimeError(f"No CONFIG dict found in {BASELINE_PATH}@{ref}")
 

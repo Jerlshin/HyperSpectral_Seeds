@@ -61,8 +61,10 @@ from __future__ import annotations
 
 import warnings
 from pathlib import Path
+from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.exceptions import ConvergenceWarning
@@ -79,7 +81,9 @@ from spectralquadnet.data.prep.config import BandSelectionConfig
 # =====================================================================
 # STEP 1 — Mean spectra extraction
 # =====================================================================
-def extract_mean_spectra(cfg: BandSelectionConfig) -> tuple[np.ndarray, np.ndarray]:
+def extract_mean_spectra(
+    cfg: BandSelectionConfig,
+) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.int64]]:
     """
     Load patches via memory-map and compute the per-patch spatially
     averaged spectrum over foreground (non-background) pixels only.
@@ -114,7 +118,7 @@ def extract_mean_spectra(cfg: BandSelectionConfig) -> tuple[np.ndarray, np.ndarr
 # =====================================================================
 # STEP 2 — Decorrelation pre-filter
 # =====================================================================
-def decorrelation_prefilter(X: np.ndarray, cfg: BandSelectionConfig) -> np.ndarray:
+def decorrelation_prefilter(X: npt.NDArray[Any], cfg: BandSelectionConfig) -> npt.NDArray[Any]:
     """
     Remove near-duplicate spectral bands by greedy correlation screening.
     Scans bands left-to-right (low → high wavelength); keeps a band only
@@ -146,7 +150,9 @@ def decorrelation_prefilter(X: np.ndarray, cfg: BandSelectionConfig) -> np.ndarr
 # =====================================================================
 # STEP 3 — Fisher Discriminant Ratio  (diagnostic)
 # =====================================================================
-def fisher_discriminant_ratio(X: np.ndarray, y: np.ndarray, wl_df: pd.DataFrame) -> np.ndarray:
+def fisher_discriminant_ratio(
+    X: npt.NDArray[Any], y: npt.NDArray[Any], wl_df: pd.DataFrame
+) -> npt.NDArray[Any]:
     """
     Computes the multiclass Fisher Discriminant Ratio for every band:
 
@@ -183,8 +189,11 @@ def fisher_discriminant_ratio(X: np.ndarray, y: np.ndarray, wl_df: pd.DataFrame)
 # STEP 4 — mRMR  (Min-Redundancy Max-Relevance)
 # =====================================================================
 def run_mrmr(
-    X: np.ndarray, y: np.ndarray, candidates: np.ndarray, cfg: BandSelectionConfig
-) -> tuple[np.ndarray, np.ndarray]:
+    X: npt.NDArray[Any],
+    y: npt.NDArray[Any],
+    candidates: npt.NDArray[Any],
+    cfg: BandSelectionConfig,
+) -> tuple[npt.NDArray[Any], npt.NDArray[Any]]:
     """
     Greedy mRMR using the MID (Mutual Information Difference) criterion:
 
@@ -262,8 +271,11 @@ def run_mrmr(
 # STEP 5 — SPA  (Successive Projections Algorithm)
 # =====================================================================
 def run_spa(
-    X: np.ndarray, candidates: np.ndarray, init_global: int, cfg: BandSelectionConfig
-) -> np.ndarray:
+    X: npt.NDArray[Any],
+    candidates: npt.NDArray[Any],
+    init_global: int,
+    cfg: BandSelectionConfig,
+) -> npt.NDArray[Any]:
     """
     Successive Projections Algorithm — selects a maximally orthogonal
     (geometrically non-redundant) band subset via sequential Gram-Schmidt
@@ -344,15 +356,19 @@ def run_spa(
 
     ordered = candidates[np.array(selected)]
     print(f"         First 10 bands (original idx): {ordered[:10].tolist()}")
-    return ordered
+    return ordered  # type: ignore[no-any-return]  # fancy-index of an `Any`-typed array
 
 
 # =====================================================================
 # STEP 6 — StratifiedKFold validation curve
 # =====================================================================
 def validate(
-    X: np.ndarray, y: np.ndarray, ordered: np.ndarray, label: str, cfg: BandSelectionConfig
-) -> dict:
+    X: npt.NDArray[Any],
+    y: npt.NDArray[Any],
+    ordered: npt.NDArray[Any],
+    label: str,
+    cfg: BandSelectionConfig,
+) -> dict[int, dict[str, float]]:
     """
     For each k in cfg.n_candidates, evaluate two classifiers using
     the first k bands from `ordered` (i.e. the top-k by selection priority).
@@ -373,7 +389,7 @@ def validate(
     """
     skf = StratifiedKFold(n_splits=cfg.cv_folds, shuffle=True, random_state=cfg.seed)
     counts = [k for k in cfg.n_candidates if k <= len(ordered)]
-    result = {}
+    result: dict[int, dict[str, float]] = {}
 
     print(f"\n       Validating [{label}]  ({cfg.cv_folds}-fold StratifiedKFold)...")
 
@@ -422,7 +438,7 @@ def validate(
 # =====================================================================
 # ELBOW DETECTION
 # =====================================================================
-def find_elbow(counts: list, accs: list, cfg: BandSelectionConfig) -> int:
+def find_elbow(counts: list[int], accs: list[float], cfg: BandSelectionConfig) -> int:
     """
     Returns the smallest band count k that achieves at least
     cfg.elbow_pct × peak_accuracy.
@@ -442,7 +458,7 @@ def find_elbow(counts: list, accs: list, cfg: BandSelectionConfig) -> int:
 # STEP 7 — Save reduced dataset
 # =====================================================================
 def save_outputs(
-    final_bands: np.ndarray, wl_df: pd.DataFrame, tag: str, cfg: BandSelectionConfig
+    final_bands: npt.NDArray[Any], wl_df: pd.DataFrame, tag: str, cfg: BandSelectionConfig
 ) -> None:
     """
     Writes the reduced patch array and the selected wavelength CSV.

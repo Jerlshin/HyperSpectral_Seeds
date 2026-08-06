@@ -297,7 +297,12 @@ DECLARED_DEVIATIONS: dict[str, str] = {
     "build_patch_dataset": (
         "was `main`; module-level `ZIP_FILE`/`NUM_BANDS`/`PATCH_SIZE`/`PATCHES_PATH`/"
         "`LABELS_PATH` globals → `PrepConfig` fields; `resize_patch` gains its "
-        "`patch_size` argument. Pass structure and all magic constants unchanged."
+        "`patch_size` argument. Pass structure and all magic constants unchanged. "
+        "§4.4 (Phase 5): all three `with tempfile.TemporaryDirectory() as tmp: "
+        "tmp = Path(tmp)` blocks bind the context manager to `tmp_dir` and keep "
+        "`tmp = Path(tmp_dir)`, because rebinding one name from `str` to `Path` is "
+        "unexpressible under `mypy --strict`. Every downstream use of `tmp` is "
+        "byte-identical and still the same `Path`."
     ),
     "extract_mean_spectra": "`CONFIG[...]` → `cfg.*`.",
     "decorrelation_prefilter": "`CONFIG['corr_threshold']` → `cfg.corr_threshold`.",
@@ -320,11 +325,21 @@ DECLARED_DEVIATIONS: dict[str, str] = {
 # ══════════════════════════════════════════════════════════════════════
 
 
+#: The four node types with a ``body`` that can open with a docstring.
+_Documented = ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | ast.Module
+
+
 class _Normalise(ast.NodeTransformer):
     """Erase docstrings and annotations; see the module docstring for why."""
 
-    def _strip_docstring(self, node):
+    def _strip_docstring(self, node: _Documented) -> _Documented:
         self.generic_visit(node)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            # Return annotations are erased at *every* depth, not just on the
+            # symbol being compared — nested closures such as
+            # `masked_spectral_stats.gather_percentile` are annotatable too, and
+            # under PEP 563 their annotation is as inert as any other.
+            node.returns = None
         body = node.body
         if (
             body
@@ -344,7 +359,7 @@ class _Normalise(ast.NodeTransformer):
         node.annotation = None
         return node
 
-    def visit_AnnAssign(self, node: ast.AnnAssign):
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.AST | None:
         self.generic_visit(node)
         if node.value is None:
             # A bare `x: int` declaration carries no runtime effect at all.
@@ -353,9 +368,9 @@ class _Normalise(ast.NodeTransformer):
 
 
 def normalise(node: ast.AST) -> ast.AST:
-    out = _Normalise().visit(copy.deepcopy(node))
-    if isinstance(out, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-        out.returns = None
+    # `_Normalise` erases `returns` on every function it visits, including the
+    # outermost one, so no special case is needed here.
+    out: ast.AST = _Normalise().visit(copy.deepcopy(node))
     ast.fix_missing_locations(out)
     return out
 
@@ -451,9 +466,10 @@ def run_check(baseline_ref: str, verbose: bool) -> int:
 
                 a, b = old_members[member], new_members[member]
                 if member == "<class-header>":
+                    # Both are the `ast.ClassDef` stubs `split_members` builds.
                     a = copy.deepcopy(a)
                     b = copy.deepcopy(b)
-                    a.name = b.name = "_"
+                    a.name = b.name = "_"  # type: ignore[attr-defined]
 
                 if dump(a) == dump(b):
                     results.append(("IDENTICAL", qual, rel_path, []))
