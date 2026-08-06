@@ -45,9 +45,8 @@ def test_forward_logits_match_golden(seeded_model, synthetic_batch, golden_logit
     assert actual.dtype == golden_logits.dtype
 
     max_abs = float(np.max(np.abs(actual - golden_logits)))
-    assert np.allclose(actual, golden_logits, atol=1e-6), (
-        f"logits drifted from the pre-refactor baseline: max |Δ| = {max_abs:.3e}"
-    )
+    within_tolerance = np.allclose(actual, golden_logits, atol=1e-6)
+    assert within_tolerance, f"logits drifted from the baseline: max |Δ| = {max_abs:.3e}"
 
 
 def test_weight_init_is_bit_identical(seeded_model, golden_init_digests):

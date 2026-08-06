@@ -326,8 +326,7 @@ def write_readme(
     digests: dict[str, str],
     loss: dict[str, Any],
 ) -> None:
-    (GOLDEN / "README.md").write_text(
-        f"""# Golden regression values
+    readme = f"""# Golden regression values
 
 Captured from the **pre-refactor** code by `scripts/capture_golden.py`
 (REFACTOR_PLAN.md §3.2.2). Do not hand-edit — regenerate instead.
@@ -395,7 +394,7 @@ A regeneration is only legitimate when the *baseline* reference changes. If thes
 files need updating to make a test pass, the refactor has changed behaviour —
 that is the failure the gate exists to catch.
 """
-    )
+    (GOLDEN / "README.md").write_text(readme)
 
 
 def main() -> int:

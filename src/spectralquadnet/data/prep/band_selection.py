@@ -146,9 +146,7 @@ def decorrelation_prefilter(X: np.ndarray, cfg: BandSelectionConfig) -> np.ndarr
 # =====================================================================
 # STEP 3 — Fisher Discriminant Ratio  (diagnostic)
 # =====================================================================
-def fisher_discriminant_ratio(
-    X: np.ndarray, y: np.ndarray, wl_df: pd.DataFrame
-) -> np.ndarray:
+def fisher_discriminant_ratio(X: np.ndarray, y: np.ndarray, wl_df: pd.DataFrame) -> np.ndarray:
     """
     Computes the multiclass Fisher Discriminant Ratio for every band:
 
