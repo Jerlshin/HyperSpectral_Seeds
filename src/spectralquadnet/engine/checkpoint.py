@@ -143,7 +143,7 @@ def load_ckpt(path: str, model: nn.Module, ema: ModelEMA, device: torch.device) 
     # `use_arcface` is `SpectralQuadNet`'s, not `nn.Module`'s; the annotation is
     # kept broad so `load_ckpt` works with the EMA shadow and any wrapper too.
     model.use_arcface(flag)  # type: ignore[operator]
-    ema.shadow.use_arcface(flag)  # type: ignore[operator]
+    ema.shadow.use_arcface(flag)
     return ckpt  # type: ignore[no-any-return]
 
 
