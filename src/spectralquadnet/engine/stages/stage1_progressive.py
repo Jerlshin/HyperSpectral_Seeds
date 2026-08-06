@@ -97,7 +97,11 @@ def run_stage1(
         warnings.simplefilter("ignore")
         scheduler = optim.lr_scheduler.LambdaLR(optimizer, phase_aware_lr(cfg, p1_end, p2_end))
 
-    scaler = GradScaler()
+    # `device=` is what makes AMP real: the baseline's bare `GradScaler()` binds
+    # to CUDA, so on any other accelerator it prints "CUDA is not available.
+    # Disabling." and every scale/step call becomes a pass-through. Metal
+    # autocasts to fp16, which needs the loss scaling this now actually performs.
+    scaler = GradScaler(device=device.type)
     ls_hi = cfg.stage1.label_smooth_hi
     ls_lo = cfg.stage1.label_smooth_lo
     best_f1 = 0.0
