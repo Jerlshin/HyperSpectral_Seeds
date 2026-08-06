@@ -1,0 +1,6 @@
+{
+  "loss": 21.918561935424805,
+  "acc": 0.0,
+  "model_sha256": "645ac9e4d7cea254362974f9ef7bbc6efdc6f2fb5cfdef88977a587f34797dda",
+  "ema_sha256": "8a8e83b34b31c6cb389fed0bacd0ad3c77a65a286842c8d67df9adad27901e08"
+}
