@@ -55,6 +55,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from spectralquadnet.models.ema import ModelEMA
+from spectralquadnet.utils.device import no_grad_is_safe_for_dropout
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from spectralquadnet.config.schema import ExperimentConfig
@@ -153,7 +154,14 @@ def update_bn_stats(loader: DataLoader[Any], model: nn.Module, device: torch.dev
         if isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d)):
             m.reset_running_stats()
             m.momentum = None
-    with torch.no_grad():
+    # This is the only place the model runs in `train()` mode under `no_grad`,
+    # and on Metal that combination routes attention through a fused inference
+    # kernel with no dropout support (see utils/device.py). Keeping grad enabled
+    # there selects the math path instead. It costs a transient autograd graph
+    # per batch — discarded immediately, nothing calls backward() — and changes
+    # no forward value, so the BatchNorm statistics estimated here are identical.
+    grad_ctx = torch.no_grad() if no_grad_is_safe_for_dropout(device) else torch.enable_grad()
+    with grad_ctx:
         for x, _ in loader:
             model(x.to(device, non_blocking=True))
     model.eval()

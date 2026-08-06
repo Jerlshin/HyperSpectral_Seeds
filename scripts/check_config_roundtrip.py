@@ -169,8 +169,10 @@ INTENDED_VALUE_CHANGES: dict[str, str] = {
     ),
     "device": (
         "§4.3 — YAML cannot hold a torch.device object, so the config carries the "
-        'resolution strategy ("auto") and utils/device.py performs the '
-        'torch.device("cuda" if torch.cuda.is_available() else "cpu") lookup.'
+        'resolution strategy ("auto") and utils/device.py performs the lookup. '
+        "Phase 5 widens that lookup from the baseline's cuda-or-cpu to "
+        "Metal → CUDA → CPU, so an Apple Silicon host uses its GPU instead of "
+        "falling through to the CPU. An explicit device=cuda/cpu/mps still wins."
     ),
 }
 

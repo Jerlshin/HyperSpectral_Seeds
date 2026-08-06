@@ -41,7 +41,9 @@ tta_spatial: 8
 tta_spectral: 4
 
 # ── Reproducibility & placement (CONFIG lines 141-142) ────────────────
-# "auto" reproduces torch.device("cuda" if torch.cuda.is_available() else "cpu").
+# "auto" picks the fastest local accelerator: Metal (MPS) → CUDA → CPU. The
+# baseline only knew cuda-or-cpu and so idled the GPU on Apple Silicon; see
+# utils/device.py for the full note. Override with device=cuda / cpu / mps.
 device: auto
 seed: 42
 

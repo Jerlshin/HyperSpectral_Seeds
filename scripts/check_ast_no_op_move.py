@@ -243,6 +243,18 @@ DECLARED_DEVIATIONS: dict[str, str] = {
     "stage_exists": "`stage_{ckpt,meta}_path` gain their leading `cfg` argument.",
     "latest_completed_stage": "`stage_exists` gains its leading `cfg` argument; 3→2→1 order kept.",
     "save_ckpt": "`stage_meta_path` gains its leading `cfg` argument; bundle schema unchanged.",
+    "update_bn_stats": (
+        "§4.3 (Phase 5) Metal support: the hardcoded `torch.no_grad()` becomes "
+        "`no_grad()` or `enable_grad()` chosen by `utils/device.py::"
+        "no_grad_is_safe_for_dropout`. This is the only site that runs the model "
+        "in `train()` mode under `no_grad`, and Metal routes attention through a "
+        "fused inference kernel there that raises `NotImplementedError: "
+        "scaled_dot_product_attention for MPS does not support dropout`. Grad "
+        "mode selects the math path. Autograd bookkeeping is the only difference "
+        "— no forward value changes, so the BatchNorm statistics this function "
+        "exists to estimate are bit-identical, and on CUDA/CPU the context is "
+        "still `no_grad()` exactly as before."
+    ),
     "load_stage_meta": "`stage_meta_path` gains its leading `cfg` argument.",
     "_pick_best_checkpoint": "`load_stage_meta` gains its leading `cfg` argument.",
     "compute_class_difficulty": (

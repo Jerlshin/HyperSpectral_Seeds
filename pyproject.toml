@@ -64,16 +64,12 @@ spectralquadnet = ["py.typed"]
 line-length = 100
 src = ["src", "scripts", "tests"]
 target-version = "py310"
-# The pre-refactor originals are frozen reference material until Phase 5 signs off
-# and deletes them: the regression gates compare the relocated code against these
-# files, and `scripts/capture_golden.py` executes `hsi_training.py` verbatim out of
-# git. Auto-formatting them would churn the very baseline the checks depend on.
+# Phase 5 deleted the pre-refactor originals (`HSI_modality_training/hsi_training.py`,
+# `band_selection.py`, `data_setup_v3.py`, `installation.py`), so they no longer need
+# excluding: every gate reads them from git at the baseline SHA via `git show`, never
+# from the working tree, and keeps working without them on disk.
 # Notebooks are exploratory output, not shipped code.
 extend-exclude = [
-    "HSI_modality_training/",
-    "band_selection.py",
-    "data_setup_v3.py",
-    "installation.py",
     "notebooks/",
     # `ruff format` rewrites Python code fences inside Markdown. REFACTOR_PLAN.md is
     # the governing spec and its snippets are quoted verbatim in commit messages and
