@@ -49,7 +49,7 @@ class SpatialCNNBranch(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         h = self.stages(self.band_reduce(x))
-        return self.proj(
+        return self.proj(  # type: ignore[no-any-return]  # `nn.Module.__call__` -> Any
             F.normalize(
                 torch.cat([self._pn(h.mean([2, 3])), self._pn(h.amax([2, 3]))], 1), dim=1, eps=1e-4
             )

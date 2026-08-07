@@ -33,6 +33,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 import torch
 
@@ -51,8 +52,11 @@ class DataStore:
 
     _instance: DataStore | None = None
 
-    patches: np.ndarray | None
-    labels: np.ndarray | None
+    #: The mmapped cube. Typed as a plain array because `np.load(mmap_mode="r")`
+    #: returns `np.memmap`, an `ndarray` subclass — nothing on the read path may
+    #: depend on which of the two it is (§3.4).
+    patches: npt.NDArray[Any] | None
+    labels: npt.NDArray[Any] | None
     wavelengths: torch.Tensor | None
 
     def __new__(cls, *args: Any, **kwargs: Any) -> DataStore:
@@ -141,12 +145,12 @@ class DataStore:
 
     # ── Typed accessors ───────────────────────────────────────────────
 
-    def require_patches(self) -> np.ndarray:
+    def require_patches(self) -> npt.NDArray[Any]:
         if self.patches is None:
             raise RuntimeError("DataStore.load_patches() has not been called.")
         return self.patches
 
-    def require_labels(self) -> np.ndarray:
+    def require_labels(self) -> npt.NDArray[Any]:
         if self.labels is None:
             raise RuntimeError("DataStore.load_patches() has not been called.")
         return self.labels
