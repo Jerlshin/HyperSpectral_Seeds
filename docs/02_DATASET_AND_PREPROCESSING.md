@@ -100,22 +100,59 @@ exact allocation must be known before any patch is written.
 | 2 · allocate | Allocate $X \in \mathbb{R}^{N \times 256 \times 64 \times 64}$ (`float32`) and $y \in \mathbb{Z}^{N}$ once |
 | 3 · write | Re-walk, re-segment, and write each patch in place |
 
-Per region $r$ with bounding box $(r_0, c_0, r_1, c_1)$ and label image $L$:
+Per region $r$ with bounding box $(r_0, c_0, r_1, c_1)$ and label image $L$, write the crop
+$P$ and its mask $M = \mathbb{1}[L_{[r_0:r_1,\,c_0:c_1]} = r]$. **Both** are centre-padded to
+a square $(S, S, \cdot)$ with $S = \max(h, w)$ and area-resized to $64 \times 64$; the
+resized mask $\alpha$ is then the *fill fraction* of each output pixel, and
 
 $$
-P \;=\; X_{[r_0:r_1,\; c_0:c_1,\; :]} \odot \mathbb{1}\big[L_{[r_0:r_1,\,c_0:c_1]} = r\big]
+\tilde P_{p} \;=\;
+\begin{cases}
+P^{\text{rs}}_{p} / \alpha_p, & \alpha_p > \tfrac12\\[2pt]
+0, & \text{otherwise}
+\end{cases}
 $$
 
 so **every pixel outside the seed's own connected component is exactly zero across all
-bands** — the invariant that every masked statistic downstream relies on. $P$ is then
-centre-padded to a square $(S, S, 256)$ with $S = \max(h, w)$, resized band-by-band to
-$64\times64$ with `cv2.INTER_AREA`, and transposed $(H, W, C) \to (C, H, W)$.
+bands** — the invariant that every masked statistic downstream relies on — and no surviving
+pixel carries the partial-coverage attenuation. The patch is finally transposed
+$(H, W, C) \to (C, H, W)$.
+
+> **This order is P-3 / T4-3, and it is a correction.** Until Tier 4 the mask was applied
+> *before* the resize and the mask itself was never resized, so `INTER_AREA` averaged seed
+> pixels with background zeros: a boundary pixel covering a fraction $\alpha_p$ of seed came
+> out at $\alpha_p$ times its true radiance, and a pixel covering a thousandth of a seed came
+> out as a *non-zero background*. The invariant asserted above held only in the interior
+> (IMPROVEMENT_PLAN M-11), which is what made the downstream $>10^{-5}$ foreground test
+> fragile. `tests/unit/test_patch_extraction.py` measures both the old failure and the fix.
+
+Two more Tier-4 items happen here. **P-2 / T4-2**: the cube is radiance, not reflectance, so a
+per-session illumination gain multiplies every spectrum captured in that session (C-1). With no
+white panel in the archive — verified: its only reference cubes are `black.hdr` — the
+resolution is per-pixel SNV along $\lambda$, applied *after* masking, which removes that gain
+and the per-pixel geometric gain identically. The gain it removes is persisted rather than
+discarded, so brightness stays available as an explicit input. **P-4 / T4-4**: the eight
+morphometrics `segment` already computed, gated on and threw away are written out, in physical
+pixel units — the absolute scale the resize destroys.
 
 Failures on any single cube are caught, printed and skipped, so one unreadable scan does not
-abort a multi-hour extraction.
+abort a multi-hour extraction; a cube counted in pass 1 that fails in pass 2 leaves no
+all-zero rows, since the arrays are truncated to what was written.
 
-**Resulting artifacts** — `dataset/patches.npy` $(8624, 256, 64, 64)$ `float32` and
-`dataset/labels.npy` $(8624,)$ `int64`, spanning 90 classes with 91–96 patches each.
+**Resulting artifacts**, all row-aligned on the patch index except the last:
+
+| File | Shape | Item |
+|---|---|---|
+| `dataset/patches.npy` | $(8624, 256, 64, 64)$ `float32` | the patches |
+| `dataset/labels.npy` | $(8624,)$ `int64` | class index, 90 classes at 91–96 patches each |
+| `dataset/groups.npy` | $(8624,)$ `int64` | P-1 — the `scan_id` a grouped split needs |
+| `dataset/masks.npy` | $(8624, 64, 64)$ `float16` | P-3 — the fill map $\alpha$ |
+| `dataset/gain.npy` | $(8624, 2, 64, 64)$ `float32` | P-2 — per-pixel $(\bar x, \mathrm{sd})$ |
+| `dataset/morphology.npy` | $(8624, 8)$ `float32` | P-4 — shape descriptors, unstandardised |
+| `dataset/scan_table.csv` | one row per cube | P-1 — what each `scan_id` is |
+
+`morphology.npy` is persisted **unstandardised** on purpose: the mean and scale are fitted on
+the training split alone (`data/morphometrics.py`), and no split exists at extraction time.
 
 ---
 

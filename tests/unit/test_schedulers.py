@@ -35,7 +35,13 @@ from typing import Any
 import pytest
 import torch
 
-from spectralquadnet.optim.schedulers import arcface_margin, phase_aware_lr, sgdr_scheduler
+from spectralquadnet.optim.schedulers import (
+    arcface_margin,
+    phase_aware_lr,
+    sgdr_scheduler,
+    stage3_margin_kappa,
+    subcentre_tau,
+)
 
 pytestmark = pytest.mark.regression
 
@@ -191,30 +197,86 @@ def test_phase_aware_lr_matches_baseline(baseline, baseline_src, cfg):
         assert actual(ep_idx) == expected(ep_idx), f"ep_idx={ep_idx}"
 
 
-def test_s3_margin_schedule_matches_baseline(baseline, baseline_src, cfg):
-    """Stage 3's ArcFace margin schedule is identical for all 120 epochs.
+def test_the_baseline_s3_margin_schedule_was_a_scalar_that_discarded_the_vector(
+    baseline, baseline_src, cfg
+):
+    """**T2-1's premise**: the schedule Stage 3 used to run threw Stage 2's work away.
 
-    ``_s3_margin`` stays a closure inside ``run_stage3_swa`` on both sides —
-    only ``phase_aware_lr`` is a standalone function — so both are recovered
-    from source. Included here because a ``cfg.stage3.epochs`` typo would
-    otherwise be invisible until a Stage 3 run diverged.
+    ``_s3_margin(ep) = 0.25 + 0.05 cos(pi ep / epochs)`` was a *scalar*, passed
+    as ``arc_m`` and therefore overriding the per-class ``margins`` buffer
+    entirely. Two consequences, both measured here against the pinned
+    reference: at Stage-3 entry the margin jumps from Stage 2's calibrated
+    per-class values to one number for all 90 classes (C-7a), and it moves
+    every epoch, so the objective SWA averages iterates of is never the same
+    function twice (C-7b).
+
+    The closure is gone from the current code — ``stage3_margin_kappa``
+    replaced it — so this reads only the baseline, and pins what the
+    replacement had to fix.
     """
-    import inspect
-
-    from spectralquadnet.engine.stages import stage3_sam_swa
-
-    expected = nested_function(
+    legacy = nested_function(
         baseline_src, "run_stage3_swa", "_s3_margin", {"CONFIG": baseline.CONFIG, "math": math}
     )
-    actual = nested_function(
-        inspect.getsource(stage3_sam_swa),
-        "run_stage3_swa",
-        "_s3_margin",
-        {"cfg": cfg, "math": math},
+
+    values = [legacy(ep) for ep in range(1, cfg.stage3.epochs + 1)]
+    assert min(values) == pytest.approx(0.20, abs=1e-3)
+    assert max(values) == pytest.approx(0.30, abs=1e-3)
+
+    cycle = cfg.stage3.cycle_len
+    within_first_cycle = values[:cycle]
+    assert (
+        len(set(within_first_cycle)) == cycle
+    ), "the objective changed on every epoch of a cycle — the property C-7b is about"
+
+
+@pytest.mark.parametrize("ep", range(1, 25))
+def test_margin_kappa_is_constant_within_a_cycle(cfg, ep):
+    """T2-1's stated criterion: the objective is constant across each cycle."""
+    cycle = cfg.stage3.cycle_len
+    first_of_cycle = ((ep - 1) // cycle) * cycle + 1
+
+    assert stage3_margin_kappa(
+        ep, cycle, cfg.stage3.epochs, cfg.stage3.margin_kappa_final
+    ) == stage3_margin_kappa(
+        first_of_cycle, cycle, cfg.stage3.epochs, cfg.stage3.margin_kappa_final
     )
 
-    for ep in range(cfg.stage3.epochs + 1):
-        assert actual(ep) == expected(ep), f"ep={ep}: {actual(ep)!r} != {expected(ep)!r}"
+
+def test_margin_kappa_runs_from_one_to_the_configured_floor(cfg):
+    """``kappa: 1.0 -> margin_kappa_final``, monotone, hitting both endpoints.
+
+    Starting at exactly 1.0 is what "preserves Stage 2's calibration" means:
+    the first Stage-3 cycle trains on Stage 2's margin vector unmodified.
+    """
+    cycle, total = cfg.stage3.cycle_len, cfg.stage3.epochs
+    final = cfg.stage3.margin_kappa_final
+    values = [stage3_margin_kappa(ep, cycle, total, final) for ep in range(1, total + 1)]
+
+    assert values[0] == 1.0
+    assert values[-1] == pytest.approx(final)
+    assert all(b <= a for a, b in zip(values[:-1], values[1:], strict=True)), "kappa must not rise"
+
+
+def test_margin_kappa_survives_a_single_cycle(cfg):
+    """A stage shorter than one cycle keeps the margin it arrived with.
+
+    The degenerate case a linear interpolation over ``cycles - 1`` would
+    divide by zero on — and the configuration the two-epoch Stage-3 tests run.
+    """
+    assert stage3_margin_kappa(1, 8, 4, 0.85) == 1.0
+    assert stage3_margin_kappa(4, 8, 4, 0.85) == 1.0
+
+
+@pytest.mark.parametrize("total_ep", [2, 30, 150])
+def test_subcentre_tau_anneals_between_its_endpoints(cfg, total_ep):
+    """HD-2(i)'s temperature: starts soft, ends hard, never leaves the interval."""
+    hi, lo = cfg.model.subcenter_tau_init, cfg.model.subcenter_tau_final
+    values = [subcentre_tau(ep, total_ep, hi, lo) for ep in range(1, total_ep + 1)]
+
+    assert values[0] == pytest.approx(hi)
+    assert values[-1] == pytest.approx(lo)
+    assert all(lo - 1e-9 <= v <= hi + 1e-9 for v in values)
+    assert all(b <= a + 1e-12 for a, b in zip(values[:-1], values[1:], strict=True))
 
 
 def test_phase_aware_lr_covers_all_three_phases(cfg):

@@ -44,10 +44,52 @@ class DataConfig:
     patches_data: str = MISSING
     labels_path: str = MISSING
     wavelength_path: str = MISSING
+    #: FE-2 / T3-7. ``(N, S, S)`` fp16 fill map alpha, written by
+    #: ``scripts/prepare_dataset.py`` under P-3. When set **and present**, the
+    #: four masked modules take the mask as an input instead of re-deriving it
+    #: from ``sum_c |x_c| > 1e-5``; an empty string keeps that threshold, which
+    #: is the exact pre-Tier-3 behaviour and what lets the archived arrays
+    #: reproduce.
+    masks_path: str = MISSING
+    #: FU-4 / P-4. ``(N, 8)`` morphometrics. Consumed by Branch B's descriptor
+    #: and by the fifth fusion token. Empty substitutes zeros.
+    morphology_path: str = MISSING
     num_bands: int = MISSING
     num_classes: int = MISSING
     max_cutout_bands: int = MISSING
     noise_std: float = MISSING
+
+    # ── Split protocol (P-1, P-5 / T4-1, T4-5) ────────────────────────
+    #: ``(N,)`` int64 scan id per patch, written by ``scripts/prepare_dataset.py``.
+    #: Required by the grouped scheme; under ``stratified`` it is read when
+    #: present purely to *measure* how many scans cross the train/eval boundary.
+    groups_path: str = MISSING
+    #: ``stratified`` — the pre-Tier-4 patch-level split, which puts every scan
+    #: in all three splits (0-H measured 107/107); ``grouped`` — P-1's
+    #: scan-disjoint split.
+    split_scheme: str = MISSING
+    #: Share of each class's data (groups, under ``grouped``) held out for
+    #: ``val ∪ test``. 0.30 is the 70/15/15 the reference run used.
+    split_eval_frac: float = MISSING
+    #: Rotates which scans are held out. Sweeping ``0 … m-1`` is the
+    #: leave-one-scan-out cross-validation §3.1 P-1 falls back to. Must stay 0
+    #: under ``stratified``, which has no groups to rotate.
+    split_fold: int = MISSING
+    #: P-5 / T4-5. Share of the **training pool** carved off as ``calib``, the
+    #: split the per-class margins, CDWS weights and Phase-3 oversampling
+    #: weights are fitted on. 0.0 leaves them on ``val``, i.e. fitted on the
+    #: split that also selects the checkpoint (C-9). The plan's 60/10/15/15
+    #: is ``split_eval_frac=0.30`` with ``calib_frac ≈ 0.143``.
+    calib_frac: float = MISSING
+
+    # ── Same-class CutMix geometry (OP-6 / T2-7) ──────────────────────
+    #: Width, in bands, of the contiguous wavelength window swapped between
+    #: two seeds of the same class. Label-preserving, so no soft target is
+    #: needed and the ArcFace/mixup exclusion does not apply.
+    cutmix_bands: int = MISSING
+    #: Side length, in pixels, of the square region pasted from another seed
+    #: of the same class.
+    cutmix_spatial: int = MISSING
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -59,22 +101,70 @@ class DataConfig:
 class ModelConfig:
     """Architecture knobs consumed by ``SpectralQuadNet.__init__``.
 
-    ``wl_embed_dim`` is accepted by the model constructor but currently
-    unused in its body; kept in the schema for forward compatibility with
-    the constructor's signature.
+    Every key here is read on the forward path and
+    ``tests/unit/test_config_wiring.py`` proves it by perturbing each one and
+    watching the model react — the §4.3 gate that would have caught all five
+    dead paths of §2.7 automatically.
     """
 
     branch_drop_prob: float = MISSING
     subcenter_K: int = MISSING
+    #: Soft-to-hard sub-centre assignment temperature (HD-2(i) / T2-9). The
+    #: class cosine is ``tau * logsumexp(cos_k / tau)``, annealed from
+    #: ``subcenter_tau_init`` to ``subcenter_tau_final`` across a stage; at
+    #: ``tau -> 0`` it recovers the hard ``max_k`` exactly.
+    subcenter_tau_init: float = MISSING
+    subcenter_tau_final: float = MISSING
+    #: Weight on the mixture-of-experts load-balancing term
+    #: ``sum_c KL(pi_c || uniform)`` that keeps sub-centres from dying (HD-2(ii)).
+    subcenter_balance_weight: float = MISSING
     aux_head_hidden: int = MISSING
+    #: Fourier-feature width of FE-1's continuous-λ kernel generator and of
+    #: BR-4's relative-λ attention bias. Dead in the reference implementation
+    #: (N-1c); §3.2 FE-1 nominates it as κ_φ's width rather than deleting it,
+    #: and T3-5 wires it there.
     wl_embed_dim: int = MISSING
+    #: BR-4(iii). Token count is ``num_bands // (specf_patch // 2)``, so the
+    #: shipped 8 gives the 10 λ-uniform windows the old index stride of 4
+    #: produced — on a wavelength-uniform axis instead of an index one.
     specf_patch: int = MISSING
     specf_dim: int = MISSING
     specf_heads: int = MISSING
     specf_layers: int = MISSING
+    #: Wired to Branch D's transformer dropout by T3-3. Dead before that
+    #: (N-1b): the branch was constructed with a hardcoded 0.10.
     specf_drop: float = MISSING
-    fusion_heads: int = MISSING
     fusion_drop: float = MISSING
+
+    # ── Tier 3 · architectural redesign (IMPROVEMENT_PLAN §3.2-§3.4) ───
+    #: BR-2 / T3-6. Branch A's grid. 4x4 over a 64x64 patch is a 256:1 spatial
+    #: compression (§2.2.3); 8x8 makes it 64:1 at no parameter cost, since the
+    #: branch processes cells independently.
+    grid_size_a: int = MISSING
+    #: Branch D's grid, kept at 4x4. A and D no longer share an input, so they
+    #: no longer need to share a grid — which is half of what closes C-2.
+    grid_size_d: int = MISSING
+    #: BR-1(i). Number of learned normalised-difference indices. Each costs
+    #: ``2 * num_bands`` parameters and is exactly invariant to the per-pixel
+    #: and per-session gain that made the nine moments rank-2 (§2.2.5).
+    index_bank_size: int = MISSING
+    #: BR-1(ii). How many of the deepest continuum-removed absorption features
+    #: Branch B reads.
+    continuum_depths: int = MISSING
+    #: FU-4 / P-4. Width of the persisted morphometric vector — the eight
+    #: columns ``data/prep/segmentation.py::MORPHOMETRIC_NAMES`` writes.
+    n_morphometrics: int = MISSING
+    #: BR-3. Channel width the 3-D stem folds the spectral axis into before the
+    #: 2-D ResBlock/CBAM tail. The spectral axis is folded, not deleted: each of
+    #: the ``64 * depth`` channels entering the fold is a (spectral position x
+    #: feature) pair.
+    stem_channels: int = MISSING
+    #: FU-1(b). Rank ``r`` of the bilinear projections ``U_m``. A full bilinear
+    #: pool over five modalities would be ``10 * d ** 2``; this is ``5 * d * r``.
+    fusion_rank: int = MISSING
+    #: FU-1(b)/FU-2. Hidden width of the gate MLP, which reads the five
+    #: normalised tokens *and* the five pre-normalisation log-norms.
+    fusion_gate_hidden: int = MISSING
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -125,6 +215,13 @@ class Stage1Config:
     aux_loss_weight_init: float = MISSING
     aux_loss_weight_final: float = MISSING
 
+    # ── Unified head (HD-1 / T2-10) ───────────────────────────────────
+    #: Stage 1's angular margin. HD-1 runs one head for all three stages;
+    #: at ``m = 0`` it is a plain cosine (NormFace) classifier, which is what
+    #: makes the Stage-1 → Stage-2 transition continuous and keeps mixup
+    #: admissible in Phases 1-2.
+    arcface_m: float = MISSING
+
 
 # ══════════════════════════════════════════════════════════════════════
 #  STAGE 2 — sub-centre ArcFace + SGDR  (CONFIG: s2_*, cdws_*, supcon_*, proto_*, bal_*)
@@ -160,6 +257,21 @@ class Stage2Config:
     margin_warmup_ep: int = MISSING
     focal_gamma: float = MISSING
 
+    # ── Signed precision/recall margin rule (HD-3 / T2-8) ─────────────
+    #: ``M(c) = clip(arcface_m + arcface_m_delta * (R_c - P_c), min, max)``.
+    #: ``arcface_m_delta`` above is that rule's ``m_delta``; it kept its name
+    #: and changed its value (0.10 → 0.20) when the F1-driven rule it used to
+    #: parameterise was replaced. The sign is the whole point: an additive
+    #: angular margin *shrinks* the margined class's region, so a low-recall
+    #: class must have its margin **lowered**, which the old rule got
+    #: backwards (M-6).
+    arcface_m_min: float = MISSING
+    arcface_m_max: float = MISSING
+    #: ``delta`` in the pairwise term ``-1[c != y] * delta * Omega[y, c]``,
+    #: which pushes a class away from the classes it is actually confused
+    #: with instead of from all 89 others uniformly.
+    pairwise_margin_delta: float = MISSING
+
     # ── Class-Difficulty-Weighted Sampling ────────────────────────────
     cdws_max_weight: float = MISSING
     cdws_eps: float = MISSING
@@ -190,6 +302,27 @@ class Stage3Config:
     sam_rho: float = MISSING
     greedy: bool = MISSING
     aux_loss_weight: float = MISSING
+
+    # ── Margin annealing (OP-4.2/4.3 / T2-1) ──────────────────────────
+    #: Stage 3 keeps Stage 2's per-class margin *vector* and scales the whole
+    #: of it by ``kappa: 1.0 -> margin_kappa_final``, updated only at cycle
+    #: boundaries so every step between two SWA snapshots optimises one
+    #: function. The scalar schedule it replaces discarded the calibration.
+    margin_kappa_final: float = MISSING
+
+    # ── SWA transient rejection (OP-4.5 / T2-3) ───────────────────────
+    #: Cycles discarded from the SWA average before the first candidate is
+    #: even considered, keeping Adam's second-moment warm-up transient out of
+    #: the average. ``ceil((1/(1-beta2)) / steps_per_cycle)`` = 3 for the
+    #: shipped loader.
+    swa_warmup_cycles: int = MISSING
+
+    # ── ASAM (OP-5 / T2-4) ────────────────────────────────────────────
+    #: Element-wise normalisation of the SAM perturbation by ``|theta|``.
+    #: SAM's rho-ball is not scale-invariant while the ArcFace head is, so a
+    #: raw-space budget is spent flattening the classifier rather than the
+    #: representation.
+    sam_adaptive: bool = MISSING
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -262,6 +395,12 @@ class ExperimentConfig:
     weight_decay: float = MISSING
     grad_clip: float = MISSING
     ema_decay: float = MISSING
+    #: GradNorm exponent for the per-branch auxiliary weights (OP-2 / T2-6):
+    #: ``omega_b <- omega_b * (g_bar / g_b) ** aux_gradnorm_alpha``, applied
+    #: once per epoch from the per-branch gradient norms the loops already
+    #: log. At 0.0 the weights never move and the fixed ``A/B = 2x`` vector
+    #: stands.
+    aux_gradnorm_alpha: float = MISSING
 
     # ── Test-time augmentation ────────────────────────────────────────
     tta_spatial: int = MISSING

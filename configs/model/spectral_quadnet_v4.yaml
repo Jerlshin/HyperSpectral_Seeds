@@ -1,23 +1,73 @@
-# SpectralQuadNet v4 — 4 branches + Perceiver-style fusion + 4 auxiliary heads.
+# SpectralQuadNet v4 — 4 branches + morphology token + bilinear fusion + 4 auxiliary heads.
 defaults:
   - base_model
   - _self_
 
 # ── Global architecture ───────────────────────────────────────────────
+# BR-3 / T3-2 inverted the branch-drop profile: the strength stays here, the
+# per-branch ratio moved to `models/spectral_quadnet.py::BRANCH_DROP_PROFILE`.
+# At 0.20 the realised rates are (0.15, 0.15, 0.0, 0.15) — drop the branches
+# another branch can reconstruct, never the one that sees the full cube.
 branch_drop_prob: 0.20
 subcenter_K: 3
+
+# ── Sub-centre assignment (HD-2 / T2-9) ───────────────────────────────
+# tau anneals 0.20 → 0.02 across a stage: every sub-centre receives gradient
+# early (so none can die before it has seen data) and the assignment hardens
+# back to the max_k it started as.
+subcenter_tau_init: 0.20
+subcenter_tau_final: 0.02
+subcenter_balance_weight: 0.01
 
 # ── Auxiliary classification heads (deep supervision, one per branch) ─
 aux_head_hidden: 128
 
-# ── SpecFormer branch (D) ─────────────────────────────────────────────
-wl_embed_dim: 16 # accepted by SpectralQuadNet.__init__ but currently unused in its body
+# ── Front end · FE-1 / T3-5 ───────────────────────────────────────────
+# Fourier-feature width of the continuous-λ kernel generator κ_φ and of BR-4's
+# relative-λ attention bias. The key was dead in the reference implementation
+# (N-1c); §3.2 FE-1 nominates it as κ_φ's width rather than deleting it.
+wl_embed_dim: 16
+
+# ── Branch A (spectral profile) · BR-2 / T3-6 ─────────────────────────
+# 8×8 is a 64:1 spatial compression against 4×4's 256:1 (§2.2.3). A processes
+# cells independently, so this costs no parameters — only a larger flattened
+# batch. Branch D keeps 4×4: A and D no longer share an input, and this is the
+# other half of what closes C-2.
+grid_size_a: 8
+grid_size_d: 4
+
+# ── Branch B (index bank) · BR-1 / T3-1 ───────────────────────────────
+# 64 learned normalised-difference indices at 2 × 40 parameters each, plus the
+# 16 deepest continuum-removed absorption depths, plus the 8 persisted
+# morphometrics. 95 k parameters on a full-rank input, against 686 k on the
+# rank-2 moment tensor of §2.2.5.
+index_bank_size: 64
+continuum_depths: 16
+n_morphometrics: 8
+
+# ── Branch C (spectral–spatial CNN) · BR-3 / T3-2 ─────────────────────
+# Width the 3-D stem folds 64 features × 5 spectral positions into before the
+# 2-D tail. The spectral axis is folded, not deleted.
+stem_channels: 192
+
+# ── Branch D (SpecFormer) · BR-4 / T3-3 ───────────────────────────────
+# `specf_patch` now sets the λ-uniform token count (num_bands // (patch // 2) =
+# 10), so token t means the same spectral region at any band count — which is
+# what makes the branch transferable across the band-count ablation (F-3).
+# `specf_dim` drops 256 → 192: with the wavelength axis carried explicitly by
+# the token embeddings and the relative-λ bias, the branch needs less brute
+# capacity. `specf_drop` was dead (N-1b) and is now the transformer dropout.
 specf_patch: 8
-specf_dim: 256
+specf_dim: 192
 specf_heads: 8
 specf_layers: 4
 specf_drop: 0.15
 
-# ── Cross-modal fusion ────────────────────────────────────────────────
-fusion_heads: 4
+# ── Cross-modal fusion · FU-1(b)/2/4/5 · T3-4 ─────────────────────────
+# Rank of the bilinear projections U_m, and the gate MLP's hidden width. The
+# gate reads the five normalised tokens *and* the five pre-normalisation
+# log-norms (FU-2's confidence vector), and is a sigmoid rather than a softmax,
+# so two modalities can be attended to at once (M-2b).
+fusion_rank: 128
+fusion_gate_hidden: 128
 fusion_drop: 0.10

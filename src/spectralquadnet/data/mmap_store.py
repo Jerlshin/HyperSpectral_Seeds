@@ -19,6 +19,7 @@ Non-negotiable invariants
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -46,6 +47,14 @@ class DataStore:
     patches: npt.NDArray[Any] | None
     labels: npt.NDArray[Any] | None
     wavelengths: torch.Tensor | None
+    #: FE-2 / T3-7. ``(N, S, S)`` fill map, mmapped like the patches. ``None``
+    #: when ``data.masks_path`` is unset or the file has not been written yet,
+    #: in which case every masked module falls back to its threshold.
+    masks: npt.NDArray[Any] | None
+    #: FU-4 / P-4. ``(N, 8)`` raw morphometrics, small enough to hold in RAM.
+    #: Raw, not standardised: the mean and scale are a property of the *split*,
+    #: and `data/morphometrics.py` fits them on the training indices alone.
+    morphology: npt.NDArray[Any] | None
 
     def __new__(cls, *args: Any, **kwargs: Any) -> DataStore:
         if cls._instance is None:
@@ -53,6 +62,8 @@ class DataStore:
             inst.patches = None
             inst.labels = None
             inst.wavelengths = None
+            inst.masks = None
+            inst.morphology = None
             cls._instance = inst
         return cls._instance
 
@@ -62,11 +73,14 @@ class DataStore:
         labels_path: str | None = None,
         wavelength_path: str | None = None,
         device: torch.device | str | None = None,
+        masks_path: str | None = None,
+        morphology_path: str | None = None,
     ) -> None:
         if patches_path is not None and labels_path is not None:
             self.load_patches(patches_path, labels_path)
         if wavelength_path is not None:
             self.load_wavelengths(wavelength_path, device if device is not None else "cpu")
+        self.load_side_arrays(masks_path, morphology_path)
 
     # ── Construction helpers ──────────────────────────────────────────
 
@@ -78,6 +92,8 @@ class DataStore:
             labels_path=cfg.labels_path,
             wavelength_path=cfg.wavelength_path,
             device=device,
+            masks_path=str(getattr(cfg, "masks_path", "") or "") or None,
+            morphology_path=str(getattr(cfg, "morphology_path", "") or "") or None,
         )
 
     @classmethod
@@ -92,6 +108,16 @@ class DataStore:
         Only for tests — production code loads once per process.
         """
         cls._instance = None
+
+    # ── Typed accessors for the optional side arrays ──────────────────
+
+    def has_masks(self) -> bool:
+        """Whether the FE-2 fill map is available for this run."""
+        return self.masks is not None
+
+    def has_morphology(self) -> bool:
+        """Whether the P-4 morphometrics are available for this run."""
+        return self.morphology is not None
 
     # ── Loading ──────────────────────────────────────────────────────
 
@@ -108,6 +134,42 @@ class DataStore:
         self.patches = np.load(patches_path, mmap_mode="r")
         self.labels = np.load(labels_path)
         print(f"[DATA] ✓ Indexed {self.patches.shape[0]} samples via mmap.")
+
+    def load_side_arrays(
+        self, masks_path: str | None = None, morphology_path: str | None = None
+    ) -> None:
+        """Memory-map the fill map and read the morphometrics — both optional.
+
+        A configured path that does not exist is **not** an error here, and the
+        reason is the one T4-5 already settled for the calibration split: these
+        arrays are written by an extraction run that takes hours and 36 GB, and
+        the two committed data configs differ in whether they expect it. What
+        *would* be a defect is a path that silently loads a row-misaligned
+        array, so the row count is checked against the labels.
+
+        Raises:
+            ValueError: An array exists but is not row-aligned with the labels,
+                or the morphometrics are not ``(N, 8)``.
+        """
+        if masks_path and self.masks is None and Path(masks_path).exists():
+            self.masks = np.load(masks_path, mmap_mode="r")
+            self._check_rows(masks_path, self.masks)
+            print(f"[DATA] ✓ Mapped fill maps (FE-2): {self.masks.shape}")
+
+        if morphology_path and self.morphology is None and Path(morphology_path).exists():
+            morph = np.load(morphology_path).astype(np.float32)
+            self._check_rows(morphology_path, morph)
+            if morph.ndim != 2:
+                raise ValueError(f"{morphology_path} must be (N, 8); got {morph.shape}")
+            self.morphology = morph
+            print(f"[DATA] ✓ Loaded morphometrics (FU-4): {morph.shape}")
+
+    def _check_rows(self, path: str, array: npt.NDArray[Any]) -> None:
+        if self.labels is not None and len(array) != len(self.labels):
+            raise ValueError(
+                f"{path} has {len(array)} rows but labels.npy has {len(self.labels)} — "
+                "they must be row-aligned; re-run scripts/prepare_dataset.py."
+            )
 
     def load_wavelengths(self, csv_path: str, device: torch.device | str) -> None:
         """Read and min-max normalise the physical wavelengths.

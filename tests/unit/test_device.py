@@ -1,16 +1,21 @@
 """Device resolution and the Metal compatibility rules.
 
 ``resolve_device("auto")`` prefers Metal → CUDA → CPU. These tests pin that
-precedence and the two device-dependent behaviours that ride on it, without
-requiring any particular accelerator to be present on the machine running
-them.
+precedence without requiring any particular accelerator to be present on the
+machine running them.
+
+The last test pins the upstream Metal limitation that used to force
+``update_bn_stats`` down a device-dependent code path. T1-5 removed the
+dependency by switching every stochastic module off for that pass — see
+``tests/unit/test_bn_stats.py`` — but the limitation is still real, and if a
+future torch release lifts it this test is the notice.
 """
 
 from __future__ import annotations
 
 import torch
 
-from spectralquadnet.utils.device import no_grad_is_safe_for_dropout, resolve_device
+from spectralquadnet.utils.device import resolve_device
 
 
 def test_explicit_device_is_never_overridden() -> None:
@@ -45,19 +50,15 @@ def test_auto_prefers_metal_then_cuda_then_cpu(monkeypatch) -> None:
     assert resolve_device("auto") == torch.device("cpu")
 
 
-def test_only_metal_needs_the_dropout_workaround() -> None:
-    """`update_bn_stats` keeps `no_grad()` everywhere except Metal."""
-    assert no_grad_is_safe_for_dropout(torch.device("cpu"))
-    assert no_grad_is_safe_for_dropout(torch.device("cuda"))
-    assert not no_grad_is_safe_for_dropout(torch.device("mps"))
-
-
 def test_metal_fused_attention_really_does_reject_dropout_under_no_grad() -> None:
-    """The upstream limitation the workaround exists for.
+    """The upstream limitation, and why ``update_bn_stats`` disables dropout.
 
-    Skips unless Metal is actually present. If a future torch release implements
-    dropout in the fused MPS kernel this fails, which is the signal to delete
-    :func:`no_grad_is_safe_for_dropout` and restore the plain ``no_grad()``.
+    Skips unless Metal is actually present. Three facts, in order: a train-mode
+    attention forward under ``no_grad`` raises on MPS; the same forward with the
+    module in ``eval()`` — which is what ``update_bn_stats`` now does — does
+    not; and neither does the grad-enabled math path the workaround used to
+    take. The middle one is the fix; it is also device-independent, which the
+    workaround was not.
     """
     import pytest
 
@@ -66,10 +67,15 @@ def test_metal_fused_attention_really_does_reject_dropout_under_no_grad() -> Non
 
     attn = torch.nn.MultiheadAttention(32, 4, dropout=0.15, batch_first=True).to("mps")
     x = torch.randn(2, 8, 32, device="mps")
+
     attn.train(True)
-
-    with torch.enable_grad():
-        attn(x, x, x, need_weights=False)  # the path update_bn_stats now takes
-
     with pytest.raises(NotImplementedError, match="does not support dropout"), torch.no_grad():
         attn(x, x, x, need_weights=False)
+
+    attn.eval()
+    with torch.no_grad():
+        attn(x, x, x, need_weights=False)  # the path update_bn_stats now takes
+
+    attn.train(True)
+    with torch.enable_grad():
+        attn(x, x, x, need_weights=False)  # the path it used to take on MPS only

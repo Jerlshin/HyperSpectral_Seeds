@@ -2,9 +2,19 @@
 
 Writes ``test_preds_noTTA.npy``, ``test_preds_TTA.npy`` and
 ``test_targets.npy`` under ``cfg.output_dir``. Two details that matter for
-reproducing a reported number: the evaluated model is the **EMA shadow**, not
-the live model, and the checkpoint it loads is whichever stage
-``_pick_best_checkpoint`` ranks highest by ``val_f1`` — not necessarily Stage 3.
+reproducing a reported number: the checkpoint loaded is whichever stage
+``_pick_best_checkpoint`` ranks highest by ``val_f1`` — not necessarily Stage 3
+— and the weights evaluated are the ones that **won that ``val_f1``**.
+
+Every stage saves on ``max(F1_live, F1_ema)`` and writes the max to the sidecar
+as ``val_f1``, but this function used to evaluate the EMA shadow
+unconditionally. When the live model won the max, the shipped test number came
+from a model that had never scored it, and the artifacts did not record which
+had won, making the mismatch unfalsifiable after the fact (IMPROVEMENT_PLAN
+§2.1.4, T1-8). The stages now record ``best_source`` in the bundle and this
+function honours it. Bundles written before Tier 1 carry no such key and fall
+back to ``"ema"``, which is exactly the behaviour they were produced under —
+so the archived ``output_v12_spa40`` numbers still reproduce.
 """
 
 from __future__ import annotations
@@ -16,6 +26,7 @@ import torch
 from sklearn.metrics import accuracy_score, classification_report, f1_score
 from torch.utils.data import DataLoader
 
+from spectralquadnet.engine.batch import side_inputs, unpack_batch
 from spectralquadnet.engine.checkpoint import load_ckpt
 from spectralquadnet.engine.diagnostics import hardest_classes_report
 from spectralquadnet.engine.tta import tta_predict
@@ -25,6 +36,15 @@ from spectralquadnet.tracking.base import ExperimentTracker, NullTracker
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from spectralquadnet.config.schema import ExperimentConfig
     from spectralquadnet.models.spectral_quadnet import SpectralQuadNet
+
+#: What a bundle without a recognised ``best_source`` is assumed to have been
+#: selected on — the pre-Tier-1 behaviour, so archived runs keep reproducing.
+DEFAULT_BEST_SOURCE = "ema"
+
+#: Every ``best_source`` a stage writes. ``"live"`` names the bundle's ``model``
+#: slot; ``"ema"`` and Stage 3's ``"swa"`` both name its ``ema`` slot, which is
+#: where Stage 3 puts whichever of its two averages scored higher.
+KNOWN_BEST_SOURCES = frozenset({"live", "ema", "swa"})
 
 
 def final_evaluation(
@@ -36,13 +56,15 @@ def final_evaluation(
     best_ckpt: str,
     tracker: ExperimentTracker | None = None,
 ) -> None:
-    """Load the best checkpoint's EMA shadow and report test-set metrics with/without TTA.
+    """Load the best checkpoint's selected weights and report test-set metrics with/without TTA.
 
     Args:
         cfg: Composed experiment config.
-        model: Model instance to load the checkpoint's live weights into
-            (only its EMA shadow, via ``ema``, is actually evaluated).
-        ema: EMA wrapper; its shadow is loaded from the checkpoint and evaluated.
+        model: Model instance to load the checkpoint's live weights into.
+            Evaluated when the bundle's ``best_source`` is ``"live"``.
+        ema: EMA wrapper; its shadow is loaded from the checkpoint and
+            evaluated when ``best_source`` is ``"ema"`` or ``"swa"`` (the
+            default for bundles that predate the key).
         test_ldr: Test-set loader.
         device: Device to evaluate on.
         best_ckpt: Path to the checkpoint to load and evaluate.
@@ -51,15 +73,27 @@ def final_evaluation(
     """
     trk = tracker if tracker is not None else NullTracker()
     ckpt = load_ckpt(best_ckpt, model, ema, device)
-    eval_model = ema.shadow
+
+    recorded = ckpt.get("best_source")
+    source = str(recorded) if recorded in KNOWN_BEST_SOURCES else DEFAULT_BEST_SOURCE
+    if recorded is not None and recorded not in KNOWN_BEST_SOURCES:
+        trk.log_message(
+            f"Unrecognised best_source {recorded!r} — evaluating the {source} weights",
+            level="warn",
+        )
+    eval_model = model if source == "live" else ema.shadow
     eval_model.eval()
 
     trk.banner(
         "FINAL TEST EVALUATION",
         [
-            f"ArcFace: {eval_model._use_arcface}  |  "
+            f"Schema v{ckpt.get('schema_version', 1)}  |  "
             f"Checkpoint: ep {ckpt['epoch']} | {ckpt['stage']} | "
             f"F1={ckpt.get('val_f1', 0):.3f}  Acc={ckpt.get('val_acc', 0):.1%}",
+            f"Selected weights: {source}"
+            + (
+                "" if recorded in KNOWN_BEST_SOURCES else "  (assumed — not recorded in the bundle)"
+            ),
             f"TTA: {cfg.tta_spatial} spatial + {cfg.tta_spectral} spectral "
             f"= {cfg.tta_spatial + cfg.tta_spectral} total views",
         ],
@@ -68,12 +102,13 @@ def final_evaluation(
     results = {}
     for tag, use_tta in [("No TTA", False), ("TTA   ", True)]:
         preds, targets = [], []
-        for x, y in test_ldr:
-            x = x.to(device, non_blocking=True)
+        for batch in test_ldr:
+            x, y, mask, morph = unpack_batch(batch, device)
+            side = side_inputs(mask, morph)
             logits = (
-                tta_predict(eval_model, x, cfg.tta_spatial, cfg.tta_spectral)
+                tta_predict(eval_model, x, cfg.tta_spatial, cfg.tta_spectral, **side)
                 if use_tta
-                else eval_model(x)
+                else eval_model(x, **side)
             )
             preds.append(logits.argmax(1).cpu())
             targets.append(y.cpu())

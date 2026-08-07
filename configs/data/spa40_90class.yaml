@@ -7,6 +7,30 @@ defaults:
 patches_data: ./dataset/patches_spa_40b.npy
 labels_path: ./dataset/labels.npy
 wavelength_path: ./dataset/wavelengths_spa_40b.csv
+groups_path: ./dataset/groups.npy
+
+# ── Tier-3 side inputs (FE-2 / T3-7, FU-4 / P-4) ──────────────────────
+# Deliberately empty here. This file reproduces the reference run, whose
+# `patches_spa_40b.npy` predates T4-3's resize order, so no fill map exists that
+# agrees with it and no morphometrics were persisted. Empty means the model uses
+# its exact fallbacks — the `> 1e-5` band-sum threshold, and a zero morphometric
+# vector — so this config keeps reproducing `outputs/output_v12_spa40/`.
+masks_path: ""
+morphology_path: ""
+
+# ── Split protocol (P-1, P-5 / T4-1, T4-5) ────────────────────────────
+# This file reproduces the *reference run's* protocol, which is the leaky one:
+# `stratified` splits at patch level, so all 107 capture scans appear in train,
+# val and test alike (Phase 0, 0-H). It is kept because the three archived
+# checkpoints were trained and selected on exactly this partition.
+#
+# `configs/data/spa40_90class_pfix.yaml` is the same dataset under the P-fix
+# protocol (grouped + calib). Select it with `python train.py data=spa40_90class_pfix`
+# once `scripts/prepare_dataset.py` has been re-run to write groups.npy.
+split_scheme: stratified
+split_eval_frac: 0.30
+split_fold: 0
+calib_frac: 0.0
 
 # ── Geometry ──────────────────────────────────────────────────────────
 num_bands: 40
@@ -15,3 +39,10 @@ num_classes: 90
 # ── Input perturbation used by RiceSeedDataset augmentation ───────────
 max_cutout_bands: 3
 noise_std: 0.02
+
+# ── Same-class CutMix geometry (OP-6 / T2-7) ──────────────────────────
+# A 8-of-40 band window is ~20% of the spectrum; a 24×24 paste is ~14% of the
+# 64×64 patch area. Both are label-preserving because the partner is drawn from
+# the same class, so no soft target and no change to the margin loss.
+cutmix_bands: 8
+cutmix_spatial: 24

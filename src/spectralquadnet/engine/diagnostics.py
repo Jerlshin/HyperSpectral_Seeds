@@ -30,6 +30,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
+from spectralquadnet.engine.batch import side_inputs, unpack_batch
 from spectralquadnet.engine.evaluate import evaluate_per_class
 from spectralquadnet.losses.cdws import build_cdws_weights
 from spectralquadnet.tracking.base import ExperimentTracker, NullTracker
@@ -81,17 +82,18 @@ def compute_branch_influence(
     influences = torch.zeros(4, device=device)
     total = 0
 
-    for i, (x, _) in enumerate(loader):
+    for i, batch in enumerate(loader):
         if i >= max_batches:
             break
-        x = x.to(device, non_blocking=True)
-        logits_full = model(x)
+        x, _y, mask, morph = unpack_batch(batch, device)
+        side = side_inputs(mask, morph)
+        logits_full = model(x, **side)
         p_full = torch.softmax(logits_full, dim=1)
 
         for b in range(4):
-            mask = torch.ones(4, device=device)
-            mask[b] = 0.0
-            logits_ab = model(x, branch_mask=mask)
+            ablation = torch.ones(4, device=device)
+            ablation[b] = 0.0
+            logits_ab = model(x, branch_mask=ablation, **side)
             p_ab = torch.softmax(logits_ab, dim=1).clamp(min=1e-10)
             influences[b] += F.kl_div(p_ab.log(), p_full, reduction="batchmean")
         total += 1
@@ -226,6 +228,52 @@ def branch_grad_norms(
     keys = list(norms)
     values = torch.stack([norms[k] for k in keys]).cpu().tolist()
     return {k: float(v) for k, v in zip(keys, values, strict=True)}
+
+
+@torch.no_grad()
+def flat_grad(model: nn.Module) -> torch.Tensor:
+    """Every trainable parameter's gradient, concatenated into one 1-D tensor.
+
+    Parameters that ``requires_grad`` but have no ``.grad`` yet contribute
+    zeros, so two calls around the same model always return **aligned** vectors
+    — which is what makes the cosine in :func:`grad_cosine` meaningful.
+
+    Costs one full copy of the gradient (≈32 MB at 7.9 M fp32 parameters), so
+    callers gate it on a diagnostics flag rather than running it every step
+    unconditionally.
+    """
+    parts = [
+        p.grad.detach().reshape(-1) if p.grad is not None else p.new_zeros(p.numel())
+        for p in model.parameters()
+        if p.requires_grad
+    ]
+    return torch.cat(parts) if parts else torch.zeros(0)
+
+
+@torch.no_grad()
+def grad_cosine(g_a: torch.Tensor, g_d: torch.Tensor) -> torch.Tensor:
+    """``cos(ĝ_A, ĝ_D)`` between two flattened gradients, as a 0-dim device tensor.
+
+    Stage 3's SAM step ascends along ``ĝ_A`` and descends along ``ĝ_D``. SAM is
+    defined for a *single* objective: when the two differ, only the component
+    of ``ĝ_A`` along ``ĝ_D`` is a sharpness penalty and the rest is
+    curvature-shaped noise with no descent guarantee (IMPROVEMENT_PLAN §2.5.1
+    C-6, Appendix A.3). This is the number that says which regime the run is
+    in — it is 1.0 for matched objectives in the ``rho -> 0`` limit, and below
+    it only by the curvature the ρ-perturbation actually traverses.
+
+    Written as three dot products over max-normalised inputs rather than as
+    ``F.cosine_similarity``, which computes its denominator with a different
+    reduction from its numerator: over 7.9 M fp32 elements spanning 36 decades
+    that disagreement reaches **5e-3**, enough to report 1.005 for a vector
+    against itself and to swamp the effect being measured. Sharing one
+    reduction makes the identical-gradient case exact, and the scaling keeps
+    ``dot(a, a)`` clear of fp32's overflow ceiling. float64 is not an option:
+    Metal does not implement it.
+    """
+    a = g_a / g_a.abs().max().clamp_min(torch.finfo(g_a.dtype).tiny)
+    d = g_d / g_d.abs().max().clamp_min(torch.finfo(g_d.dtype).tiny)
+    return torch.dot(a, d) / torch.sqrt(torch.dot(a, a) * torch.dot(d, d)).clamp_min(1e-30)
 
 
 def hardest_classes_report(class_f1: dict[int, float], k: int = 10) -> list[dict[str, Any]]:

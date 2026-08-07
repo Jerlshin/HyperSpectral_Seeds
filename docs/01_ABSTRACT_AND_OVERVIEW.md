@@ -155,9 +155,13 @@ macro-F1, *not* by stage order.
 
 ### Split protocol
 
-`data/loaders.py::build_splits` performs a two-step stratified partition with
-`random_state=42` **hardcoded**, deliberately decoupled from `cfg.seed`, so overriding the
-run seed can never silently re-partition the data:
+`data/loaders.py::build_split_bundle` builds one of **two** protocols, selected by
+`cfg.data.split_scheme`, with `random_state=42` **hardcoded** in both and deliberately
+decoupled from `cfg.seed`, so overriding the run seed can never silently re-partition the
+data.
+
+**`stratified`** — the default, and the protocol every archived checkpoint was trained and
+selected on. A two-step stratified partition at the **patch** level:
 
 $$
 8{,}624 \;\longrightarrow\; \underbrace{6{,}036}_{\text{train, }70\%} \;+\;
@@ -165,6 +169,26 @@ $$
 $$
 
 Approximately 67 training patches per class; 13–15 test patches per class.
+
+> **What this partition does not control for.** It splits patches, not scans, and a scan
+> yields ~96 seeds imaged together under one illumination. Measured by the split's own
+> report: **107 of 107 capture scans appear in train *and* in val/test**, so there is no
+> evaluation patch whose physical scan the model did not train on (IMPROVEMENT_PLAN C-1,
+> Phase 0 action 0-H). Part of the reported number is therefore scan recognition rather than
+> variety recognition; how much is unknown until the grouped protocol is run.
+
+**`grouped`** (P-1 / T4-1) holds out whole scans, enforcing
+$\mathrm{scan}(i) \in \text{train} \Rightarrow \mathrm{scan}(i) \notin \text{val} \cup
+\text{test}$, and reports per class where the group counts let it go further. It needs
+`dataset/groups.npy`, and `configs/data/spa40_90class_pfix.yaml` selects it together with
+P-5's calibration split. Expect the headline number to fall: that is the correct direction,
+and the *difference* between the two protocols is itself the result.
+
+**The calibration split** (P-5 / T4-5, `cfg.data.calib_frac`) carves an inner split out of
+train. The per-class margins, the confusion matrix, the CDWS weights and the Phase-3
+oversampling weights are fitted there, so `val` carries no fitted parameter and is a
+selection split only. At `calib_frac: 0.0` — the shipped value — all of them are fitted on
+`val`, which is the contamination C-9 describes.
 
 ### Metric rule
 

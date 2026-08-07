@@ -84,6 +84,13 @@ is exactly what `test_recorded_test_predictions_match_their_reported_metrics` do
 | Single view | 0.8770 | 0.8776 | 0.8779 | — |
 | 12-view TTA | **0.8933** | 0.8939 | 0.8941 | **+0.0163** |
 
+> **Superseded by T1-1.** This row was produced by the spectral transform the derived-property
+> box above describes — whole-patch mean, no re-mask. That transform is fixed as of Tier 1
+> (foreground mean, re-masked, fp32 forwards). The same checkpoint re-scored through the
+> corrected views gives **0.8889** macro-F1, i.e. $+0.0119$ over single view rather than
+> $+0.0163$; the single-view row is unaffected. Paired bootstrap on the difference:
+> $-0.0046$, 95 % CI $[-0.0151, +0.0056]$, $p = 0.40$. `MIGRATION_PROGRESS.md` → Tier 1 → T1-1.
+
 Per-class outcome under TTA: 23 of 90 classes at $F_1 = 1.000$, none below $0.50$, hardest
 five = 49 (0.519), 52 (0.533), 41 (0.538), 51 (0.629), 37 (0.640).
 

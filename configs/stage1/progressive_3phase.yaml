@@ -37,3 +37,9 @@ p3_dropout: 0.25
 # ── Auxiliary-head loss weight decay (init → final) ───────────────────
 aux_loss_weight_init: 0.65
 aux_loss_weight_final: 0.25
+
+# ── Unified head (HD-1 / T2-10) ───────────────────────────────────────
+# Stage 1 runs the same sub-centre head as Stages 2-3 at zero margin, which is
+# a plain cosine (NormFace) classifier. 0.0 is not a placeholder: it is what
+# makes the Stage-1 → Stage-2 transition continuous.
+arcface_m: 0.0

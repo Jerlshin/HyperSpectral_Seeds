@@ -9,3 +9,12 @@ cycle_len: 8
 sam_rho: 0.015
 greedy: true
 aux_loss_weight: 0.10
+
+# ── Margin annealing, SWA transient rejection, ASAM (T2-1/T2-3/T2-4) ──
+# kappa scales Stage 2's whole per-class margin vector 1.0 → 0.85, stepping
+# only at cycle boundaries. The first 3 cycles are discarded from the average
+# (Adam's 1/(1-beta2) = 1000-step second-moment transient at ~47 steps/epoch,
+# 8 epochs/cycle). sam_adaptive selects ASAM over raw-space SAM.
+margin_kappa_final: 0.85
+swa_warmup_cycles: 3
+sam_adaptive: true

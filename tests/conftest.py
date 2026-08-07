@@ -20,7 +20,16 @@ import torch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
-GOLDEN = Path(__file__).resolve().parent / "regression" / "golden"
+#: Schema-v1 goldens — the pinned reference implementation's values, frozen.
+GOLDEN_V1 = Path(__file__).resolve().parent / "regression" / "golden"
+#: Schema-v2 goldens — the Tier-2 architecture. Frozen at Tier-3 completion and
+#: no longer re-capturable; read only as the left-hand side of the v2 -> v3
+#: structural delta.
+GOLDEN_V2 = GOLDEN_V1 / "v2"
+#: Schema-v3 goldens — the current architecture, after Tier 3 (T3-1 ... T3-7)
+#: rebuilt three of the four branches and the fusion. This is what the live
+#: drift gate compares against; see `golden/v3/README.md`.
+GOLDEN = GOLDEN_V1 / "v3"
 OUTPUTS = REPO_ROOT / "outputs" / "output_v12_spa40"
 
 SEED = 42
@@ -59,7 +68,10 @@ def baseline_src() -> str:
     """Source text of the reference implementation, for reaching nested closures.
 
     ``phase_aware_lr`` and ``_s3_margin`` are defined *inside* ``run_stage1`` /
-    ``run_stage3_swa``, so they cannot be read off the module object.
+    ``run_stage3_swa`` in the reference, so they cannot be read off the module
+    object. The current code has neither: the first is a factory in
+    ``optim/schedulers.py``, and the second was replaced by
+    ``stage3_margin_kappa`` (T2-1).
     """
     from _baseline import baseline_source
 
@@ -93,7 +105,7 @@ def physical_wl() -> torch.Tensor:
     ``test_mmap_store.py`` separately checks that ``DataStore`` reproduces it from
     the real CSV when that CSV is present.
     """
-    path = GOLDEN / "physical_wl_spa40.npy"
+    path = GOLDEN_V1 / "physical_wl_spa40.npy"
     if not path.exists():
         pytest.skip(f"{path} missing — run `python scripts/capture_golden.py`")
     return torch.from_numpy(np.load(path))
@@ -110,6 +122,35 @@ def golden_logits() -> np.ndarray:
 @pytest.fixture(scope="session")
 def golden_init_digests() -> dict[str, str]:
     path = GOLDEN / "init_state_sha256.json"
+    if not path.exists():
+        pytest.skip(f"{path} missing — run `python scripts/capture_golden.py`")
+    return json.loads(path.read_text())
+
+
+@pytest.fixture(scope="session")
+def golden_v1_init_digests() -> dict[str, str]:
+    """The schema-v1 digests, kept so the v1 → v2 delta stays an assertion.
+
+    They are no longer a value gate on the current model — HD-1 shifted the
+    RNG stream every later `_init_weights` draw reads from — but the *key set*
+    still is, and that is what pins "one head was removed" against "something
+    else also changed".
+    """
+    path = GOLDEN_V1 / "init_state_sha256.json"
+    if not path.exists():
+        pytest.skip(f"{path} missing — run `python scripts/capture_golden.py`")
+    return json.loads(path.read_text())
+
+
+@pytest.fixture(scope="session")
+def golden_v2_init_digests() -> dict[str, str]:
+    """The schema-v2 digests — the left-hand side of Tier 3's structural delta.
+
+    Frozen: the code that produced them no longer exists, so they are read and
+    never rewritten. What they still pin is that every key Tier 3 added or
+    removed is one somebody declared.
+    """
+    path = GOLDEN_V2 / "init_state_sha256.json"
     if not path.exists():
         pytest.skip(f"{path} missing — run `python scripts/capture_golden.py`")
     return json.loads(path.read_text())
@@ -163,6 +204,27 @@ def synthetic_batch(cfg) -> torch.Tensor:
     """``(4, 40, 64, 64)`` input from a dedicated generator — identical to the capture."""
     gen = torch.Generator(device="cpu").manual_seed(SEED)
     return torch.randn(BATCH, cfg.data.num_bands, SPATIAL, SPATIAL, generator=gen)
+
+
+@pytest.fixture
+def silence_dropout():
+    """Zero **every** dropout rate in a model, so a ``train()``-mode forward is deterministic.
+
+    ``SpectralQuadNet.set_dropout`` walks ``nn.Dropout`` instances only, and so
+    cannot reach the ``dropout`` float inside ``nn.MultiheadAttention`` (N-2 —
+    four sites in Branch D, two in the fusion). Any test that needs two
+    train-mode forwards to agree has to close that gap itself; this is that
+    one-liner, kept in one place so the tests below cannot disagree about what
+    "dropout off" means.
+    """
+
+    def _silence(model: Any) -> None:
+        model.set_dropout(0.0)
+        for m in model.modules():
+            if isinstance(m, torch.nn.MultiheadAttention):
+                m.dropout = 0.0
+
+    return _silence
 
 
 # ══════════════════════════════════════════════════════════════════════

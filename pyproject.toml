@@ -123,4 +123,5 @@ addopts = "-q"
 markers = [
     "regression: numerical-identity gates against the pre-refactor baseline (REFACTOR_PLAN.md §3.2)",
     "requires_dataset: needs the real dataset/ or outputs/ artifacts, not run in CI",
+    "slow: runs a real multi-epoch stage on synthetic data; minutes, not seconds",
 ]

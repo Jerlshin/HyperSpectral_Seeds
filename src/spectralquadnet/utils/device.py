@@ -11,6 +11,15 @@ Silicon uses the GPU rather than falling through to CPU. An explicit
 The autocast **dtype** is deliberately left at torch's per-device default
 (fp16 on both Metal and CUDA) rather than promoted to bf16 on capable CUDA
 hardware, to keep training numerics consistent across accelerators.
+
+This module used to carry a ``no_grad_is_safe_for_dropout`` predicate, because
+Metal's fused attention kernel rejects dropout under ``no_grad`` and
+``update_bn_stats`` was the one caller that ran the model in ``train()`` mode
+there. Tier 1 (T1-5) switches every stochastic module off for that pass
+outright, which is the correct behaviour for BatchNorm re-estimation anyway, so
+nothing is left that depends on the accelerator — the predicate is gone rather
+than left inert. ``tests/unit/test_device.py`` still pins the upstream Metal
+limitation that motivated it.
 """
 
 from __future__ import annotations
@@ -35,18 +44,3 @@ def resolve_device(strategy: str | torch.device = "auto") -> torch.device:
             return torch.device("cuda")
         return torch.device("cpu")
     return torch.device(strategy)
-
-
-def no_grad_is_safe_for_dropout(device: torch.device) -> bool:
-    """Whether a ``train()``-mode forward under ``no_grad`` can use dropout.
-
-    Metal routes attention through a fused inference kernel whenever grad is
-    disabled, and that kernel raises ``NotImplementedError:
-    scaled_dot_product_attention for MPS does not support dropout``. Grad-mode
-    forwards take the math path, which handles dropout — so the only caller that
-    runs the model in ``train()`` mode under ``no_grad``
-    (:func:`~spectralquadnet.engine.checkpoint.update_bn_stats`) keeps grad
-    enabled on Metal. That changes autograd bookkeeping only: forward values,
-    and therefore the BatchNorm statistics being estimated, are identical.
-    """
-    return device.type != "mps"

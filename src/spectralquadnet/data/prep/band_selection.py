@@ -35,7 +35,9 @@ Araújo M, Saldanha T, Galvao R, Yoneyama T, Chame H, Visani V.
 
 from __future__ import annotations
 
+import json
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -421,6 +423,11 @@ def find_elbow(counts: list[int], accs: list[float], cfg: BandSelectionConfig) -
 
     This avoids over-selecting bands for diminishing returns. The 98%
     threshold is a standard heuristic in HSI band selection literature.
+
+    The result is only meaningful when ``counts`` extends **past** the k it
+    returns: ``peak`` is taken over the counts supplied, so a curve truncated
+    at its own elbow satisfies the criterion trivially (M-14). Pair every call
+    with :func:`verify_elbow`, which measures that.
     """
     peak = max(accs)
     threshold = cfg.elbow_pct * peak
@@ -428,6 +435,137 @@ def find_elbow(counts: list[int], accs: list[float], cfg: BandSelectionConfig) -
         if a >= threshold:
             return k
     return counts[int(np.argmax(accs))]  # fallback: peak
+
+
+@dataclass(frozen=True)
+class ElbowVerdict:
+    """Whether a chosen band count is an elbow or merely the end of the curve.
+
+    T4-6's validation criterion — "the recorded curve extends past the chosen
+    k; the elbow is demonstrable, not asserted" — is exactly
+    :attr:`demonstrable`, and every field below is one of the measurements it
+    is made of.
+    """
+
+    k: int
+    max_k_recorded: int
+    peak_k: int
+    peak_acc: float
+    acc_at_k: float
+    n_points_past_k: int
+    #: Best accuracy anywhere past ``k``, minus the accuracy at ``k``. Positive
+    #: means more bands still help — which is F-3's prediction.
+    headroom_past_k: float
+    demonstrable: bool
+    reason: str
+
+    def lines(self) -> list[str]:
+        """Report lines, for the console and the run log."""
+        verdict = "DEMONSTRABLE" if self.demonstrable else "NOT DEMONSTRABLE"
+        return [
+            f"  Elbow at k = {self.k}: {verdict} — {self.reason}",
+            f"    curve recorded to k = {self.max_k_recorded} "
+            f"({self.n_points_past_k} points past k)",
+            f"    acc(k) = {self.acc_at_k:.4f}   peak = {self.peak_acc:.4f} at k = {self.peak_k}"
+            f"   headroom past k = {self.headroom_past_k:+.4f}",
+        ]
+
+
+def verify_elbow(
+    counts: list[int], accs: list[float], k: int, cfg: BandSelectionConfig
+) -> ElbowVerdict:
+    """Measure whether ``k`` is an elbow of ``(counts, accs)`` or its endpoint.
+
+    An elbow claim has two parts and the shipped run could only support the
+    first: that accuracy at ``k`` is within ``elbow_pct`` of the peak, and that
+    the curve *goes past* ``k`` so the peak is not simply ``acc(k)`` itself.
+    ``dataset/band_selection_report.csv`` terminates at k = 40, the value it
+    selected, so its own peak is at 40 by construction (M-14, §2.2.11).
+
+    Args:
+        counts: Band counts evaluated, ascending.
+        accs: Accuracy at each count.
+        k: The chosen band count.
+        cfg: Supplies ``elbow_pct``.
+
+    Returns:
+        The verdict. :attr:`ElbowVerdict.demonstrable` is the criterion T4-6
+        states; it is False whenever the curve stops at ``k``, whatever the
+        accuracies say.
+    """
+    pairs = sorted(zip(counts, accs, strict=True))
+    ks = [c for c, _ in pairs]
+    values = [a for _, a in pairs]
+    peak_i = int(np.argmax(values))
+    acc_at_k = values[ks.index(k)] if k in ks else float("nan")
+    past = [a for c, a in pairs if c > k]
+    headroom = (max(past) - acc_at_k) if past else 0.0
+
+    if not past:
+        reason = (
+            f"the curve terminates at the chosen k — peak is acc({k}) by construction, "
+            "so the 98 % criterion is satisfied vacuously (M-14)"
+        )
+        demonstrable = False
+    elif acc_at_k < cfg.elbow_pct * values[peak_i]:
+        reason = (
+            f"acc({k}) = {acc_at_k:.4f} is below {cfg.elbow_pct:.0%} of the peak "
+            f"{values[peak_i]:.4f} at k = {ks[peak_i]}"
+        )
+        demonstrable = False
+    else:
+        reason = (
+            f"acc({k}) is within {cfg.elbow_pct:.0%} of the peak and "
+            f"{len(past)} larger band counts were evaluated"
+        )
+        demonstrable = True
+
+    return ElbowVerdict(
+        k=int(k),
+        max_k_recorded=int(ks[-1]),
+        peak_k=int(ks[peak_i]),
+        peak_acc=float(values[peak_i]),
+        acc_at_k=float(acc_at_k),
+        n_points_past_k=len(past),
+        headroom_past_k=float(headroom),
+        demonstrable=demonstrable,
+        reason=reason,
+    )
+
+
+def load_deployed_curve(path: str | Path) -> dict[int, float]:
+    """Read the deployed estimator's accuracy curve — T4-6 / F-3.
+
+    The proxy classifiers this module cross-validates (LDA and ``LinearSVC``
+    on 256-dimensional mean spectra) are not the estimator that gets deployed,
+    and F-3 is the prediction that the two curves disagree: a linear model on
+    class-mean spectra saturates long before a four-branch network that reads
+    spatial structure and band interactions does. When a curve from the real
+    estimator is available it replaces theirs for the winner and elbow
+    decisions.
+
+    Args:
+        path: CSV with an ``n_bands`` column and an ``accuracy`` (or ``acc``,
+            or ``macro_f1``) column.
+
+    Returns:
+        ``{k: accuracy}``.
+
+    Raises:
+        FileNotFoundError: The file does not exist.
+        ValueError: The expected columns are missing.
+    """
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"deployed_curve_path={p} does not exist")
+    frame = pd.read_csv(p)
+    score_col = next((c for c in ("accuracy", "acc", "macro_f1", "f1") if c in frame.columns), None)
+    if "n_bands" not in frame.columns or score_col is None:
+        raise ValueError(
+            f"{p} must have an 'n_bands' column and one of accuracy/acc/macro_f1/f1; "
+            f"found {list(frame.columns)}"
+        )
+    return {int(r.n_bands): float(getattr(r, score_col)) for r in frame.itertuples()}
 
 
 # =====================================================================
@@ -528,7 +666,19 @@ def select_bands(cfg: BandSelectionConfig | None = None) -> None:
     else:
         winner, w_order, w_val, w_accs = "spa", spa_order, spa_val, spa_accs
 
-    optimal_k = find_elbow(shared, w_accs, cfg)
+    # ── T4-6 / F-3 — the deployed estimator overrides the proxies ──
+    deployed: dict[int, float] = {}
+    decision_counts, decision_accs = shared, w_accs
+    estimator = f"{winner.upper()} ranking, LinearSVC on mean spectra"
+    if cfg.deployed_curve_path:
+        deployed = load_deployed_curve(cfg.deployed_curve_path)
+        decision_counts = sorted(deployed)
+        decision_accs = [deployed[k] for k in decision_counts]
+        estimator = f"deployed estimator ({cfg.deployed_curve_path})"
+        print(f"\n  Elbow decided on the {estimator}, not the proxy classifiers.")
+
+    optimal_k = find_elbow(decision_counts, decision_accs, cfg)
+    verdict = verify_elbow(decision_counts, decision_accs, optimal_k, cfg)
     final_bands = np.sort(w_order[:optimal_k])
 
     # ── Save comparison report ────────────────────────────────────
@@ -539,6 +689,7 @@ def select_bands(cfg: BandSelectionConfig | None = None) -> None:
             "mrmr_svc": mrmr_val[k]["svc"],
             "spa_lda": spa_val[k]["lda"],
             "spa_svc": spa_val[k]["svc"],
+            "deployed": deployed.get(k, float("nan")),
         }
         for k in shared
     ]
@@ -547,6 +698,20 @@ def select_bands(cfg: BandSelectionConfig | None = None) -> None:
     report.to_csv(rpath, index=False)
     print(f"\n  Accuracy table:\n{report.to_string(index=False)}")
     print(f"\n  Report → {rpath}")
+
+    # ── T4-6 — is the elbow demonstrable? ─────────────────────────
+    # Written next to the curve, not only printed: M-14 is a defect of an
+    # *artifact* — a report that stops at its own chosen k — so the artifact
+    # has to carry the answer.
+    vpath = Path(cfg.output_dir) / "band_selection_elbow.json"
+    vpath.write_text(json.dumps({"estimator": estimator, **verdict.__dict__}, indent=2))
+    print("\n".join(verdict.lines()))
+    print(f"  Verdict → {vpath}")
+    if not verdict.demonstrable:
+        print(
+            "  ⚠ The elbow is NOT demonstrable from this curve. §4.5: publish the curve to "
+            "k = 256 under the deployed estimator, or withdraw the elbow claim."
+        )
 
     # ── Save reduced dataset ──────────────────────────────────────
     save_outputs(final_bands, wl_df, winner, cfg)
@@ -559,8 +724,17 @@ def select_bands(cfg: BandSelectionConfig | None = None) -> None:
     print(f"  Winner method   : {winner.upper()}")
     print(f"  Bands selected  : {optimal_k} of 256  ({(1 - optimal_k/256)*100:.1f}% reduction)")
     print(f"  Wavelength range: {sel_wl.min():.1f} – {sel_wl.max():.1f} nm")
-    print(f"  SVC accuracy    : {w_val[optimal_k]['svc']*100:.2f}%  (5-fold, mean spectra)")
-    print(f"  LDA accuracy    : {w_val[optimal_k]['lda']*100:.2f}%  (5-fold, mean spectra)")
+    # `optimal_k` comes from the decision curve, which under T4-6 may be the
+    # deployed estimator's and need not share the proxies' band counts.
+    if optimal_k in w_val:
+        print(f"  SVC accuracy    : {w_val[optimal_k]['svc']*100:.2f}%  (5-fold, mean spectra)")
+        print(f"  LDA accuracy    : {w_val[optimal_k]['lda']*100:.2f}%  (5-fold, mean spectra)")
+    print(
+        f"  Elbow           : {'demonstrable' if verdict.demonstrable else 'NOT demonstrable'}"
+        f"  (curve to k = {verdict.max_k_recorded}, {verdict.n_points_past_k} points past k,"
+        f" headroom {verdict.headroom_past_k:+.4f})"
+    )
+    print(f"  Decided on      : {estimator}")
     print(f"  Band indices    : {sorted(final_bands.tolist())}")
     print(f"  Wavelengths (nm): {[round(float(v), 1) for v in sorted(sel_wl.tolist())]}")
     print(bar)
