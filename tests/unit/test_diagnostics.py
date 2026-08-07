@@ -1,8 +1,6 @@
-"""§4.2 diagnostics — the three additions must be wrappers, not new statistics.
+"""Per-branch diagnostics — must be wrappers over existing values, not new statistics.
 
-REFACTOR_PLAN.md §4.2 is explicit that "all four requested capabilities build
-directly on existing return values — none require new math". These tests pin
-that claim where it is checkable:
+These tests pin that property where it is checkable:
 
 * :func:`branch_grad_norms` reproduces a hand-computed L2 norm over exactly the
   parameters whose names carry each prefix, and omits prefixes with no gradient
@@ -69,7 +67,7 @@ def test_branch_grad_norms_omit_branches_without_gradients() -> None:
 
 
 def test_branch_prefixes_cover_the_plan_s_list() -> None:
-    """§4.2 names the six groups; the constant must not drift from them."""
+    """The tracked prefix groups; the constant must not drift from them."""
     assert BRANCH_PREFIXES == (
         "branch_a.",
         "branch_b.",
@@ -124,7 +122,7 @@ def _aux_inputs() -> tuple[nn.Module, dict[str, torch.Tensor], torch.Tensor]:
 
 
 def test_aux_components_are_bit_identical_to_the_summed_total() -> None:
-    """The §4.2 flag must not perturb the number the training loop already used."""
+    """The ``return_components`` flag must not perturb the number the training loop already used."""
     criterion, out, y = _aux_inputs()
     total_only = _compute_aux_loss(criterion, out, y, y, 1.0, use_mixup=False)
     total, components = _compute_aux_loss(

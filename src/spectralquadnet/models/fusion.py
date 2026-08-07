@@ -1,14 +1,4 @@
-"""Cross-modal fusion of the four branch embeddings.
-
-Relocated verbatim from ``HSI_modality_training/hsi_training.py`` @ ``886560f``:
-
-===================================  ==============
-Symbol                               Baseline lines
-===================================  ==============
-:class:`CrossModalInteraction`       1171-1283
-:class:`EmbedNet`                    1285-1304
-===================================  ==============
-"""
+"""Cross-modal fusion of the four branch embeddings."""
 
 from __future__ import annotations
 
@@ -91,9 +81,8 @@ class CrossModalInteraction(nn.Module):
         B = branches[0].shape[0]
 
         # normalize branches
-        # noqa B905: the bare zip() is kept verbatim so this forward stays AST-identical
-        # to the baseline (§3.2.1). Adding strict= would be semantically inert but would
-        # downgrade the no-op-move check for a numerics-critical method.
+        # noqa B905: `branch_norms` and `branches` are always the same length by
+        # construction (one LayerNorm per modality), so strict= would be inert here.
         tokens = torch.stack(
             [norm(b) for norm, b in zip(self.branch_norms, branches)],  # noqa: B905
             dim=1,
@@ -131,6 +120,8 @@ class CrossModalInteraction(nn.Module):
 
 
 class EmbedNet(nn.Module):
+    """Pre-norm MLP residual block that refines the fused token into the final embedding."""
+
     def __init__(self, dim: int = 256, hidden: int = 512, drop: float = 0.1) -> None:
         super().__init__()
 

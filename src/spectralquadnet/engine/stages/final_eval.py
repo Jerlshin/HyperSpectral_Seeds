@@ -1,29 +1,10 @@
 """Final test-set evaluation, with and without 12-view TTA.
 
-Relocated from ``HSI_modality_training/hsi_training.py`` @ ``886560f``:
-
-=====================================  ==============
-Symbol                                 Baseline lines
-=====================================  ==============
-:func:`final_evaluation`               2624-2668
-=====================================  ==============
-
-Declared deviation, mechanical: ``CONFIG["tta_{spatial,spectral}"]`` →
-``cfg.tta_*`` and ``CONFIG["output_dir"]`` → ``cfg.output_dir``.
-
-This is the function that produced ``test_preds_noTTA.npy``,
-``test_preds_TTA.npy`` and ``test_targets.npy`` in ``outputs/output_v12_spa40/``,
-and the 0.8745 macro F1 recorded in ``stage3_meta.json``. Two details that make
-that reproducible: the evaluated model is the **EMA shadow**, not the live model,
-and the checkpoint it loads is whichever stage ``_pick_best_checkpoint`` ranks
-highest by ``val_f1`` — not necessarily Stage 3.
-
-Phase 4's gate (§3.5) is exactly this function, run against the existing
-checkpoint directory, reproducing those artifacts.
-
-Phase 4 also replaced every ``print`` here one-for-one with a ``tracker`` call
-(§4.1) and added the §4.2 hardest-classes table, which is derived from the same
-predictions the classification report is built from — no new statistics.
+Writes ``test_preds_noTTA.npy``, ``test_preds_TTA.npy`` and
+``test_targets.npy`` under ``cfg.output_dir``. Two details that matter for
+reproducing a reported number: the evaluated model is the **EMA shadow**, not
+the live model, and the checkpoint it loads is whichever stage
+``_pick_best_checkpoint`` ranks highest by ``val_f1`` — not necessarily Stage 3.
 """
 
 from __future__ import annotations
@@ -55,6 +36,19 @@ def final_evaluation(
     best_ckpt: str,
     tracker: ExperimentTracker | None = None,
 ) -> None:
+    """Load the best checkpoint's EMA shadow and report test-set metrics with/without TTA.
+
+    Args:
+        cfg: Composed experiment config.
+        model: Model instance to load the checkpoint's live weights into
+            (only its EMA shadow, via ``ema``, is actually evaluated).
+        ema: EMA wrapper; its shadow is loaded from the checkpoint and evaluated.
+        test_ldr: Test-set loader.
+        device: Device to evaluate on.
+        best_ckpt: Path to the checkpoint to load and evaluate.
+        tracker: Experiment tracker for reporting metrics/tables; ``None``
+            logs nowhere.
+    """
     trk = tracker if tracker is not None else NullTracker()
     ckpt = load_ckpt(best_ckpt, model, ema, device)
     eval_model = ema.shadow
@@ -106,7 +100,7 @@ def final_evaluation(
     trk.log_message("Classification Report (TTA):", level="plain")
     trk.log_message(classification_report(t_tta, p_tta, zero_division=0), level="plain")
 
-    # §4.2 per-class failure analysis — the bottom-K of the same per-class F1
+    # Per-class failure analysis — the bottom-K of the same per-class F1
     # the report above already tabulates.
     per_class = f1_score(
         t_tta, p_tta, average=None, zero_division=0, labels=list(range(cfg.data.num_classes))

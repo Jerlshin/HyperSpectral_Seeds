@@ -1,19 +1,6 @@
 """Stage 2 — sub-centre ArcFace with SGDR, SupCon/ProtoNCE and CDWS batches.
 
-Relocated from ``HSI_modality_training/hsi_training.py`` @ ``886560f``:
-
-=====================================  ==============
-Symbol                                 Baseline lines
-=====================================  ==============
-:func:`run_stage2`                     2395-2501
-=====================================  ==============
-
-Orchestration only. The single declared deviation is the mechanical
-``CONFIG[...]`` → ``cfg.stage2.*`` / ``cfg.model.*`` rewrite, which also gives
-``build_optimizer_s2``, ``train_one_epoch``, ``compute_class_difficulty`` and
-``save_ckpt`` their leading ``cfg`` argument.
-
-Two details that read as arbitrary but are load-bearing:
+Orchestration only. Two details that read as arbitrary but are load-bearing:
 
 * ``optimizer.param_groups[0]`` and ``[2]`` are the head and backbone learning
   rates — that indexing depends on the group order ``build_optimizer_s2``
@@ -24,11 +11,6 @@ Two details that read as arbitrary but are load-bearing:
 
 Mixup is off for the whole stage — ``train_one_epoch`` raises if ArcFace and
 mixup are combined.
-
-Phase 4 (REFACTOR_PLAN.md §4.1) replaced every ``print`` here one-for-one with a
-``tracker`` call; the SGDR restart marker that used to be appended to the epoch
-line is now its own row cell. Observability-only, and every value logged was
-already a local here.
 """
 
 from __future__ import annotations
@@ -65,6 +47,30 @@ def run_stage2(
     class_f1: dict[int, float] | None = None,
     tracker: ExperimentTracker | None = None,
 ) -> float:
+    """Run Stage 2's ArcFace fine-tuning and return the best validation F1.
+
+    Switches the model onto the ArcFace head, warms the global angular
+    margin up to ``cfg.stage2.arcface_m`` over ``margin_warmup_ep`` epochs
+    (then lets per-class adaptive margins take over), ramps in SupCon/ProtoNCE
+    contrastive weights over the first 10 epochs, and trains under an SGDR
+    schedule with separate head/backbone learning rates.
+
+    Args:
+        cfg: Composed experiment config.
+        model: Model to train; switched onto the ArcFace head.
+        ema: EMA shadow; re-initialised from ``model`` at stage entry.
+        train_ldr: Stage-2 (CDWS-weighted) training loader.
+        val_ldr: Validation loader for per-epoch evaluation.
+        device: Device to train on.
+        best_ckpt: Path to write the best-F1 checkpoint to.
+        class_f1: Optional per-class F1 (from Stage 1) used to initialise the
+            ArcFace head's per-class margins before training starts.
+        tracker: Experiment tracker for progress reporting; ``None`` logs nowhere.
+
+    Returns:
+        Best validation macro-F1 (across the live model and its EMA shadow)
+        seen during the run.
+    """
     trk = tracker if tracker is not None else NullTracker()
     model.set_dropout(cfg.stage2.dropout)
     model.use_arcface(True)

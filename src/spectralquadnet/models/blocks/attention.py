@@ -1,19 +1,4 @@
-"""Channel/spatial attention blocks.
-
-Relocated verbatim from ``HSI_modality_training/hsi_training.py`` @ ``886560f``:
-
-===========================  ==============
-Symbol                       Baseline lines
-===========================  ==============
-:class:`MaskedSpectralECA`   684-718
-:class:`SEBlock1D`           720-734
-:class:`CBAM`                756-772
-===========================  ==============
-
-Bodies are byte-identical to the baseline (REFACTOR_PLAN.md §3.2.1 verifies this
-via ``scripts/check_ast_no_op_move.py``); only imports and type annotations were
-rewired.
-"""
+"""Channel/spatial attention blocks shared across the model's branches and fusion."""
 
 from __future__ import annotations
 
@@ -80,6 +65,8 @@ class SEBlock1D(nn.Module):
 
 
 class CBAM(nn.Module):
+    """Convolutional Block Attention Module: sequential channel then spatial gating."""
+
     def __init__(self, c: int, r: int = 8) -> None:
         super().__init__()
         mid = max(c // r, 8)

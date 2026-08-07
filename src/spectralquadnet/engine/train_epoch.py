@@ -1,31 +1,10 @@
 """The two per-epoch training loops: AdamW (Stages 1-2) and SAM (Stage 3).
 
-Relocated from ``HSI_modality_training/hsi_training.py`` @ ``886560f``:
-
-=====================================  ==============
-Symbol                                 Baseline lines
-=====================================  ==============
-:func:`train_one_epoch`                1859-1960
-:func:`train_one_epoch_sam`            1967-2027
-=====================================  ==============
-
-Declared deviations, both mechanical:
-
-* ``CONFIG["grad_clip"]`` → ``cfg.grad_clip`` (one call site in
-  :func:`train_one_epoch`, two in :func:`train_one_epoch_sam`).
-* ``_aux_loss_weight(current_ep, total_ep)`` → ``_aux_loss_weight(cfg, …)``,
-  since that helper now reads its two weights off the config.
-
-Both take ``cfg`` as their leading parameter as a result, matching the
-convention Phase 2 set in ``data/loaders.py``.
-
-Phase 4 addition (REFACTOR_PLAN.md §4.2), in both loops
-───────────────────────────────────────────────────────
-An optional ``tracker``. When it is ``None`` — which is how every regression gate
-calls these — **nothing changes at all**: no diagnostic is accumulated, no
-device synchronisation is added, and the arithmetic is the pre-refactor
-arithmetic. When a tracker is supplied, two families of scalars are recorded, and
-both come from values the loop already computes:
+Both loops take an optional ``tracker``. When it is ``None``, nothing extra
+happens: no diagnostic is accumulated and no device synchronisation is
+added beyond the loop's normal work. When a tracker is supplied, two
+families of scalars are recorded, and both come from values the loop
+already computes:
 
 * ``loss/branch_{a,b,c,d}`` — the weighted per-branch terms
   ``_compute_aux_loss`` sums internally, now returned alongside the total.
@@ -36,8 +15,7 @@ both come from values the loop already computes:
 Both are accumulated as device tensors and resolved to floats **once per epoch**,
 so the per-step cost is a handful of adds rather than a host synchronisation.
 
-Behaviour worth keeping in mind when reading these loops — all of it inherited,
-none of it introduced here:
+Behaviour worth keeping in mind when reading these loops:
 
 * **AMP is silently disabled whenever a SupCon loss is passed** (``use_amp =
   (supcon is None) and (scaler is not None)``), so Stage 1 Phase 3 and all of
@@ -95,6 +73,17 @@ def train_one_epoch(
     total_ep: int = 100,
     tracker: ExperimentTracker | None = None,
 ) -> tuple[float, float]:
+    """Run one AdamW training epoch (Stage 1 or Stage 2).
+
+    Combines the main classification loss with the per-branch auxiliary
+    loss, and optionally SupCon/ProtoNCE contrastive terms; supports mixup
+    and gradient accumulation. See the module docstring for cross-cutting
+    behaviour (AMP-disable-under-SupCon, non-finite-loss skip, EMA update
+    cadence).
+
+    Returns:
+        ``(mean_loss, mean_accuracy)`` over the epoch.
+    """
     model.train()
     total_loss = total_acc = 0.0
     optimizer.zero_grad(set_to_none=True)
@@ -105,7 +94,7 @@ def train_one_epoch(
     if model._use_arcface and use_mixup:
         raise ValueError("Mixup cannot be used with ArcFace.")
 
-    # ── §4.2 diagnostics: off entirely without a tracker ──────────────
+    # Diagnostics are off entirely without a tracker.
     want_diag = tracker is not None
     want_grad_norms = want_diag and bool(
         getattr(getattr(cfg, "tracking", None), "log_grad_norms", False)
@@ -181,7 +170,7 @@ def train_one_epoch(
             if use_amp:
                 scaler.unscale_(optimizer)  # type: ignore[union-attr]
             # Sampled after unscale_ and before the clip, so the norms are the
-            # true pre-clip ones (§4.2).
+            # true pre-clip ones.
             if want_grad_norms:
                 _accumulate(diag_grad, branch_grad_norm_tensors(model))
                 n_clip += 1
@@ -224,11 +213,23 @@ def train_one_epoch_sam(
     current_ep: int = 0,
     tracker: ExperimentTracker | None = None,
 ) -> tuple[float, float]:
+    """Run one Sharpness-Aware Minimisation training epoch (Stage 3).
+
+    Each batch runs SAM's two-step contract: an ascent step to the local
+    worst case (:meth:`SAM.first_step`), then a descent step from the
+    original weights using the gradient computed there
+    (:meth:`SAM.second_step`). SAM is not compatible with AMP, so this loop
+    always runs in fp32.
+
+    Returns:
+        ``(mean_loss, mean_accuracy)`` over the epoch, computed from the
+        first (ascent) step's forward pass.
+    """
     torch.set_default_dtype(torch.float32)
     model.train()
     total_loss = total_acc = 0.0
 
-    # ── §4.2 diagnostics: off entirely without a tracker ──────────────
+    # Diagnostics are off entirely without a tracker.
     want_diag = tracker is not None
     want_grad_norms = want_diag and bool(
         getattr(getattr(cfg, "tracking", None), "log_grad_norms", False)
@@ -266,7 +267,7 @@ def train_one_epoch_sam(
 
         loss.backward()
         # Pre-clip, and on the ascent step: these are the gradients SAM uses to
-        # find the adversarial weight perturbation (§4.2).
+        # find the adversarial weight perturbation.
         if want_grad_norms:
             _accumulate(diag_grad, branch_grad_norm_tensors(model))
             n_clip += 1
@@ -300,7 +301,7 @@ def train_one_epoch_sam(
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  §4.2 diagnostic accumulation helpers
+#  Diagnostic accumulation helpers
 # ══════════════════════════════════════════════════════════════════════
 
 

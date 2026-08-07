@@ -4,11 +4,9 @@
 #
 #  Reproduces the run that produced outputs/output_v12_spa40/ (Macro F1
 #  0.8745 / Acc 0.8745 on the held-out test split, per stage3_meta.json).
-#  Every value below is transcribed verbatim from the pre-refactor CONFIG
-#  dict (hsi_training.py lines 34-143 @ baseline SHA 886560f); see
-#  docs/config_rename_table.md for the complete key mapping.
+#  See docs/config_rename_table.md for the full config field reference.
 #
-#  Usage:  python train.py                              # (Phase 4)
+#  Usage:  python train.py
 #          python train.py stage1.max_lr=1e-4           # single override
 #          python train.py -m stage1.max_lr=1e-4,5.0e-4 # sweep
 # ══════════════════════════════════════════════════════════════════════
@@ -23,35 +21,32 @@ defaults:
   - _self_
 
 # ── Run identity & output location ────────────────────────────────────
-# REFACTOR_PLAN.md §4.3: replaces CONFIG["output_dir"]'s hardcoded absolute
-# path. Resolves to outputs/output_v12_spa40 — the Phase 1 relocation target
-# of HSI_modality_training/output_v12_SPA40, so auto-resume finds the three
-# existing stage checkpoints unchanged (§3.5).
+# Resolves to outputs/output_v12_spa40, so auto-resume finds the three
+# existing stage checkpoints.
 run_name: output_v12_spa40
 output_root: outputs
 output_dir: ${output_root}/${run_name}
 
-# ── Shared training knobs (CONFIG lines 123-125) ──────────────────────
+# ── Shared training knobs ──────────────────────────────────────────────
 weight_decay: 2.0e-4
 grad_clip: 1.0
 ema_decay: 0.999
 
-# ── Test-time augmentation (CONFIG lines 128-129) ─────────────────────
+# ── Test-time augmentation ─────────────────────────────────────────────
 tta_spatial: 8
 tta_spectral: 4
 
-# ── Reproducibility & placement (CONFIG lines 141-142) ────────────────
-# "auto" picks the fastest local accelerator: Metal (MPS) → CUDA → CPU. The
-# baseline only knew cuda-or-cpu and so idled the GPU on Apple Silicon; see
+# ── Reproducibility & placement ────────────────────────────────────────
+# "auto" picks the fastest local accelerator: Metal (MPS) → CUDA → CPU. See
 # utils/device.py for the full note. Override with device=cuda / cpu / mps.
 device: auto
 seed: 42
 
-# ── Hydra runtime (REFACTOR_PLAN.md §4.3) ─────────────────────────────
+# ── Hydra runtime ───────────────────────────────────────────────────────
 # `chdir: false` keeps the process CWD where the user launched it, which is what
-# makes data.patches_data's `./dataset/...` relative path mean the same thing it
-# meant pre-refactor. With Hydra's 1.1-compatible default (`chdir: true`) the CWD
-# would move into the run directory and every relative path would break.
+# makes data.patches_data's `./dataset/...` relative path resolve correctly.
+# With Hydra's 1.1-compatible default (`chdir: true`) the CWD would move into
+# the run directory and every relative path would break.
 #
 # Hydra's own per-run artifacts (the resolved config snapshot, job log) are
 # parked under the experiment's own output_dir rather than the default

@@ -1,28 +1,16 @@
 """The patch dataset and its phase-aware augmentation profiles.
 
-Relocated from ``HSI_modality_training/hsi_training.py`` @ ``886560f``:
+Patches and labels come from an injected
+:class:`~spectralquadnet.data.mmap_store.DataStore` rather than module
+globals, and augmentation parameters (``max_cutout_bands``, ``noise_std``)
+come from an injected ``data_cfg``.
 
-=============================  ==============
-Symbol                         Baseline lines
-=============================  ==============
-:class:`RiceSeedDataset`       253-356
-=============================  ==============
-
-Three declared deviations, all mechanical (REFACTOR_PLAN.md §5 Phase 2 —
-"verbatim function bodies; only ``CONFIG`` dict access becomes config-object
-field access"):
-
-* ``_GPU_PATCHES`` / ``_GLOBAL_LABELS`` globals → the injected
-  :class:`~spectralquadnet.data.mmap_store.DataStore`.
-* ``CONFIG["max_cutout_bands"]`` / ``CONFIG["noise_std"]`` → ``data_cfg`` fields,
-  read once in ``__init__`` and cached on ``self``.
-* ``CONFIG["device"]`` → the injected ``device``.
-
-The augmentation call order in ``__getitem__`` is unchanged. It consumes the
-global torch RNG stream via ``torch.rand``/``torch.randint``/``torch.randn_like``,
-so reordering the five ``if torch.rand(1) < p[...]`` guards — even when the
-augmentation itself is a no-op — would change every subsequent draw
-(REFACTOR_PLAN.md §3.6).
+The augmentation call order in ``__getitem__`` is significant: it consumes
+the global torch RNG stream via
+``torch.rand``/``torch.randint``/``torch.randn_like``, so reordering the five
+``if torch.rand(1) < p[...]`` guards — even when the augmentation itself is a
+no-op — would change every subsequent draw and break run-to-run
+reproducibility at a fixed seed.
 """
 
 from __future__ import annotations
@@ -41,13 +29,17 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from spectralquadnet.data.mmap_store import DataStore
 
 
-# `Dataset[tuple[Tensor, Tensor]]` would be the better base, but parameterising a
-# base class is the one typing change the AST no-op-move check does not erase
-# (§3.2.1) — see the same note in `samplers.py`.
+# `Dataset[tuple[Tensor, Tensor]]` would be the more precise base, but
+# subscripting a generic base class here trips `mypy --strict` on this torch
+# version — see the same note in `samplers.py`.
 class RiceSeedDataset(Dataset):  # type: ignore[type-arg]
-    """
-    Hyperspectral Rice Seed Dataset with centrally controlled
-    phase-aware spectral + spatial augmentation.
+    """Hyperspectral rice seed dataset with centrally controlled phase-aware augmentation.
+
+    ``aug_strength`` selects one of five named profiles (``heavy``,
+    ``medium``, ``very_light``, ``light``, ``none``), each a dict of
+    per-augmentation trigger probabilities; the training curriculum in
+    ``engine/stages/stage1_progressive.py`` steps through them as training
+    progresses.
     """
 
     _PROFILES = {
@@ -97,8 +89,8 @@ class RiceSeedDataset(Dataset):  # type: ignore[type-arg]
         max_cut = max(1, self.max_cutout_bands)
         cut = torch.randint(1, max_cut + 1, (1,)).item()
         # `Tensor.item()` is typed `int | float | bool`; an integer-dtype `randint`
-        # only ever yields an int here. Narrowing it with a `cast`/`int()` would add
-        # an AST node to a relocated body (§3.2.1) for no runtime gain.
+        # only ever yields an int here, so the `type: ignore` is preferred over a
+        # `cast`/`int()` wrapper that would add a runtime no-op just to satisfy mypy.
         start = torch.randint(0, max(1, C - cut), (1,)).item()  # type: ignore[arg-type]
         x[start : start + cut] = 0.0
         return x
@@ -142,10 +134,16 @@ class RiceSeedDataset(Dataset):  # type: ignore[type-arg]
         return torch.rot90(x, k, [1, 2])  # type: ignore[arg-type]  # `.item()` — see `_band_cutout`
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """Load one patch off the mmap and apply the dataset's augmentation profile.
+
+        Each of the five augmentations is independently triggered by its own
+        probability in ``self.profile`` (a Bernoulli draw per augmentation,
+        not a single categorical choice), so multiple can stack on one sample.
+        """
         ri = self.indices[idx]
 
-        # §3.4: np.array(...) copies exactly one patch off the mmap. Do not
-        # replace with a slice or a batched copy — that is what bounds RAM.
+        # np.array(...) copies exactly one patch off the mmap. Do not replace
+        # with a slice or a batched copy — that is what bounds RAM.
         patch_np = np.array(self.patches[ri])
         patch = torch.from_numpy(patch_np).to(self.device, non_blocking=True)
         label = torch.tensor(int(self.labels[ri]), dtype=torch.long, device=self.device)

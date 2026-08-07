@@ -1,14 +1,5 @@
 """Classification heads — sub-centre ArcFace and the per-branch auxiliary head.
 
-Relocated verbatim from ``HSI_modality_training/hsi_training.py`` @ ``886560f``:
-
-=========================================  ==============
-Symbol                                     Baseline lines
-=========================================  ==============
-:class:`AdaptiveSubcenterArcFaceHead`      617-678
-:class:`AuxiliaryHead`                     1310-1326
-=========================================  ==============
-
 ``AdaptiveSubcenterArcFaceHead`` owns a ``margins`` buffer of shape
 ``(num_classes,)`` — it is part of ``state_dict()`` and appears in the trained
 checkpoints as ``arcface_head.margins``.
@@ -24,10 +15,24 @@ import torch.nn.functional as F
 
 
 class AdaptiveSubcenterArcFaceHead(nn.Module):
+    """Sub-centre ArcFace margin head with per-class, F1-adaptive angular margins.
+
+    Each class owns ``K`` sub-centre weight vectors; the logit for a class is
+    the *max* cosine similarity across its sub-centres, which lets a class
+    with several visually distinct sub-populations (e.g. lighting or angle
+    variants of the same seed variety) be represented by more than one
+    prototype. The additive angular margin ``m`` is per-class rather than
+    global, and is periodically recalibrated from validation F1 via
+    :meth:`update_margins_from_f1` — harder classes get a larger margin.
+
+    Shape:
+        Input embedding ``x``: ``(B, in_dim)``. Output logits: ``(B, num_classes)``.
+    """
+
     #: Declares the `register_buffer` below for the type checker. `nn.Module`'s
     #: `__getattr__` is typed `Tensor | Module`, so without this every use of
     #: `self.margins` reads as possibly-a-Module. A bare annotation creates no
-    #: attribute and is erased by the AST no-op-move check (§3.2.1).
+    #: attribute at runtime.
     margins: torch.Tensor
 
     def __init__(
@@ -50,6 +55,16 @@ class AdaptiveSubcenterArcFaceHead(nn.Module):
         self.register_buffer("margins", torch.full((num_classes,), m_base))
 
     def update_margins_from_f1(self, class_f1: dict[int, float]) -> None:
+        """Recalibrate each class's margin inversely to its validation F1.
+
+        A class at F1=1.0 keeps ``m_base``; a class at F1=0.0 gets the full
+        ``m_base + m_delta``, so the harder a class is currently found to be,
+        the larger its angular margin — pushing its decision boundary wider.
+
+        Args:
+            class_f1: Per-class validation F1, keyed by class index. Classes
+                absent from the dict keep their current margin.
+        """
         for c, f1 in class_f1.items():
             self.margins[c] = self.m_base + self.m_delta * (1.0 - min(float(f1), 1.0))
         print(
@@ -63,6 +78,20 @@ class AdaptiveSubcenterArcFaceHead(nn.Module):
         labels: torch.Tensor | None = None,
         global_m: float | None = None,
     ) -> torch.Tensor:
+        """Compute ArcFace logits: plain scaled cosine at inference, additive angular margin at train time.
+
+        Args:
+            x: L2-normalisable embedding, shape ``(B, in_dim)``.
+            labels: Ground-truth class indices, shape ``(B,)``. Required to
+                apply the margin; ignored (and the margin skipped) if ``None``
+                or if the module is not in training mode.
+            global_m: If given, overrides the per-class ``margins`` buffer
+                with a single scalar margin for every sample (used for
+                margin warm-up schedules).
+
+        Returns:
+            Logits scaled by ``self.s``, shape ``(B, num_classes)``.
+        """
         x_n = F.normalize(x, dim=1)
         w_n = F.normalize(self.weight, dim=1)
         cosine = (
@@ -88,6 +117,17 @@ class AdaptiveSubcenterArcFaceHead(nn.Module):
         return ((oh * phi.unsqueeze(1)) + ((1 - oh) * cosine)) * self.s
 
     def init_from_linear(self, linear_w: torch.Tensor) -> None:
+        """Bootstrap the ``K`` sub-centre weights per class from a trained linear head.
+
+        Each of the ``K`` sub-centres is initialised to the linear head's
+        weight vector for that class plus increasing noise (``noise_std =
+        0.01 * k``), so sub-centres start near a known-good decision boundary
+        instead of from scratch, but are not identical to each other.
+
+        Args:
+            linear_w: Weight matrix of the Stage-1 linear head, shape
+                ``(num_classes, in_dim)``.
+        """
         with torch.no_grad():
             wn = F.normalize(linear_w, dim=1)
             for k in range(self.K):
@@ -97,6 +137,12 @@ class AdaptiveSubcenterArcFaceHead(nn.Module):
 
 
 class AuxiliaryHead(nn.Module):
+    """Small MLP classifier attached to a single branch for deep supervision.
+
+    Used only during Stage-1 training so each branch is individually
+    discriminative before cross-modal fusion; not called during inference.
+    """
+
     def __init__(self, in_dim: int, hidden_dim: int, num_classes: int) -> None:
         super().__init__()
         self.net = nn.Sequential(

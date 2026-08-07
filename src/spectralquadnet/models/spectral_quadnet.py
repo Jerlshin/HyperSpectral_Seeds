@@ -1,40 +1,22 @@
 """The assembled four-branch network.
 
-Relocated from ``HSI_modality_training/hsi_training.py`` @ ``886560f``:
+Composes the four modality branches (spectral profile, spectral stats,
+spatial CNN, SpecFormer), shared spectral attention, cross-modal fusion,
+per-branch auxiliary heads, and the two classification heads (a plain
+linear head for Stage 1, a Sub-centre ArcFace head for Stage 2+) into a
+single ``nn.Module``.
 
-===============================  ==============
-Symbol                           Baseline lines
-===============================  ==============
-:class:`SpectralQuadNet`         1429-1631
-===============================  ==============
+Invariants:
+    Attribute names are part of the checkpoint schema. ``self.se``,
+    ``self.wl_pe_cnn``, ``self.branch_{a,b,c,d}``, ``self.cross_interaction``,
+    ``self.aux_head_{a,b,c,d}``, ``self.embed_net``, ``self.linear_head`` and
+    ``self.arcface_head`` are the top-level keys of every trained checkpoint;
+    renaming any of them breaks ``load_state_dict(strict=True)``.
 
-Every method except ``__init__`` is byte-identical to the baseline — including
-``forward``, the numerics-critical path — as verified by
-``scripts/check_ast_no_op_move.py`` (REFACTOR_PLAN.md §3.2.1).
-
-``__init__`` carries the migration's only two declared deviations, both required
-and both enumerated in the AST checker's ``DECLARED_DEVIATIONS`` table:
-
-1. **``_PHYSICAL_WL`` global → ``physical_wl`` parameter.** The baseline read a
-   module-level global populated by ``_load_wavelengths_to_gpu``; that global is
-   now :class:`~spectralquadnet.data.mmap_store.DataStore.wavelengths` and is
-   injected explicitly (REFACTOR_PLAN.md §3.4).
-2. **``cfg["key"]`` / ``cfg.get("key", default)`` → ``cfg.<group>.<key>``.** The
-   flat ``CONFIG`` dict is now the composed, grouped Hydra config. Note that the
-   ``.get(..., default)`` fallbacks disappear on purpose: the structured schema
-   makes every key mandatory, so a missing key now fails at config-composition
-   time instead of silently substituting a default that may differ from the YAML
-   (REFACTOR_PLAN.md §6 — "values are not re-defaulted").
-
-**Attribute names are sacred** (REFACTOR_PLAN.md §3.1). ``self.se``,
-``self.wl_pe_cnn``, ``self.branch_{a,b,c,d}``, ``self.cross_interaction``,
-``self.aux_head_{a,b,c,d}``, ``self.embed_net``, ``self.linear_head`` and
-``self.arcface_head`` are the top-level keys of all three trained checkpoints;
-renaming any of them breaks ``load_state_dict(strict=True)``.
-
-**Construction order is sacred** (REFACTOR_PLAN.md §3.6). Each sub-module's
-``_init_weights`` draws from the same global torch RNG stream, so the order in
-which they are constructed below determines the initial weights. Do not reorder.
+    Construction order is significant. Each sub-module's ``_init_weights``
+    draws from the same global torch RNG stream, so the order in which
+    sub-modules are constructed in ``__init__`` determines the initial
+    weights. Do not reorder.
 """
 
 from __future__ import annotations
@@ -161,11 +143,20 @@ class SpectralQuadNet(nn.Module):
         cfg: ExperimentConfig | Any,
         physical_wl: torch.Tensor,
     ) -> SpectralQuadNet:
-        """Build the network exactly as the baseline ``main()`` did (lines 2726-2732).
+        """Build the network from a composed experiment config.
 
         Kept as the single canonical construction path so the Stage-1 dropout
         value, band count and class count cannot drift between ``train.py``, the
         regression tests and any future evaluation entrypoint.
+
+        Args:
+            cfg: Composed experiment config (``ExperimentConfig`` or an
+                equivalent Hydra ``DictConfig``).
+            physical_wl: Min-max normalised wavelength vector of shape
+                ``(num_bands,)``.
+
+        Returns:
+            A freshly initialised ``SpectralQuadNet``.
         """
         return cls(
             cfg=cfg,

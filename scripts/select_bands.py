@@ -2,11 +2,11 @@
 """Reduce the 256-band cube to the SPA/mRMR-selected band subset.
 
 Thin CLI wrapper around
-:func:`spectralquadnet.data.prep.band_selection.select_bands` —
-REFACTOR_PLAN.md §2.1, replacing the root ``band_selection.py`` script. The
-pipeline itself (decorrelation pre-filter → mRMR → SPA → cross-validated elbow →
-save) is unchanged; this file only parses arguments into a
-:class:`~spectralquadnet.data.prep.config.BandSelectionConfig`.
+:func:`spectralquadnet.data.prep.band_selection.select_bands` — this file
+only parses arguments into a
+:class:`~spectralquadnet.data.prep.config.BandSelectionConfig`; the pipeline
+itself (decorrelation pre-filter → mRMR → SPA → cross-validated elbow → save)
+lives in that module.
 
 Requires the ``prep`` extra::
 
@@ -18,8 +18,7 @@ Usage
     python scripts/select_bands.py --n-candidates 5 10 20 40
     python scripts/select_bands.py --patches-path ./dataset/patches.npy --seed 0
 
-This is what produced ``dataset/patches_spa_40b.npy`` and
-``dataset/wavelengths_spa_40b.csv``, the two files
+Produces the reduced patch array and wavelength CSV that
 ``configs/data/spa40_90class.yaml`` points at.
 """
 

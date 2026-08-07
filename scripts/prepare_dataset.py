@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Build ``dataset/patches.npy`` + ``dataset/labels.npy`` from the Zenodo archive.
 
-Thin CLI wrapper around :mod:`spectralquadnet.data.prep` — REFACTOR_PLAN.md §2.1,
-replacing the root ``data_setup_v3.py`` script. All the work lives in the package
-(``download`` → ``build_patch_dataset``); this file only parses arguments and
-assembles a :class:`~spectralquadnet.data.prep.config.PrepConfig`, matching the
-pattern ``train.py`` uses for training.
+Thin CLI wrapper around :mod:`spectralquadnet.data.prep`. All the work lives
+in the package (``download`` → ``build_patch_dataset``); this file only
+parses arguments and assembles a
+:class:`~spectralquadnet.data.prep.config.PrepConfig`, matching the pattern
+``train.py`` uses for training.
 
 Requires the ``prep`` extra (ENVI reading, OpenCV, scikit-image)::
 
@@ -68,8 +68,7 @@ def main(argv: list[str] | None = None) -> None:
         cfg.ensure_root()
         download(cfg)
         return
-    # `build_patch_dataset` calls `download` itself, exactly as the baseline's
-    # `main()` did (data_setup_v3.py line 152).
+    # `build_patch_dataset` calls `download` itself.
     build_patch_dataset(cfg)
 
 

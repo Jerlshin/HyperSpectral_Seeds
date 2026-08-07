@@ -1,18 +1,4 @@
-"""Dataset acquisition.
-
-Relocated from ``data_setup_v3.py`` @ ``886560f``:
-
-=====================  ==============
-Symbol                 Baseline lines
-=====================  ==============
-:func:`download`       47-67
-``DATA_URL``           30-33  (now :data:`spectralquadnet.data.prep.config.DATA_URL`)
-=====================  ==============
-
-Declared deviation: the baseline read the module-level ``ZIP_FILE``/``DATA_URL``
-globals; both now arrive via :class:`~spectralquadnet.data.prep.config.PrepConfig`.
-The ``curl`` invocation — including ``-C -`` for resumable downloads — is verbatim.
-"""
+"""Dataset acquisition."""
 
 from __future__ import annotations
 
@@ -22,6 +8,11 @@ from spectralquadnet.data.prep.config import PrepConfig
 
 
 def download(cfg: PrepConfig | None = None) -> None:
+    """Download the dataset zip via resumable ``curl``, skipping if it already exists.
+
+    Raises:
+        RuntimeError: The ``curl`` invocation exited non-zero.
+    """
     cfg = cfg or PrepConfig()
     cfg.ensure_root()
     zip_file = cfg.zip_file
@@ -44,7 +35,7 @@ def download(cfg: PrepConfig | None = None) -> None:
         cfg.data_url,
     ]
 
-    if subprocess.run(cmd).returncode != 0:  # noqa: PLW1510 - verbatim from baseline
+    if subprocess.run(cmd).returncode != 0:  # noqa: PLW1510 - `check=True` would raise CalledProcessError instead of this message
         raise RuntimeError("Download failed.")
 
     print("Download complete.")

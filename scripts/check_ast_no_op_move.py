@@ -1,38 +1,40 @@
 #!/usr/bin/env python
-"""AST-level "no-op move" diff — REFACTOR_PLAN.md §3.2.1.
+"""AST-level "no-op move" diff against a pinned reference implementation.
 
-Proves that every symbol relocated in Phase 2 is a *mechanical* move: it extracts
-each class/function from the pre-refactor ``hsi_training.py`` / ``band_selection.py``
-/ ``data_setup_v3.py`` (via ``git show <baseline-sha>``) and from its new file,
+Proves that each of these classes/functions is numerically equivalent to a
+pinned historical reference: it extracts each class/function from the
+reference implementation (via ``git show <baseline-sha>``, see
+:mod:`_baseline`) and from its current location in ``src/spectralquadnet``,
 normalises both ASTs, and compares ``ast.dump(node, annotate_fields=False)``.
 
-Granularity is **per method**, not per class: relocating ``SpectralQuadNet`` is
-only interesting if ``forward`` — the numerics-critical path — comes through
+Granularity is **per method**, not per class: for ``SpectralQuadNet``, what
+matters is that ``forward`` — the numerics-critical path — comes through
 untouched, and a whole-class comparison would hide that behind ``__init__``'s
 unavoidable config rewiring.
 
 Verdicts
 ────────
 ``IDENTICAL``  normalised ASTs match exactly. This is the expected result for
-               the overwhelming majority of relocated code.
+               the overwhelming majority of compared code.
 ``DECLARED``   the symbol appears in :data:`DECLARED_DEVIATIONS` with a written
                reason, and its full diff is printed for review. Every entry is a
-               ``CONFIG``-access or global-injection rewrite that the migration
-               plan explicitly sanctions (§5 Phase 2).
-``NEW``        exists only post-refactor (e.g. ``SpectralQuadNet.from_config``).
+               config-access or dependency-injection rewrite, never a change to
+               the underlying numerics.
+``NEW``        exists only in the current codebase (e.g. ``SpectralQuadNet.from_config``).
                Reported, never failed — new code is not a relocation.
 ``DRIFT``      changed without a declaration. **Fails the check.**
 
 Normalisations applied (each provably numerics-inert)
 ─────────────────────────────────────────────────────
-1. **Docstrings erased.** Documentation was deliberately expanded during the move
-   (every new module gains a baseline line-range table).
+1. **Docstrings erased.** Documentation is free to differ between the
+   reference implementation and the current one without registering as drift.
 2. **Annotations erased** — parameter, return and ``AnnAssign`` annotations.
-   Both the baseline and every new module carry ``from __future__ import
-   annotations``, so under PEP 563 annotations are unevaluated strings that
-   cannot affect runtime behaviour. This is what lets the migration modernise
-   ``Optional[str]`` → ``str | None`` and ``Dict`` → ``dict`` without weakening
-   the check. Parameter *names*, *order* and *default values* are still compared.
+   Both the reference file and the current module carry ``from __future__
+   import annotations``, so under PEP 563 annotations are unevaluated
+   strings that cannot affect runtime behaviour, which is what lets type
+   hints be modernised (``Optional[str]`` → ``str | None`` and ``Dict`` →
+   ``dict``) without weakening the check. Parameter *names*, *order* and
+   *default values* are still compared.
 3. **Position attributes ignored** (``ast.dump`` default).
 
 Usage
@@ -59,7 +61,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC = REPO_ROOT / "src" / "spectralquadnet"
 
 # ══════════════════════════════════════════════════════════════════════
-#  Relocation map — baseline file → symbol → new module (REFACTOR_PLAN.md §2.1)
+#  Relocation map — reference file → symbol → current module
 # ══════════════════════════════════════════════════════════════════════
 
 RELOCATIONS: dict[str, dict[str, str]] = {
@@ -136,8 +138,7 @@ RELOCATIONS: dict[str, dict[str, str]] = {
         "run_stage3_swa": "engine/stages/stage3_sam_swa.py",
         "final_evaluation": "engine/stages/final_eval.py",
         # ── utils/ ─────────────────────────────────────────────────────
-        # §2.1 rows pulled forward from Phase 4: the Phase 2 gate's golden
-        # capture cannot run without `set_seed`.
+        # The golden capture in capture_golden.py needs `set_seed`.
         "set_seed": "utils/seed.py",
     },
     "data_setup_v3": {
@@ -162,7 +163,7 @@ RELOCATIONS: dict[str, dict[str, str]] = {
     },
 }
 
-# Symbols renamed during the move (baseline name → new name).
+# Symbols renamed relative to the reference implementation (old name → new name).
 RENAMES: dict[tuple[str, str], str] = {
     ("data_setup_v3", "main"): "build_patch_dataset",
     ("band_selection", "main"): "select_bands",

@@ -1,27 +1,11 @@
 """Train/val/test splits and DataLoader construction.
 
-Relocated from ``HSI_modality_training/hsi_training.py`` @ ``886560f``:
-
-=================================  ==============
-Symbol                             Baseline lines
-=================================  ==============
-:func:`build_splits`               1674-1679
-:func:`build_loaders`              1682-1708
-:func:`build_phase3_loader`        1711-1743
-=================================  ==============
-
-Declared deviations, all mechanical:
-
-* ``CONFIG[...]`` → ``cfg.<group>.<field>``.
-* ``_GLOBAL_LABELS`` → ``store.require_labels()``.
-* ``RiceSeedDataset(...)`` now receives ``store``/``data_cfg``/``device``
-  explicitly instead of reading module globals.
-
-The ``random_state=42`` values in :func:`build_splits` are **hardcoded in the
-baseline** and are deliberately *not* promoted to ``cfg.seed``: the three trained
-checkpoints were validated against the split those literals produce, so changing
-them — even to an identical value — would risk silently re-partitioning the data
-if ``cfg.seed`` were ever overridden. See REFACTOR_PLAN.md §6.
+The ``random_state=42`` values in :func:`build_splits` are deliberately
+hardcoded rather than sourced from ``cfg.seed``: trained checkpoints are
+validated against the exact split those literals produce, so tying the split
+to the run seed would risk silently re-partitioning the data whenever
+``cfg.seed`` is overridden for an unrelated reason (e.g. varying model
+initialisation across runs).
 """
 
 from __future__ import annotations
@@ -46,6 +30,12 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 def build_splits(
     cfg: ExperimentConfig | Any,
 ) -> tuple[npt.NDArray[Any], npt.NDArray[Any], npt.NDArray[Any], npt.NDArray[Any]]:
+    """Stratified 70/15/15 train/val/test split at a fixed random state.
+
+    Returns:
+        ``(labels, train_idx, val_idx, test_idx)`` — the full label array and
+        three disjoint index arrays into it.
+    """
     labels = np.load(cfg.data.labels_path)
     indices = np.arange(len(labels))
     tr, tmp = train_test_split(indices, test_size=0.3, stratify=labels, random_state=42)
@@ -66,6 +56,28 @@ def build_loaders(
     train_aug: str = "none",
     class_weights: dict[int, float] | None = None,
 ) -> tuple[DataLoader[Any], DataLoader[Any], DataLoader[Any]]:
+    """Build train/val/test loaders sharing one ``DataStore``/config/device.
+
+    The train loader uses a :class:`~spectralquadnet.data.samplers.ClassBalancedBatchSampler`
+    when ``balanced=True``, otherwise plain shuffled batching; val/test are
+    always shuffled=False at a fixed batch size of 256.
+
+    Args:
+        cfg: Composed experiment config.
+        store: Memory-mapped patch store shared by all three datasets.
+        device: Device patches are moved to on ``__getitem__``.
+        train_idx: Indices for the training split.
+        val_idx: Indices for the validation split.
+        test_idx: Indices for the test split.
+        batch_train: Batch size for the (non-balanced) train loader.
+        balanced: Whether to use class-balanced batch sampling for training.
+        all_labels: Full label array, required when ``balanced=True``.
+        train_aug: Augmentation profile name for the training dataset.
+        class_weights: Optional per-class weights for the balanced sampler.
+
+    Returns:
+        ``(train_loader, val_loader, test_loader)``.
+    """
     # Annotated rather than inferred: the inferred value type is the union of the
     # three entries, which cannot be checked against `RiceSeedDataset`'s distinct
     # keyword types when unpacked with `**`.
@@ -99,12 +111,23 @@ def build_phase3_loader(
     train_ds: Dataset[Any],
     class_f1: dict[int, float],
 ) -> DataLoader[Any]:
-    """
-    Build the Phase-3 DataLoader with hard-class oversampling.
+    """Build the Phase-3 DataLoader with hard-class oversampling.
 
-    Uses HardClassOversampledSampler to give hard classes (low F1 from
-    Phase 2) higher sampling probability.  Falls back to standard
-    shuffled loader if oversampling is disabled in CONFIG.
+    Uses :class:`~spectralquadnet.data.samplers.HardClassOversampledSampler`
+    to give hard classes (low F1 from Phase 2) higher sampling probability.
+    Falls back to a standard shuffled loader if oversampling is disabled in
+    config, or if no per-class F1 was supplied.
+
+    Args:
+        cfg: Composed experiment config.
+        store: Memory-mapped patch store, used to read training labels.
+        train_ds: Phase-3 training dataset; must expose ``.indices`` (as
+            :class:`~spectralquadnet.data.datasets.RiceSeedDataset` does).
+        class_f1: Per-class F1 from the Phase 2 -> 3 boundary evaluation,
+            driving the oversampling weights.
+
+    Returns:
+        DataLoader over ``train_ds``, oversampled or plain-shuffled.
     """
     if not cfg.stage1.p3_oversample or not class_f1:
         return DataLoader(
@@ -112,8 +135,9 @@ def build_phase3_loader(
         )
 
     labels = store.require_labels()
-    # `.indices` is `RiceSeedDataset`'s, but the parameter keeps the baseline's
-    # duck-typed `Dataset` so `DataLoader.dataset` can be handed straight in.
+    # `.indices` is `RiceSeedDataset`'s, not the generic `Dataset` protocol's;
+    # the parameter type stays the duck-typed `Dataset` so `DataLoader.dataset`
+    # can be handed straight in without a downcast.
     train_labels = np.array(
         [int(labels[train_ds.indices[i]]) for i in range(len(train_ds.indices))]  # type: ignore[attr-defined]
     )

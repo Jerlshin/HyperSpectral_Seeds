@@ -1,5 +1,4 @@
 # Stage 2 — sub-centre ArcFace + SGDR + SupCon/ProtoNCE + class-difficulty weighting.
-# Source: CONFIG["s2_*", "cdws_*", "supcon_*", "proto_*", "bal_*"] (monolith lines 89-112).
 defaults:
   - base_stage2
   - _self_

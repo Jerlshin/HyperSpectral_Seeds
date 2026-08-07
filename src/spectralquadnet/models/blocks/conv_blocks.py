@@ -1,19 +1,4 @@
-"""Residual convolution blocks (1-D spectral and 2-D spatial).
-
-Relocated verbatim from ``HSI_modality_training/hsi_training.py`` @ ``886560f``:
-
-===============================  ==============
-Symbol                           Baseline lines
-===============================  ==============
-:class:`ResBlock1D`              738-754
-:class:`ResBlock2D`              774-793
-:class:`LargeKernelBlock1D`      817-843
-===============================  ==============
-
-Bodies are byte-identical to the baseline; ``SEBlock1D`` is now imported from
-:mod:`spectralquadnet.models.blocks.attention` instead of being a module-level
-neighbour.
-"""
+"""Residual convolution blocks (1-D spectral and 2-D spatial)."""
 
 from __future__ import annotations
 
@@ -25,6 +10,8 @@ from spectralquadnet.models.blocks.attention import SEBlock1D
 
 
 class ResBlock1D(nn.Module):
+    """Two dilated 1-D convolutions with GroupNorm, SE gating and a residual skip."""
+
     def __init__(self, in_ch: int, out_ch: int, kernel: int = 7, dilation: int = 1) -> None:
         super().__init__()
         pad = (kernel - 1) * dilation // 2
@@ -44,6 +31,8 @@ class ResBlock1D(nn.Module):
 
 
 class ResBlock2D(nn.Module):
+    """Bottleneck (1x1 -> 3x3 -> 1x1) 2-D residual block with a projected skip."""
+
     def __init__(self, in_ch: int, out_ch: int, stride: int = 1) -> None:
         super().__init__()
         mid = max(out_ch // 2, in_ch)

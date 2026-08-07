@@ -1,29 +1,16 @@
 """Device resolution and accelerator-specific AMP settings.
 
-The pre-refactor ``CONFIG["device"]`` (baseline line 141) held a live
-``torch.device`` object built by
-``torch.device("cuda" if torch.cuda.is_available() else "cpu")``. YAML cannot
-carry one, so REFACTOR_PLAN.md §4.3 turns the key into a *strategy string* and
-puts the resolution here.
+``cfg.device`` is a *strategy string* (``"auto"``/``"cuda"``/``"cpu"``/``"mps"``)
+rather than a live ``torch.device``, since YAML cannot carry the latter;
+:func:`resolve_device` turns it into a concrete device.
 
-Declared deviation from the baseline — Apple Silicon support
-────────────────────────────────────────────────────────────
-``"auto"`` now prefers **Metal (MPS) → CUDA → CPU**, where the baseline only
-knew ``cuda``-or-``cpu``. On an Apple Silicon host the baseline expression fell
-through to ``cpu`` and left the GPU idle; this is a deliberate, requested
-capability change, not a mechanical relocation, and it is the one place the
-refactor changes which hardware a default run lands on. An explicit
-``device=cuda`` / ``device=cpu`` / ``device=mps`` is still never overridden, so
-reproducing the original CUDA lineage is a single override away.
+``"auto"`` prefers **Metal (MPS) → CUDA → CPU**, so a default run on Apple
+Silicon uses the GPU rather than falling through to CPU. An explicit
+``device=cuda`` / ``device=cpu`` / ``device=mps`` is never overridden.
 
-Nothing about *numerics* changes with the device beyond the usual
-accelerator-kernel differences; the regression gates in ``tests/regression/``
-pin their tolerances on CPU and are unaffected.
-
-The autocast **dtype** is deliberately left at torch's per-device default (fp16
-on both Metal and CUDA). Selecting bf16 on capable CUDA hardware would be a free
-stability win but would also change the numerics of the exact configuration the
-three trained checkpoints came from, which §6 puts out of scope.
+The autocast **dtype** is deliberately left at torch's per-device default
+(fp16 on both Metal and CUDA) rather than promoted to bf16 on capable CUDA
+hardware, to keep training numerics consistent across accelerators.
 """
 
 from __future__ import annotations

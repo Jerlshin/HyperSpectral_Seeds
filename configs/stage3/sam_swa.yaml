@@ -1,5 +1,4 @@
 # Stage 3 — Sharpness-Aware Minimisation + greedy SWA snapshotting.
-# Source: CONFIG["s3_*"] (monolith lines 115-120).
 defaults:
   - base_stage3
   - _self_

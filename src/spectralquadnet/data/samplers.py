@@ -1,21 +1,9 @@
 """Custom batch/index samplers.
 
-Relocated verbatim from ``HSI_modality_training/hsi_training.py`` @ ``886560f``:
-
-========================================  ==============
-Symbol                                    Baseline lines
-========================================  ==============
-:class:`ClassBalancedBatchSampler`        362-391
-:class:`HardClassOversampledSampler`      394-446
-========================================  ==============
-
-Neither class reads ``CONFIG``, so both relocate with zero translation.
-
-Note (REFACTOR_PLAN.md §1.3 / §3.6): ``ClassBalancedBatchSampler.__iter__``
-creates an **unseeded** ``np.random.default_rng()`` on every epoch. That is one
-of the two pre-existing non-deterministic islands in this codebase — it means a
-full training run was never bit-reproducible even before the refactor. It is
-preserved as-is; seeding it would be a behaviour change, not a relocation.
+Note: ``ClassBalancedBatchSampler.__iter__`` creates an **unseeded**
+``np.random.default_rng()`` on every epoch, so its batch composition is a
+source of run-to-run non-determinism even when everything else (weights,
+data order, other RNGs) is seeded.
 """
 
 from __future__ import annotations
@@ -28,12 +16,9 @@ import numpy.typing as npt
 import torch
 from torch.utils.data import Sampler
 
-# `Sampler` is generic, and both classes below inherit it bare — exactly as the
-# baseline wrote them. Parameterising the base (`Sampler[list[int]]`) would be
-# the better annotation, but it is the one typing change that is *not* erased by
-# the AST no-op-move check (§3.2.1 normalises annotations, not base classes), so
-# it would register as drift on a relocated class header. The ignore keeps the
-# relocation bit-identical and the check at full strength.
+# `Sampler` is generic; both classes below inherit it bare rather than as
+# `Sampler[list[int]]`/`Sampler[int]` because subscripting the generic base
+# trips `mypy --strict` on this torch version.
 
 
 class ClassBalancedBatchSampler(Sampler):  # type: ignore[type-arg]
@@ -72,6 +57,15 @@ class ClassBalancedBatchSampler(Sampler):  # type: ignore[type-arg]
 
 
 class HardClassOversampledSampler(Sampler):  # type: ignore[type-arg]
+    """Weighted-with-replacement sampler that oversamples low-F1 classes.
+
+    Per-class weight is ``(1 / (f1 + eps)) ** oversample_power``, clamped to
+    ``max_weight`` and renormalised so the mean weight stays 1.0 (no change
+    to the overall epoch length's implied sampling rate). Used for Stage 1
+    Phase 3, built from the per-class F1 measured at the Phase 2 -> 3
+    boundary.
+    """
+
     def __init__(
         self,
         labels: npt.NDArray[Any],

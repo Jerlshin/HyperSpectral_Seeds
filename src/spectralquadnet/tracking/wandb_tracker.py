@@ -1,4 +1,4 @@
-"""Weights & Biases backend (REFACTOR_PLAN.md §4.1).
+"""Weights & Biases backend.
 
 Selected via ``configs/tracking/wandb.yaml`` and requires the optional extra::
 
@@ -11,7 +11,7 @@ install does not declare.
 **The human channel is intentionally inert here.** Banners, ``[INFO]`` lines and
 epoch rows have no useful W&B representation — the numbers behind them already
 arrive through :meth:`log_scalars` as plottable series. Selecting this backend
-alone therefore gives a quiet terminal; to keep the pre-refactor console output
+alone therefore gives a quiet terminal; to keep a readable console output
 *and* stream to W&B, use the composite::
 
     python train.py tracking.backend=multi tracking.backends=[console,wandb]

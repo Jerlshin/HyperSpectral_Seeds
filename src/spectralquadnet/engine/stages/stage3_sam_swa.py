@@ -1,28 +1,8 @@
 """Stage 3 — Sharpness-Aware Minimisation with greedy SWA snapshotting.
 
-Relocated from ``HSI_modality_training/hsi_training.py`` @ ``886560f``:
-
-=====================================  ==============
-Symbol                                 Baseline lines
-=====================================  ==============
-:func:`run_stage3_swa`                 2508-2617
-=====================================  ==============
-
-Orchestration only; the single declared deviation is the mechanical
-``CONFIG[...]`` → ``cfg.stage3.*`` / ``cfg.stage2.dropout`` / ``cfg.weight_decay``
-rewrite, which also gives ``_wd_groups``, ``train_one_epoch_sam`` and
-``save_ckpt`` their leading ``cfg`` argument. The nested ``_s3_margin`` schedule
-stays nested — only ``phase_aware_lr`` was lifted into ``optim/schedulers.py``,
-per §2's tree.
-
-Three hardcoded baseline literals are preserved deliberately (§6 forbids
-promoting them to config as part of a mechanical move): ``FocalLoss(gamma=1.0)``,
-the SupCon/ProtoNCE weights ``0.02``/``0.01``, and the ``0.98`` greedy-acceptance
-factor.
-
-Phase 4 (REFACTOR_PLAN.md §4.1) replaced every ``print`` here one-for-one with a
-``tracker`` call; the snapshot accept/reject marker that used to be appended to
-the epoch line is now its own row cell. Observability-only.
+Orchestration only. ``FocalLoss(gamma=1.0)``, the SupCon/ProtoNCE weights
+0.02/0.01, and the 0.98 greedy-acceptance factor are fixed constants for
+this stage rather than config fields.
 
 The SWA average is *greedy*: a cycle-end snapshot only joins the running mean if
 its live F1 is within 2% of the best seen so far, otherwise it is rejected and
@@ -69,6 +49,32 @@ def run_stage3_swa(
     prev_best_f1: float,
     tracker: ExperimentTracker | None = None,
 ) -> float:
+    """Run Stage 3's SAM training with greedy SWA snapshotting and return the SWA validation F1.
+
+    Trains under SAM with cyclic LR restarts; at the end of every cycle, the
+    live weights are greedily averaged into a running SWA state if their F1
+    is within 2% of the best seen so far. After training, BatchNorm
+    statistics are re-estimated for the averaged weights, the SWA model is
+    evaluated, and its checkpoint is saved regardless of whether it beats
+    ``prev_best_f1`` (with a ``note`` recording that comparison).
+
+    Args:
+        cfg: Composed experiment config.
+        model: Model to train; switched onto the ArcFace head with branch
+            dropout disabled.
+        ema: EMA shadow; its state is overwritten with the final SWA weights
+            at the end of the stage (not used for live EMA averaging here).
+        train_ldr: Stage-3 training loader.
+        val_ldr: Validation loader for per-epoch evaluation.
+        device: Device to train on.
+        best_ckpt: Path to write the Stage-3 checkpoint to.
+        prev_best_f1: Stage 2's best validation F1, used only for the saved
+            ``note`` comparison — Stage 3 always saves its own checkpoint.
+        tracker: Experiment tracker for progress reporting; ``None`` logs nowhere.
+
+    Returns:
+        The SWA model's validation macro-F1.
+    """
     trk = tracker if tracker is not None else NullTracker()
     if hasattr(torch, "_dynamo"):
         torch._dynamo.disable()  # type: ignore[no-untyped-call]

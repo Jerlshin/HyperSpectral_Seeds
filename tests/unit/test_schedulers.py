@@ -1,28 +1,27 @@
-"""Scheduler bit-exactness — REFACTOR_PLAN.md §3.2.3.
+"""Scheduler bit-exactness against a pinned reference implementation.
 
-The cheapest and strongest of the three §3.2 techniques: these schedules are pure
-functions of primitives, so the relocated implementation can be called *side by
-side* with the pre-refactor one over the whole epoch range each is ever asked
-about, and compared with ``==`` rather than a tolerance.
+These schedules are pure functions of primitives, so the current
+implementation can be called *side by side* with the reference one over the
+whole epoch range each is ever asked about, and compared with ``==`` rather
+than a tolerance.
 
-This is what backs the plan's promise that "dynamic margin schedules … remain
-100% identical" (§3.2.3): every LR multiplier and every ArcFace margin the three
-stages will ever see is checked here, not sampled.
+Every LR multiplier and every ArcFace margin the three stages will ever see
+is checked here, not sampled.
 
 Coverage
 ────────
-==========================  ====================  ====================================
-Schedule                    Baseline location     Epoch range checked
-==========================  ====================  ====================================
-``arcface_margin``          lines 1797-1800       0-39 (warmup is 20) × 4 margin pairs
-``sgdr_scheduler._l``       lines 1779-1794       0-399 × 4 (warmup, T_0, T_mult) sets
-``phase_aware_lr``          lines 2218-2246       0-599 (``s1_epochs``) × 3 splits
-==========================  ====================  ====================================
+====================  ====================================
+Schedule              Epoch range checked
+====================  ====================================
+``arcface_margin``    0-39 (warmup is 20) × 4 margin pairs
+``sgdr_scheduler._l``  0-399 × 4 (warmup, T_0, T_mult) sets
+``phase_aware_lr``    0-599 (``s1_epochs``) × 3 splits
+====================  ====================================
 
-``phase_aware_lr`` is a closure inside ``run_stage1`` in the baseline, so it is
-recovered by compiling that one nested ``def`` with the free variables it reads
-(``CONFIG``, ``math``, ``p1_end``, ``p2_end``) bound in its namespace — the
-genuine pre-refactor code, not a transcription of it.
+``phase_aware_lr`` is a closure inside ``run_stage1`` in the reference
+implementation, so it is recovered by compiling that one nested ``def`` with
+the free variables it reads (``CONFIG``, ``math``, ``p1_end``, ``p2_end``)
+bound in its namespace — the genuine reference code, not a transcription of it.
 """
 
 from __future__ import annotations
@@ -42,7 +41,7 @@ pytestmark = pytest.mark.regression
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  Recovering a nested baseline closure
+#  Recovering a nested closure from the reference source
 # ══════════════════════════════════════════════════════════════════════
 
 
@@ -195,10 +194,9 @@ def test_phase_aware_lr_matches_baseline(baseline, baseline_src, cfg):
 def test_s3_margin_schedule_matches_baseline(baseline, baseline_src, cfg):
     """Stage 3's ArcFace margin schedule is identical for all 120 epochs.
 
-    ``_s3_margin`` stays a closure inside ``run_stage3_swa`` on both sides — only
-    ``phase_aware_lr`` was lifted out — so both are recovered from source. It is
-    included here because it is the second of the two "dynamic margin schedules"
-    §3.2.3 promises are unchanged, and because a ``cfg.stage3.epochs`` typo would
+    ``_s3_margin`` stays a closure inside ``run_stage3_swa`` on both sides —
+    only ``phase_aware_lr`` is a standalone function — so both are recovered
+    from source. Included here because a ``cfg.stage3.epochs`` typo would
     otherwise be invisible until a Stage 3 run diverged.
     """
     import inspect

@@ -1,46 +1,22 @@
-"""Branch-influence ablation, per-class difficulty and the §4.2 diagnostics.
-
-Relocated from ``HSI_modality_training/hsi_training.py`` @ ``886560f``:
-
-=====================================  ==============
-Symbol                                 Baseline lines
-=====================================  ==============
-:func:`compute_branch_influence`       1333-1364
-:func:`compute_class_difficulty`       2157-2183
-=====================================  ==============
-
-:func:`compute_branch_influence` relocates verbatim — it reads no ``CONFIG``.
-:func:`compute_class_difficulty` carries the mechanical
-``CONFIG["num_classes"]``/``["cdws_max_weight"]``/``["cdws_eps"]`` →
-``cfg.data.num_classes`` / ``cfg.stage2.cdws_*`` rewrite and so takes ``cfg``
-first.
+"""Branch-influence ablation, per-class difficulty and per-branch gradient diagnostics.
 
 :func:`compute_branch_influence` measures how much each branch matters by
 zeroing it (``branch_mask``) and taking the KL divergence of the ablated
-prediction from the full one, then normalising the four numbers to percentages.
-Note the cost: ``max_batches × 5`` forward passes, which is why every caller
-passes a small ``max_batches`` (3 from :func:`compute_class_difficulty`) and only
-calls it on a checkpoint improvement.
+prediction from the full one, then normalising the four numbers to
+percentages. Note the cost: ``max_batches x 5`` forward passes, which is why
+every caller passes a small ``max_batches`` (3 from
+:func:`compute_class_difficulty`) and only calls it on a checkpoint
+improvement.
 
-Phase 4 additions (REFACTOR_PLAN.md §4.2)
-─────────────────────────────────────────
-All three are **thin wrappers around values that already exist** — no new
-statistics, exactly as the plan requires:
+:func:`branch_grad_norms` and :func:`hardest_classes_report` are thin
+wrappers around values that already exist elsewhere (the total pre-clip norm
+``clip_grad_norm_`` returns, and the ``class_f1`` dict
+:func:`~spectralquadnet.engine.evaluate.evaluate_per_class` returns) — no new
+statistics are computed here.
 
-* :func:`branch_grad_norms` — the per-branch generalisation of the total
-  pre-clip norm that ``clip_grad_norm_`` already returns, using the same
-  ``n.startswith(...)`` prefix filtering ``_wd_groups`` uses.
-* :func:`hardest_classes_report` — sorts the ``class_f1`` dict
-  :func:`~spectralquadnet.engine.evaluate.evaluate_per_class` already returns
-  into a bottom-K table for ``tracker.log_table``.
-* :func:`compute_class_difficulty` now routes ``compute_branch_influence``'s
-  return value to ``tracker.log_scalars`` in addition to the line it already
-  emitted. The computation is untouched.
-
-The baseline's ``print`` in :func:`compute_class_difficulty` becomes
-``tracker.log_message``. ``tracker`` defaults to ``None`` and is coerced to
-:class:`~spectralquadnet.tracking.base.NullTracker`, so a caller that passes no
-tracker gets silence rather than a second, competing output path — an
+``tracker`` parameters default to ``None`` and are coerced to
+:class:`~spectralquadnet.tracking.base.NullTracker`, so a caller that passes
+no tracker gets silence rather than a second, competing output path — an
 observability sink with no backend attached should emit nothing.
 """
 
@@ -63,9 +39,9 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 #: Parameter-name prefixes the per-branch gradient norm is grouped by.
 #:
-#: These are ``SpectralQuadNet``'s own attribute names, i.e. the same strings
-#: ``build_optimizer_s2`` matches on (``n.startswith("arcface_head")``) and the
-#: same ones REFACTOR_PLAN.md §3.1 pins as checkpoint-critical.
+#: These are ``SpectralQuadNet``'s own attribute names, the same strings
+#: ``build_optimizer_s2`` matches on (``n.startswith("arcface_head")``) and
+#: the same ones that are part of the checkpoint's state_dict schema.
 BRANCH_PREFIXES: tuple[str, ...] = (
     "branch_a.",
     "branch_b.",
@@ -83,6 +59,24 @@ def compute_branch_influence(
     device: torch.device,
     max_batches: int = 5,
 ) -> dict[str, float]:
+    """Ablate each branch in turn and measure its influence via KL divergence.
+
+    For each of ``max_batches`` batches, computes the full four-branch
+    prediction once, then re-predicts with each branch individually zeroed
+    (``branch_mask``); the KL divergence of the ablated distribution from the
+    full one is that branch's raw influence score.
+
+    Args:
+        model: Model to probe; run in eval mode.
+        loader: Data loader to draw batches from.
+        device: Device to run the forward passes on.
+        max_batches: Number of batches to average over. Costs
+            ``max_batches * 5`` forward passes (1 full + 4 ablated per batch).
+
+    Returns:
+        ``{"A": pct, "B": pct, "C": pct, "D": pct}`` — influence normalised
+        to sum to 100, or all zeros if the loader yielded no batches.
+    """
     model.eval()
     influences = torch.zeros(4, device=device)
     total = 0
@@ -120,6 +114,27 @@ def compute_class_difficulty(
     tracker: ExperimentTracker | None = None,
     step: int = 0,
 ) -> tuple[dict[int, float], dict[int, float]]:
+    """Evaluate per-class F1, derive CDWS weights, and log a difficulty summary.
+
+    Runs :func:`~spectralquadnet.engine.evaluate.evaluate_per_class` and
+    :func:`compute_branch_influence` against ``ema_shadow``, builds fresh
+    class-difficulty-weighted-sampling weights from the resulting F1s, and
+    logs a macro-F1/hard-class-count/branch-influence message plus the
+    matching scalars and a hardest-classes table.
+
+    Args:
+        cfg: Composed experiment config.
+        ema_shadow: EMA model to evaluate (the shadow, not the raw model).
+        val_ldr: Validation data loader.
+        device: Device to evaluate on.
+        label: Prefix for the logged message and table name (e.g. ``"Stage 2"``).
+        tracker: Experiment tracker to log to; ``None`` logs nowhere.
+        step: Step index passed through to the tracker's scalar/table logs.
+
+    Returns:
+        ``(class_f1, cdws_weights)`` — per-class F1 and the sampling weights
+        derived from it.
+    """
     trk = tracker if tracker is not None else NullTracker()
     class_f1 = evaluate_per_class(ema_shadow, val_ldr, device, cfg.data.num_classes)
     cdws_wts = build_cdws_weights(
@@ -150,7 +165,7 @@ def compute_class_difficulty(
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  Phase 4 additions (REFACTOR_PLAN.md §4.2)
+#  Per-branch gradient diagnostics
 # ══════════════════════════════════════════════════════════════════════
 
 
