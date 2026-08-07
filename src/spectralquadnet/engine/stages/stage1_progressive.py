@@ -23,8 +23,12 @@ Declared deviations, all mechanical:
   defined here. ``tests/unit/test_schedulers.py`` proves the schedule is
   unchanged for all 600 epochs.
 
-The ``print`` statements are the pre-refactor observability surface and stay
-verbatim; Phase 4 (§4.1) replaces them one-for-one with tracker calls.
+Phase 4 (REFACTOR_PLAN.md §4.1) replaced every ``print`` here one-for-one with a
+``tracker`` call — the banner block became :meth:`~spectralquadnet.tracking.base.ExperimentTracker.banner`,
+the ``[INFO]`` notices became ``log_message`` and the per-epoch line became a
+``log_row``/``log_scalars`` pair. That is the **only** behavioural touch to this
+function's body beyond the mechanical rewrites above, and it is
+observability-only: every value logged was already a local variable here.
 """
 
 from __future__ import annotations
@@ -49,6 +53,7 @@ from spectralquadnet.losses.focal import FocalLoss
 from spectralquadnet.models.ema import ModelEMA
 from spectralquadnet.optim.param_groups import build_optimizer_s1
 from spectralquadnet.optim.schedulers import phase_aware_lr
+from spectralquadnet.tracking.base import ExperimentTracker, NullTracker
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from spectralquadnet.config.schema import ExperimentConfig
@@ -65,6 +70,7 @@ def run_stage1(
     val_ldr: DataLoader[Any],
     device: torch.device,
     best_ckpt: str,
+    tracker: ExperimentTracker | None = None,
 ) -> float:
     """
     Phase 1 (0 → ~25%):   heavy aug  + mixup  + high LS   → explore representation
@@ -75,6 +81,7 @@ def run_stage1(
     Deep supervision via per-branch AuxiliaryHeads with decaying weight.
     Primary metric: macro-F1 (not accuracy).
     """
+    trk = tracker if tracker is not None else NullTracker()
     model.use_arcface(False)
     model.unfreeze_head("linear")
     model.freeze_head("arcface")
@@ -90,7 +97,11 @@ def run_stage1(
         warnings.simplefilter("ignore")
         scheduler = optim.lr_scheduler.LambdaLR(optimizer, phase_aware_lr(cfg, p1_end, p2_end))
 
-    scaler = GradScaler()
+    # `device=` is what makes AMP real: the baseline's bare `GradScaler()` binds
+    # to CUDA, so on any other accelerator it prints "CUDA is not available.
+    # Disabling." and every scale/step call becomes a pass-through. Metal
+    # autocasts to fp16, which needs the loss scaling this now actually performs.
+    scaler = GradScaler(device=device.type)
     ls_hi = cfg.stage1.label_smooth_hi
     ls_lo = cfg.stage1.label_smooth_lo
     best_f1 = 0.0
@@ -105,27 +116,22 @@ def run_stage1(
     phase3_ldr: DataLoader[Any] | None = None
     class_f1_phase2: dict[int, float] = {}
 
-    w = 66
-    print(f"\n{'═' * w}")
-    print(f"  Stage 1 — 3-Phase Progressive Augmentation  [{ep_total} epochs max]")
-    print(f"{'═' * w}")
-    print(f"  Phase 1: ep 1–{p1_end}         heavy aug + mixup (α={cfg.stage1.mixup})")
-    print(f"  Phase 2: ep {p1_end + 1}–{p2_end}       medium aug + mixup")
-    print(f"  Phase 3: ep {p2_end + 1}–{ep_total}      very_light aug, Focal + SupCon + ProtoNCE")
-    print(
-        f"  Label smooth: {ls_hi} → {ls_lo}  |  Aux w: "
-        f"{cfg.stage1.aux_loss_weight_init} → {cfg.stage1.aux_loss_weight_final}"
+    trk.banner(
+        f"Stage 1 — 3-Phase Progressive Augmentation  [{ep_total} epochs max]",
+        [
+            f"Phase 1: ep 1–{p1_end}         heavy aug + mixup (α={cfg.stage1.mixup})",
+            f"Phase 2: ep {p1_end + 1}–{p2_end}       medium aug + mixup",
+            f"Phase 3: ep {p2_end + 1}–{ep_total}      very_light aug, Focal + SupCon + ProtoNCE",
+            f"Label smooth: {ls_hi} → {ls_lo}  |  Aux w: "
+            f"{cfg.stage1.aux_loss_weight_init} → {cfg.stage1.aux_loss_weight_final}",
+            f"Oversample: {cfg.stage1.p3_oversample}  "
+            f"power={cfg.stage1.p3_oversample_power}  "
+            f"hard_thresh={cfg.stage1.p3_hard_f1_thresh}",
+            f"P3 contrastive: SupCon(w={cfg.stage1.p3_supcon_weight}) "
+            f"ProtoNCE(w={cfg.stage1.p3_proto_weight})",
+            "Branch aux weights: A/B×2.0  C/D×1.0  |  Drop probs: A=0 B=0 C=0.30 D=0.20",
+        ],
     )
-    print(
-        f"  Oversample: {cfg.stage1.p3_oversample}  "
-        f"power={cfg.stage1.p3_oversample_power}  "
-        f"hard_thresh={cfg.stage1.p3_hard_f1_thresh}"
-    )
-    print(
-        f"  P3 contrastive: SupCon(w={cfg.stage1.p3_supcon_weight}) "
-        f"ProtoNCE(w={cfg.stage1.p3_proto_weight})"
-    )
-    print("  Branch aux weights: A/B×2.0  C/D×1.0  |  Drop probs: A=0 B=0 C=0.30 D=0.20")
 
     for ep in range(1, ep_total + 1):
         # ── Phase assignment ──────────────────────────────────────────
@@ -139,7 +145,7 @@ def run_stage1(
         # ── EMA re-init at phase boundaries ───────────────────────────
         if phase == 2 and not ema_reinited[0] and cfg.stage1.ema_reinit_phases:
             ema.reinit_from(model)
-            print(f"[INFO] EMA re-init at Phase 2 (ep {ep})")
+            trk.log_message(f"EMA re-init at Phase 2 (ep {ep})")
             ema_reinited[0] = True
 
         if phase == 3 and not ema_reinited[1] and cfg.stage1.ema_reinit_phases:
@@ -148,14 +154,14 @@ def run_stage1(
             p3_drop = cfg.stage1.p3_dropout
             model.set_dropout(p3_drop)
             ema.set_dropout(p3_drop)
-            print(f"[INFO] EMA re-init at Phase 3 (ep {ep})  dropout→{p3_drop}")
+            trk.log_message(f"EMA re-init at Phase 3 (ep {ep})  dropout→{p3_drop}")
             ema_reinited[1] = True
 
         # ── Phase 3 loader construction (once, at first Phase-3 epoch) ─
         if phase == 3 and phase3_ldr is None:
-            print("\n[INFO] Phase 2→3 boundary: measuring per-class F1 for oversampling ...")
+            trk.log_message("Phase 2→3 boundary: measuring per-class F1 for oversampling ...")
             class_f1_phase2, _ = compute_class_difficulty(
-                cfg, ema.shadow, val_ldr, device, "Phase2→3"
+                cfg, ema.shadow, val_ldr, device, "Phase2→3", tracker=trk, step=ep
             )
             phase3_ldr = build_phase3_loader(
                 cfg,
@@ -209,6 +215,7 @@ def run_stage1(
             accum_steps=cfg.stage1.accum,
             current_ep=ep,
             total_ep=ep_total,
+            tracker=trk,
         )
         scheduler.step()
 
@@ -224,7 +231,9 @@ def run_stage1(
         # ── Checkpoint on F1 improvement ─────────────────────────────
         if best_ep_f1 > best_f1:
             best_f1, no_improve = best_ep_f1, 0
-            _cf1, _cdws = compute_class_difficulty(cfg, ema.shadow, val_ldr, device, "S1")
+            _cf1, _cdws = compute_class_difficulty(
+                cfg, ema.shadow, val_ldr, device, "S1", tracker=trk, step=ep
+            )
             save_ckpt(
                 cfg,
                 best_ckpt,
@@ -239,18 +248,45 @@ def run_stage1(
                 arcface_init_done=False,
                 phase3_class_f1=class_f1_phase2,  # store phase-2 hard-class info
             )
-            saved = "  ✓"
+            saved = "✓"  # rendered as its own row cell now, so no padding
         else:
             no_improve += 1
 
-        print(
-            f"Ep {ep:03d}/{ep_total} │ Loss {tl:.4f}  Tr {ta:.1%} │ "
-            f"F1 {f1_live:.3f}/{f1_ema:.3f}  Acc {acc_live:.1%}/{acc_ema:.1%} │ "
-            f"LR {lr_now:.2e}  LS {ls_now:.3f}  auxW {aux_w_now:.2f} [P{phase}]{saved}"
+        trk.log_row(
+            "stage1",
+            {
+                "Ep": f"{ep:03d}/{ep_total}",
+                "Loss": f"{tl:.4f}",
+                "Tr": f"{ta:.1%}",
+                "F1 live/ema": f"{f1_live:.3f}/{f1_ema:.3f}",
+                "Acc live/ema": f"{acc_live:.1%}/{acc_ema:.1%}",
+                "LR": f"{lr_now:.2e}",
+                "LS": f"{ls_now:.3f}",
+                "auxW": f"{aux_w_now:.2f}",
+                "Ph": f"P{phase}",
+                "ckpt": saved,
+            },
+            step=ep,
+        )
+        trk.log_scalars(
+            {
+                "train/loss": tl,
+                "train/acc": ta,
+                "val/f1_live": f1_live,
+                "val/acc_live": acc_live,
+                "val/f1_ema": f1_ema,
+                "val/acc_ema": acc_ema,
+                "val/f1_best": best_f1,
+                "sched/lr": lr_now,
+                "sched/label_smooth": ls_now,
+                "sched/aux_weight": aux_w_now,
+                "sched/phase": float(phase),
+            },
+            step=ep,
         )
 
         if no_improve >= cfg.stage1.patience:
-            print(f"\nEarly stopping at epoch {ep}.")
+            trk.log_message(f"Early stopping at epoch {ep}.", level="warn")
             break
 
     model.unfreeze_head("arcface")

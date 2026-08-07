@@ -72,7 +72,7 @@ def baseline_source(key_or_path: str, ref: str = BASELINE_REF) -> str:
 
 def strip_module_side_effects(tree: ast.Module) -> ast.Module:
     """Keep only declarations at module scope; drop calls and the ``__main__`` guard."""
-    kept = [node for node in tree.body if isinstance(node, _DECLARATION_NODES)]
+    kept: list[ast.stmt] = [node for node in tree.body if isinstance(node, _DECLARATION_NODES)]
     return ast.Module(body=kept, type_ignores=[])
 
 
@@ -90,7 +90,9 @@ def load_baseline_module(
     return module
 
 
-def baseline_symbols(key_or_path: str = "hsi_training", ref: str = BASELINE_REF) -> dict:
+def baseline_symbols(
+    key_or_path: str = "hsi_training", ref: str = BASELINE_REF
+) -> dict[str, ast.AST]:
     """Map every top-level ``class``/``def`` name to its AST node."""
     tree = ast.parse(baseline_source(key_or_path, ref))
     return {

@@ -169,8 +169,10 @@ INTENDED_VALUE_CHANGES: dict[str, str] = {
     ),
     "device": (
         "§4.3 — YAML cannot hold a torch.device object, so the config carries the "
-        'resolution strategy ("auto") and utils/device.py performs the '
-        'torch.device("cuda" if torch.cuda.is_available() else "cpu") lookup.'
+        'resolution strategy ("auto") and utils/device.py performs the lookup. '
+        "Phase 5 widens that lookup from the baseline's cuda-or-cpu to "
+        "Metal → CUDA → CPU, so an Apple Silicon host uses its GPU instead of "
+        "falling through to the CPU. An explicit device=cuda/cpu/mps still wins."
     ),
 }
 
@@ -207,11 +209,12 @@ def load_baseline_config(ref: str) -> dict[str, Any]:
         assert isinstance(node.value, ast.Dict)
         out: dict[str, Any] = {}
         for k, v in zip(node.value.keys, node.value.values, strict=True):
-            assert isinstance(k, ast.Constant), f"non-literal CONFIG key: {ast.dump(k)}"
+            assert isinstance(k, ast.Constant), f"non-literal CONFIG key: {k!r}"
+            key = str(k.value)
             try:
-                out[k.value] = ast.literal_eval(v)
+                out[key] = ast.literal_eval(v)
             except ValueError:
-                out[k.value] = f"<expr> {ast.unparse(v)}"
+                out[key] = f"<expr> {ast.unparse(v)}"
         return out
     raise RuntimeError(f"No CONFIG dict found in {BASELINE_PATH}@{ref}")
 

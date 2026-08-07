@@ -82,4 +82,4 @@ class SpectralProfileBranch(nn.Module):
         x_fused = self.fusion(torch.cat([self.tower_s(x), self.tower_m(x), self.tower_l(x)], dim=1))
 
         w = torch.softmax(self.attn_pool(x_fused), dim=2)
-        return self.proj(torch.sum(x_fused * w, dim=2))
+        return self.proj(torch.sum(x_fused * w, dim=2))  # type: ignore[no-any-return]  # `nn.Module.__call__` -> Any

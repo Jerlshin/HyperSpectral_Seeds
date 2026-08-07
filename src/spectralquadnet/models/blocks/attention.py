@@ -76,7 +76,7 @@ class SEBlock1D(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return x * self.se(x)
+        return x * self.se(x)  # type: ignore[no-any-return]  # `nn.Module.__call__` -> Any
 
 
 class CBAM(nn.Module):
@@ -92,4 +92,4 @@ class CBAM(nn.Module):
         x = x * torch.sigmoid(
             self.ch(x.mean([2, 3], keepdim=True)) + self.ch(x.amax([2, 3], keepdim=True))
         )
-        return x * self.sp(torch.cat([x.mean(1, keepdim=True), x.amax(1, keepdim=True)], 1))
+        return x * self.sp(torch.cat([x.mean(1, keepdim=True), x.amax(1, keepdim=True)], 1))  # type: ignore[no-any-return]  # `nn.Module.__call__` -> Any

@@ -24,16 +24,23 @@ optional dependency (``pip install -e ".[prep]"``) that training never needs.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 from scipy.ndimage import binary_fill_holes
 from skimage.filters import threshold_otsu
 from skimage.measure import label, regionprops
 from skimage.morphology import remove_small_objects
 from skimage.segmentation import clear_border
 
+# scikit-image ships `py.typed` but leaves most of its public API unannotated, so
+# every call below is an "untyped call in typed context" under `--strict`. The
+# alternative — stub packages that do not exist for skimage — is not available;
+# these four ignores are the narrowest possible scope.
 
-def load_hsi(hdr: str | Path) -> np.ndarray:
+
+def load_hsi(hdr: str | Path) -> npt.NDArray[np.float32]:
     import spectral
 
     spectral.settings.envi_support_nonlowercase_params = True
@@ -44,29 +51,35 @@ def load_hsi(hdr: str | Path) -> np.ndarray:
     return cube.astype(np.float32)
 
 
-def preprocess_raw(hdr: str | Path, dark_hdr: str | Path) -> np.ndarray:
+def preprocess_raw(hdr: str | Path, dark_hdr: str | Path) -> npt.NDArray[np.float32]:
     cube = load_hsi(hdr)
     dark = load_hsi(dark_hdr)
 
     dark_mean = dark.mean(axis=0, keepdims=True)
     cube = np.clip(cube - dark_mean, 0.0, None)
 
-    return cube[:600]
+    return cube[:600]  # type: ignore[no-any-return]  # `np.clip` is typed `-> Any`
 
 
-def segment(cube: np.ndarray, wl: np.ndarray):
+def segment(cube: npt.NDArray[Any], wl: npt.NDArray[Any]) -> tuple[npt.NDArray[Any], list[Any]]:
+    """Otsu-threshold the visible band mean and return the seed regions.
+
+    Returns:
+        ``(labeled, regions)`` — the label image and the filtered, centroid-sorted
+        ``skimage`` region properties, top-left first.
+    """
     vis_mask = (wl > 450) & (wl < 700)
     vis_img = cube[:, :, vis_mask].mean(axis=2)
 
-    t = threshold_otsu(vis_img)
+    t = threshold_otsu(vis_img)  # type: ignore[no-untyped-call]
     binary = vis_img > (0.4 * t)
 
     binary = binary_fill_holes(binary)
-    binary = clear_border(binary)
+    binary = clear_border(binary)  # type: ignore[no-untyped-call]
     binary = remove_small_objects(binary, 150)
 
-    labeled = label(binary)
-    regions = regionprops(labeled)
+    labeled = label(binary)  # type: ignore[no-untyped-call]
+    regions = regionprops(labeled)  # type: ignore[no-untyped-call]
 
     regions = [
         r for r in regions if 300 < r.area < 800 and r.eccentricity > 0.6 and r.solidity > 0.85
