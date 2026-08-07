@@ -17,6 +17,13 @@ three stages present therefore skips straight to ``final_evaluation``.
 ``torch.cuda.mem_get_info(device)`` is guarded by ``device.type == "cuda"``,
 since it raises on a CPU/MPS host; the VRAM figure is simply omitted off-CUDA
 and the dataset size is still reported.
+
+The split protocol is a config choice (``data.split_scheme``,
+``data.calib_frac``) and is **printed at startup**, because after Tier 4 the
+same code produces two numbers that mean different things: a patch-level split
+reports how well the model recognises scans it has seen, and a scan-disjoint
+one reports how well it recognises varieties. ``python train.py
+data=spa40_90class_pfix`` selects the latter.
 """
 
 from __future__ import annotations
@@ -26,7 +33,7 @@ import os
 import sys
 import traceback
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import hydra
 import torch
@@ -35,7 +42,12 @@ from torch.utils.data import DataLoader
 
 from spectralquadnet.config.schema import register_configs
 from spectralquadnet.data.datasets import RiceSeedDataset
-from spectralquadnet.data.loaders import build_loaders, build_splits
+from spectralquadnet.data.loaders import (
+    build_calib_loader,
+    build_loaders,
+    build_split_bundle,
+    standardised_morphometrics,
+)
 from spectralquadnet.data.mmap_store import DataStore
 from spectralquadnet.engine.checkpoint import (
     _pick_best_checkpoint,
@@ -45,6 +57,7 @@ from spectralquadnet.engine.checkpoint import (
     stage_ckpt_path,
 )
 from spectralquadnet.engine.diagnostics import compute_class_difficulty
+from spectralquadnet.engine.evaluate import collect_embeddings
 from spectralquadnet.engine.stages.final_eval import final_evaluation
 from spectralquadnet.engine.stages.stage1_progressive import run_stage1
 from spectralquadnet.engine.stages.stage2_arcface import run_stage2
@@ -78,9 +91,12 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker) -> None:
     #      load config → set_seed(cfg.seed) → DataStore → SpectralQuadNet → ModelEMA
     #
     #  Nothing between this line and the model construction below may consume
-    #  the global RNG. `build_splits` is safe: sklearn's `train_test_split`
-    #  takes `random_state=42` and uses its own RandomState. Building the
-    #  tracker happens before this call for the same reason.
+    #  the global RNG. `build_split_bundle` is safe on both of its paths:
+    #  sklearn's `train_test_split` takes `random_state=42` and uses its own
+    #  RandomState, and the grouped path draws from a private
+    #  `np.random.default_rng(SPLIT_SEED)`. Neither touches the global torch or
+    #  NumPy stream. Building the tracker happens before this call for the same
+    #  reason.
     # ══════════════════════════════════════════════════════════════════
     set_seed(cfg.seed)
 
@@ -109,11 +125,14 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker) -> None:
         level="plain",
     )
 
-    all_labels, train_idx, val_idx, test_idx = build_splits(cfg)
-    tracker.log_message(
-        f"Train: {len(train_idx):,}  Val: {len(val_idx):,}  Test: {len(test_idx):,}",
-        level="plain",
-    )
+    splits = build_split_bundle(cfg)
+    all_labels = splits.labels
+    train_idx, val_idx, test_idx = splits.train, splits.val, splits.test
+    # P-1 / P-5 (T4-1 / T4-5). The protocol is reported, not assumed: the
+    # report says which scans crossed which boundary and which classes it could
+    # not keep group-disjoint, so a run's log records what its number means.
+    for line in splits.report.summary():
+        tracker.log_message(line, level="plain")
     tracker.log_message(
         f"Samples/class (train): ~{len(train_idx) // cfg.data.num_classes}", level="plain"
     )
@@ -146,10 +165,27 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker) -> None:
             level="plain",
         )
 
+    # ── Calibration loader (P-5 / T4-5) ────────────────────────────────
+    # `None` when no calib split was carved, which puts the margins, the CDWS
+    # weights and the Phase-3 oversampling weights back on `val` — the
+    # pre-Tier-4 behaviour, and the one every archived checkpoint was made
+    # under.
+    calib_ldr = build_calib_loader(cfg, store, device, splits.calib, train_idx=train_idx)
+
+    # ── Morphometrics, standardised on train alone (P-4 / T4-4, FU-4) ──
+    # `None` unless `data.morphology_path` names an array that exists, in which
+    # case the model substitutes zeros — the mean of the standardised feature.
+    morph = standardised_morphometrics(store, train_idx)
+
     # ── Stage 1 phase loaders (per-phase aug profiles) ─────────────────
     def _s1_ldr(aug_str: str) -> DataLoader[Any]:
         ds = RiceSeedDataset(
-            train_idx, aug_strength=aug_str, store=store, data_cfg=cfg.data, device=device
+            train_idx,
+            aug_strength=aug_str,
+            store=store,
+            data_cfg=cfg.data,
+            device=device,
+            morph=morph,
         )
         return DataLoader(
             ds, batch_size=cfg.stage1.batch, shuffle=True, drop_last=True, num_workers=0
@@ -171,7 +207,18 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker) -> None:
             cfg.stage1.batch,
             train_aug="none",
         )
-        run_stage1(cfg, store, model, ema, phase_loaders, val_ldr1, device, ckpt_s1, tracker)
+        run_stage1(
+            cfg,
+            store,
+            model,
+            ema,
+            phase_loaders,
+            val_ldr1,
+            device,
+            ckpt_s1,
+            tracker,
+            calib_ldr=calib_ldr,
+        )
         tracker.log_message("Reloading best Stage 1 checkpoint ...")
         load_ckpt(ckpt_s1, model, ema, device)
     else:
@@ -193,19 +240,42 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker) -> None:
     # ══════════════════════════════════════════════════════════════════
     if done_stage < 2:
         if not arcface_done:
-            tracker.log_message("Bootstrapping ArcFace from linear head")
-            # `nn.Module.__getattr__` is typed `Tensor | Module`, so the `.weight`
-            # of the Sequential's last layer needs a cast for mypy; at runtime it
-            # is always the `nn.Linear` at that index.
-            lw = cast(torch.Tensor, model.linear_head[-1].weight).data.clone()
-            model.arcface_head.init_from_linear(lw)
-            ema.shadow.arcface_head.init_from_linear(lw)
+            # HD-2(iii) / T2-9. The head is the same one Stage 1 just trained,
+            # so this is a re-seeding rather than a bootstrap: spherical
+            # k-means on the Stage-1 embeddings puts every sub-centre inside
+            # its own class's data, instead of two random decoys 9-18 degrees
+            # from a single prototype that then never win and never learn.
+            tracker.log_message("Seeding ArcFace sub-centres by spherical k-means")
+            # Un-augmented, un-shuffled and nothing dropped: the clusters must
+            # describe the data, not the augmentation profile, and `build_loaders`'
+            # train loader would drop the last partial batch.
+            seed_ldr = DataLoader(
+                RiceSeedDataset(
+                    train_idx, aug_strength="none", store=store, data_cfg=cfg.data, device=device
+                ),
+                batch_size=256,
+                shuffle=False,
+                num_workers=0,
+            )
+            emb, emb_y = collect_embeddings(ema.shadow, seed_ldr, device)
+            stats = {"classes_seeded": 0.0, "min_separation": -1.0}
+            for head in (model.arcface_head, ema.shadow.arcface_head):
+                stats = head.init_subcentres_from_embeddings(emb, emb_y)
+            tracker.log_message(
+                f"Seeded {int(stats['classes_seeded'])} classes; "
+                f"worst within-class sub-centre cosine {stats['min_separation']:.3f}"
+            )
 
         if not class_f1_s1:
             tracker.log_message("No class_f1 in Stage 1 meta — recomputing", level="warn")
             _, val_cd, _ = build_loaders(cfg, store, device, train_idx, val_idx, test_idx, 128)
             class_f1_s1, cdws_wts_s1 = compute_class_difficulty(
-                cfg, ema.shadow, val_cd, device, "Stage 1 (recomputed)", tracker=tracker
+                cfg,
+                ema.shadow,
+                calib_ldr if calib_ldr is not None else val_cd,
+                device,
+                "Stage 1 (recomputed)",
+                tracker=tracker,
             )
 
         tracker.log_message("[RUN] Stage 2", level="plain")
@@ -224,7 +294,7 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker) -> None:
             train_aug="very_light",
             class_weights=cdws_wts_s1,
         )
-        run_stage2(cfg, model, ema, tr2, va2, device, ckpt_s2, class_f1_s1, tracker)
+        run_stage2(cfg, model, ema, tr2, va2, device, ckpt_s2, tracker, calib_ldr=calib_ldr)
         tracker.log_message("Reloading best Stage 2 checkpoint ...")
         load_ckpt(ckpt_s2, model, ema, device)
     else:
@@ -232,7 +302,8 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker) -> None:
         load_ckpt(ckpt_s2, model, ema, device)
 
     meta_s2 = load_stage_meta(cfg, 2)
-    class_f1_s2 = meta_s2.get("class_f1", {})  # noqa: F841 - kept for readability/symmetry with class_f1_s1
+    # class_f1 is in the Stage-2 sidecar too; nothing downstream reads it, since
+    # Stage 3 takes its sampling weights from cdws_weights below.
     cdws_wts_s2 = meta_s2.get("cdws_weights", {})
     s2_best_f1 = meta_s2.get("val_f1", meta_s2.get("s2_val_f1", meta_s2.get("val_acc", 0.0)))
     tracker.log_message(f"Stage 2 → F1={s2_best_f1:.3f}")

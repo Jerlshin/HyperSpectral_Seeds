@@ -141,11 +141,26 @@ RENAME: dict[str, str] = {
     "specf_heads": "model.specf_heads",
     "specf_layers": "model.specf_layers",
     "specf_drop": "model.specf_drop",
-    "fusion_heads": "model.fusion_heads",
     "fusion_drop": "model.fusion_drop",
     # ── Reproducibility & placement ───────────────────────────────────
     "device": "device",
     "seed": "seed",
+}
+
+#: Pre-refactor CONFIG keys with **no** home in the composed config, because the
+#: thing they configured no longer exists. This is the other half of §2.7's
+#: remedy for a dead key: wire it, or delete it. An entry here is a deletion,
+#: and it needs a reason for the same purpose :data:`INTENDED_ADDITIONS` needs
+#: one — so that "the key is gone" cannot quietly mean "the key was dropped".
+INTENDED_REMOVALS: dict[str, str] = {
+    "fusion_heads": (
+        "T3-4 / FU-1(b) — N-1a's dead key, deleted rather than wired. It named "
+        "the head count of `CrossModalInteraction`'s multi-head attention, and "
+        "the gated low-rank bilinear fusion that replaced the Perceiver has no "
+        "attention at all: with five modality tokens, latent cross-attention "
+        "compresses nothing (§3.4 FU-1). Nothing in the model can consume a "
+        "head count, so there is nothing to wire it to."
+    ),
 }
 
 #: New config fields with no pre-refactor CONFIG ancestor. Each needs an explicit
@@ -153,6 +168,127 @@ RENAME: dict[str, str] = {
 INTENDED_ADDITIONS: dict[str, str] = {
     "run_name": "§4.3 — run identity; feeds output_dir instead of hardcoding a path.",
     "output_root": "§4.3 — output_dir = ${output_root}/${run_name}.",
+    # ── Tier 2 (IMPROVEMENT_PLAN §4.2) ────────────────────────────────
+    "aux_gradnorm_alpha": (
+        "T2-6 / OP-2 — GradNorm exponent for the per-branch auxiliary weights. "
+        "At 0.0 the weights stay at the hardcoded A/B = 2x vector it replaces, "
+        "so the pre-Tier-2 behaviour remains expressible."
+    ),
+    "data.cutmix_bands": "T2-7 / OP-6 — width of the same-class spectral CutMix window.",
+    "data.cutmix_spatial": "T2-7 / OP-6 — side of the same-class spatial CutMix paste.",
+    "model.subcenter_tau_init": "T2-9 / HD-2(i) — sub-centre pooling temperature at stage entry.",
+    "model.subcenter_tau_final": (
+        "T2-9 / HD-2(i) — temperature at stage end; at tau -> 0 the pooling is "
+        "the hard max_k the head was defined on."
+    ),
+    "model.subcenter_balance_weight": (
+        "T2-9 / HD-2(ii) — weight on sum_c KL(pi_c || uniform), the "
+        "mixture-of-experts load-balancing term sub-centre ArcFace was missing."
+    ),
+    "stage1.arcface_m": (
+        "T2-10 / HD-1 — Stage 1's margin under the unified head. 0.0 is not a "
+        "placeholder: it makes the head a cosine (NormFace) classifier, which "
+        "is what removes the Stage-1 -> Stage-2 discontinuity of §2.4.6."
+    ),
+    "stage2.arcface_m_min": "T2-8 / HD-3 — lower clip on the signed R-P margin rule.",
+    "stage2.arcface_m_max": "T2-8 / HD-3 — upper clip on the signed R-P margin rule.",
+    "stage2.pairwise_margin_delta": (
+        "T2-8 / HD-3 — scale of the row-normalised confusion term that aims the "
+        "margin at the classes each class is actually confused with."
+    ),
+    "stage3.margin_kappa_final": (
+        "T2-1 / OP-4.2-4.3 — the multiplicative margin anneal's endpoint. Stage "
+        "3 keeps Stage 2's per-class vector and scales all of it, stepping only "
+        "at cycle boundaries."
+    ),
+    "stage3.swa_warmup_cycles": (
+        "T2-3 / OP-4.5 — cycles discarded from the SWA average before the first "
+        "candidate is considered, keeping Adam's 1/(1-beta2) second-moment "
+        "transient out of it."
+    ),
+    "stage3.sam_adaptive": (
+        "T2-4 / OP-5 — selects ASAM. SAM's rho-ball is not scale-invariant and "
+        "the ArcFace head is, so a raw-space budget has no meaning there."
+    ),
+    # ── Tier 4 (IMPROVEMENT_PLAN §4.2) ────────────────────────────────
+    "data.groups_path": (
+        "T4-1 / P-1 — the per-patch scan id `scripts/prepare_dataset.py` now "
+        "writes. Required by the grouped scheme; read under `stratified` too, "
+        "where it is used only to measure how many scans cross the train/eval "
+        "boundary (0-H measured 107 of 107)."
+    ),
+    "data.split_scheme": (
+        "T4-1 / P-1 — `stratified` is the reference run's patch-level split, "
+        "kept because the archived checkpoints were selected on it; `grouped` "
+        "is the scan-disjoint protocol. The default stays `stratified` so this "
+        "config keeps reproducing the run it describes; "
+        "`configs/data/spa40_90class_pfix.yaml` is the P-fix protocol."
+    ),
+    "data.split_eval_frac": (
+        "T4-1 / P-1 — share held out for val+test. 0.30 reproduces the "
+        "reference 70/15/15 exactly on the stratified path."
+    ),
+    "data.split_fold": (
+        "T4-1 / P-1 — rotates which scans are held out; sweeping it is the "
+        "leave-one-scan-out cross-validation §3.1 falls back to when a class "
+        "has too few scans for a three-way disjoint split. Must be 0 under "
+        "`stratified`, which has no groups to rotate."
+    ),
+    "data.calib_frac": (
+        "T4-5 / P-5 — share of the training pool carved off as `calib`, where "
+        "the per-class margins, the CDWS weights and the Phase-3 oversampling "
+        "weights are fitted. 0.0 leaves them on `val`, i.e. on the split that "
+        "also selects the checkpoint (C-9), which is what the reference run "
+        "did."
+    ),
+    # ── Tier 3 (IMPROVEMENT_PLAN §4.2) ────────────────────────────────
+    "data.masks_path": (
+        "T3-7 / FE-2 — the persisted fill map alpha `scripts/prepare_dataset.py` "
+        "writes under P-3. Passing it makes the four masked modules functions of "
+        "the seed's pixels rather than of `sum_c |x_c| > 1e-5`, and so immune to "
+        "any global brightness transform. Empty falls back to that threshold, "
+        "exactly, which is why the pre-Tier-3 arrays still reproduce."
+    ),
+    "data.morphology_path": (
+        "T3-1/T3-4 / P-4 — the eight morphometrics, which Branch B's index bank "
+        "and FU-4's fifth fusion token both consume. Empty substitutes zeros, "
+        "the mean of the train-standardised feature."
+    ),
+    "model.grid_size_a": (
+        "T3-6 / BR-2 — Branch A's grid, 4x4 -> 8x8. Costs no parameters (cells "
+        "are processed independently) and takes the spatial compression from "
+        "256:1 to 64:1."
+    ),
+    "model.grid_size_d": (
+        "T3-6 / BR-2 — Branch D's grid, held at 4x4. A and D received a "
+        "byte-identical tensor before Tier 3 (§2.2.2); separate keys are what "
+        "make that impossible to reintroduce silently."
+    ),
+    "model.index_bank_size": (
+        "T3-1 / BR-1(i) — number of learned normalised-difference indices, the "
+        "gain-invariant replacement for the rank-2 moment tensor of §2.2.5."
+    ),
+    "model.continuum_depths": (
+        "T3-1 / BR-1(ii) — how many of the deepest hull-removed absorption "
+        "features Branch B reads."
+    ),
+    "model.n_morphometrics": (
+        "T3-1/T3-4 / P-4 — width of the morphometric vector; the eight columns "
+        "`data/prep/segmentation.py::MORPHOMETRIC_NAMES` writes."
+    ),
+    "model.stem_channels": (
+        "T3-2 / BR-3 — width the 3-D spectral-spatial stem folds the spectral "
+        "axis into before the 2-D tail. C-3: before this the network contained "
+        "no joint spectral-spatial operator at all."
+    ),
+    "model.fusion_rank": (
+        "T3-4 / FU-1(b) — rank of the bilinear projections U_m. The second-order "
+        "term M-3 found missing, at 5*d*r rather than a full 10*d^2."
+    ),
+    "model.fusion_gate_hidden": (
+        "T3-4 / FU-1(b)+FU-2 — hidden width of the sigmoid gate MLP, which reads "
+        "the five normalised tokens and the five pre-normalisation log-norms."
+    ),
 }
 
 #: Config subtrees that are net-new capabilities rather than relocated CONFIG keys.
@@ -165,6 +301,24 @@ INTENDED_VALUE_CHANGES: dict[str, str] = {
     "output_dir": (
         "§4.3 — hardcoded absolute machine-specific path replaced by "
         "${output_root}/${run_name}; points at the Phase 1 relocation target."
+    ),
+    "s2_arcface_m_delta": (
+        "T2-8 / HD-3 — 0.10 → 0.20. The key kept its name and changed the rule "
+        "it parameterises: it was the F1-driven rule's m_delta in "
+        "`M(c) = m_base + m_delta (1 - F1_c)`, and is now the signed rule's in "
+        "`M(c) = clip(m_base + m_delta (R_c - P_c), 0.20, 0.50)`. The plan "
+        "specifies 0.20 for the latter (§3.5 HD-3). Reusing the key rather than "
+        "adding a second one keeps a single margin-scale knob; the sign change "
+        "is pinned by `tests/unit/test_margin_rule.py::test_margin_rule_sign`."
+    ),
+    "specf_dim": (
+        "T3-3 / BR-4 — 256 → 192. Branch D's token embeddings are now derived "
+        "from each λ-window's centre wavelength and its spectral attention "
+        "carries a relative-λ bias, so the branch does not have to spend "
+        "capacity rediscovering the wavelength axis from an arbitrary index "
+        "table. The key kept its name and the branch lost 0.94 M parameters, "
+        "which is what funds BR-3's 3-D stem in Branch C (§3.8). Pinned by "
+        "`tests/unit/test_specformer_lambda.py`."
     ),
     "device": (
         "§4.3 — YAML cannot hold a torch.device object, so the config carries the "
@@ -253,8 +407,13 @@ def run_check(ref: str) -> int:
     notes: list[str] = []
 
     # ── 1. Rename table covers the baseline exactly ───────────────────
-    unmapped = sorted(set(baseline) - set(RENAME))
+    unmapped = sorted(set(baseline) - set(RENAME) - set(INTENDED_REMOVALS))
     stale = sorted(set(RENAME) - set(baseline))
+    orphan_removals = sorted(set(INTENDED_REMOVALS) - set(baseline))
+    if orphan_removals:
+        errors.append(
+            f"INTENDED_REMOVALS entries not present in the baseline CONFIG: {orphan_removals}"
+        )
     if unmapped:
         errors.append(f"CONFIG keys with no entry in RENAME: {unmapped}")
     if stale:
@@ -303,6 +462,7 @@ def run_check(ref: str) -> int:
     print(f"Composed : configs/{EXPERIMENT}.yaml  ({len(composed)} leaf fields)")
     print(f"Excluded : {', '.join(f'{k}.* ({v})' for k, v in EXCLUDED_SUBTREES.items())}")
     print(f"Added    : {', '.join(INTENDED_ADDITIONS)}")
+    print(f"Removed  : {', '.join(INTENDED_REMOVALS) or '—'}")
     if notes:
         print("Intentional value changes (REFACTOR_PLAN.md §4.3):")
         print("\n".join(notes))
@@ -352,6 +512,9 @@ def emit_markdown(out_path: Path, ref: str) -> None:
         "(experiment root)": f"`configs/{EXPERIMENT}.yaml`",
     }
     for old_key in baseline:
+        if old_key in INTENDED_REMOVALS:
+            lines.append(f"| `{old_key}` | *(deleted)* 🗑️ | — | — |")
+            continue
         path = RENAME[old_key]
         group = path.split(".")[0] if "." in path else "(experiment root)"
         value = composed.get(path, "—")
@@ -374,6 +537,13 @@ def emit_markdown(out_path: Path, ref: str) -> None:
         lines.append(f"- **`{key}`** — {why}")
     for key, why in EXCLUDED_SUBTREES.items():
         lines.append(f"- **`{key}.*`** — {why}")
+    lines += [
+        "",
+        "## 🗑️ Deleted `CONFIG` keys (nothing left to configure)",
+        "",
+    ]
+    for key, why in INTENDED_REMOVALS.items():
+        lines.append(f"- **`{key}`** — {why} Pre-refactor value: `{baseline[key]!r}`.")
     lines.append("")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)

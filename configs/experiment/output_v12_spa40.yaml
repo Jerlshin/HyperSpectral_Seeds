@@ -32,6 +32,10 @@ weight_decay: 2.0e-4
 grad_clip: 1.0
 ema_decay: 0.999
 
+# GradNorm exponent for the per-branch auxiliary weights (OP-2 / T2-6). At 0.0
+# the weights stay at the hardcoded A/B = 2x vector this replaces.
+aux_gradnorm_alpha: 0.5
+
 # ── Test-time augmentation ─────────────────────────────────────────────
 tta_spatial: 8
 tta_spectral: 4

@@ -11,27 +11,51 @@ with 12-view test-time augmentation.
 | Best validation Macro F1 (Stage 1 checkpoint) | 0.8877 |
 
 Reference artifacts live in `outputs/output_v12_spa40/` (three checkpoints + metadata sidecars +
-recorded predictions). The numbers above are regenerated from them by
-`tests/regression/test_resume_and_final_eval.py`.
+recorded predictions).
+
+> **These are pre-Tier-3 numbers and can no longer be regenerated from the checkpoints.**
+> Tier 3 (T3-1 … T3-4) changed what three of the four branches *consume*, so those weights have
+> no home in the current model and `load_ckpt` refuses them rather than partially loading —
+> see `MIGRATION_PROGRESS.md` → Tier 3 → "The v1/v2 → v3 refusal". The recorded predictions in
+> `outputs/` are still checked against their own reported metrics. A fresh number arrives with
+> the first Tier-3 run.
+
+> **The TTA number is superseded.** Tier 1 (T1-1) fixed the spectral TTA view, which rescaled
+> about the whole-patch mean and did not re-mask, so the zero background every masked operator
+> in the model relies on was filled in. Re-running the same checkpoint through the corrected
+> transform gives **0.8889**, not 0.8933; the no-TTA figure is unchanged. The difference is
+> inside the ±0.017 bootstrap interval, but 0.8889 is the number a fresh run produces. See
+> `MIGRATION_PROGRESS.md` → Tier 1 → T1-1.
 
 ---
 
 ## Architecture
 
-`SpectralQuadNet` (7.88M parameters) fuses four views of the same patch:
+`SpectralQuadNet` (5.19M parameters) fuses four **genuinely disjoint** views of the same patch,
+plus the seed's morphometry:
 
 | Branch | Module | Sees |
 |---|---|---|
-| **A** — spectral profile | `models/branches/spectral_profile.py` | per-region mean spectra on a 4×4 grid |
-| **B** — spectral statistics | `models/branches/spectral_stats.py` | 9 background-masked per-band statistics (mean, std, max, skew, kurtosis, p10/p25/p75/p90) |
-| **C** — spatial CNN | `models/branches/spatial_cnn.py` | 2-D texture, band-reduced |
-| **D** — SpecFormer | `models/branches/specformer.py` | multi-scale spectral tokens through a pre-LN transformer |
+| **A** — continuum & derivative profile | `models/branches/spectral_profile.py` | per-cell SNV spectra on an 8×8 grid, with their 1st and 2nd λ-derivatives |
+| **B** — scale-invariant index bank | `models/branches/spectral_stats.py` | 64 learned normalised-difference indices + 16 continuum-removed depths + 8 morphometrics |
+| **C** — spectral–spatial CNN | `models/branches/spatial_cnn.py` | the full `(40, 64, 64)` cube through a 3-D stem that keeps the band axis alive |
+| **D** — λ-aware SpecFormer | `models/branches/specformer.py` | raw 4×4 grid spectra as λ-uniform tokens, with a relative-λ attention bias |
+| **E** — morphology | `models/fusion.py::MorphologyEmbed` | the 8 persisted morphometrics as a fifth fusion token |
 
-The branches are fused by a Perceiver-style latent cross-attention block
-(`models/fusion.py::CrossModalInteraction`), then classified by either a linear head or an
-adaptive sub-centre ArcFace head (`models/heads.py`). Every branch also carries its own auxiliary
-head for deep supervision. Wavelengths enter the model physically, not positionally, via
-`models/blocks/positional.py::PhysicalWavelengthPE`.
+The five are fused by a gated low-rank bilinear pool (`models/fusion.py::CrossModalInteraction`)
+— an independent sigmoid gate per modality, fed the branches' pre-normalisation log-norms, plus a
+second-order term over all ten modality pairs — then classified by a single adaptive sub-centre
+ArcFace head (`models/heads.py`) shared by all three stages; Stage 1 runs it at zero margin,
+which makes it a plain cosine classifier. Branches A–D each carry an auxiliary head for deep
+supervision. Wavelength is a first-class axis throughout: band-axis convolutions use kernels
+generated from Δλ (`models/front_end.py`), derivatives are fitted on the irregular λ grid, and
+token positions are derived from wavelength rather than learned by index.
+
+> The architecture above is the Tier-3 redesign (`IMPROVEMENT_PLAN.md` §3.2–§3.4). It replaces
+> a 7.88M-parameter model in which two of the four branches received a byte-identical input, the
+> statistics branch read a provably rank-2 tensor with 686k parameters, no module combined
+> spectral and spatial extent, and the fusion spent 2.19M parameters to mix four vectors.
+> `MIGRATION_PROGRESS.md` → Tier 3 records what moved and what each change was measured on.
 
 ### Training curriculum
 

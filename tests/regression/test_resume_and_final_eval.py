@@ -150,17 +150,24 @@ def test_load_stage_meta_reintegerises_class_keys(outputs_cfg) -> None:
 
 @pytest.mark.regression
 @pytest.mark.requires_dataset
-def test_stage3_checkpoint_reproduces_its_recorded_val_f1(outputs_cfg) -> None:
-    """Where ``stage3_meta.json``'s 0.8745 actually comes from.
+def test_the_stage3_checkpoint_can_no_longer_be_re_scored(outputs_cfg) -> None:
+    """``stage3_meta.json``'s 0.8745 is now a historical number, and this says so.
 
-    Rebuilds the model from the config, loads ``best_stage3.pth`` and evaluates
-    the **EMA shadow** — the model ``final_evaluation`` scores — on the
-    validation split. Exercises the state-dict key schema, mmap loading, the
-    checkpoint bundle schema and ``evaluate`` together.
+    Through Tier 2 this test rebuilt the model from the config, loaded
+    ``best_stage3.pth``, evaluated the **EMA shadow** — the model
+    ``final_evaluation`` scores — on the validation split, and reproduced the
+    recorded 0.8745 to 5e-3. It exercised the state-dict key schema, mmap
+    loading, the bundle schema and ``evaluate`` together, and it was the
+    strongest end-to-end gate in the suite.
 
-    Slow: one full pass over 1,294 samples with a 7.9M-parameter model on CPU.
-    The tolerance is loose enough to absorb the original run having been on CUDA
-    while this one is not — a handful of borderline argmaxes may flip.
+    Tier 3 ends it. BR-1/BR-3/BR-4 changed what three of the four branches
+    consume, so those weights have no home in this model and ``load_ckpt``
+    refuses them (T3-1 … T3-4). What is asserted instead is that the refusal
+    happens *at load*, before any evaluation runs — the failure mode worth
+    ruling out is a partial load that scores something and gets written down.
+
+    The end-to-end coverage this gave up returns with the first Tier-3 run:
+    ``RECORDED_VAL_F1`` is the number to re-pin then.
     """
     data_files = [
         Path(outputs_cfg.data.patches_data),
@@ -172,7 +179,7 @@ def test_stage3_checkpoint_reproduces_its_recorded_val_f1(outputs_cfg) -> None:
 
     from spectralquadnet.data.loaders import build_loaders, build_splits
     from spectralquadnet.data.mmap_store import DataStore
-    from spectralquadnet.engine.checkpoint import load_ckpt
+    from spectralquadnet.engine.checkpoint import SchemaTooOldError, load_ckpt
     from spectralquadnet.engine.evaluate import evaluate
     from spectralquadnet.models.ema import ModelEMA
     from spectralquadnet.models.spectral_quadnet import SpectralQuadNet
@@ -188,13 +195,20 @@ def test_stage3_checkpoint_reproduces_its_recorded_val_f1(outputs_cfg) -> None:
         model = SpectralQuadNet.from_config(outputs_cfg, store.require_wavelengths()).to(device)
         ema = ModelEMA(model, decay=outputs_cfg.ema_decay)
 
-        load_ckpt(stage_ckpt_path(outputs_cfg, 3), model, ema, device)
+        with pytest.raises(SchemaTooOldError, match="predates Tier 3"):
+            load_ckpt(stage_ckpt_path(outputs_cfg, 3), model, ema, device)
+
+        # The loader half of the gate still runs, and is still worth running:
+        # it is the only place the real mmap, the real split and the Tier-3
+        # side-input plumbing meet outside a training run.
         _, val_ldr, _ = build_loaders(outputs_cfg, store, device, train_idx, val_idx, test_idx, 256)
-        f1, _acc = evaluate(ema.shadow, val_ldr, device)
+        f1, _acc = evaluate(model, val_ldr, device)
     finally:
         DataStore.reset()
 
-    assert f1 == pytest.approx(RECORDED_VAL_F1[3], abs=5e-3)
+    # An untrained model on 90 classes. Asserted only to prove the pass ran.
+    assert 0.0 <= f1 < 0.20
+    assert RECORDED_VAL_F1[3] == pytest.approx(0.8745, abs=1e-4)
 
 
 @pytest.mark.regression

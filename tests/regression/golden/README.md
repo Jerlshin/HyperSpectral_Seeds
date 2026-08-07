@@ -7,7 +7,7 @@ Captured from the **pre-refactor** code by `scripts/capture_golden.py`
 |---|---|
 | Source git SHA | `886560fe531c99197f20c2ebd06e0bc7ded8ac8f` |
 | Source file | `HSI_modality_training/hsi_training.py` |
-| Captured (UTC) | 2026-08-06 16:46:18 |
+| Captured (UTC) | 2026-08-07 18:00:28 |
 | torch | 2.13.0 |
 | numpy | 2.1.3 |
 | Device | `cpu` |

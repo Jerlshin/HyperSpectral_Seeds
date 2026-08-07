@@ -18,9 +18,17 @@ patience: 80
 arcface_s: 48.0
 arcface_m: 0.35
 arcface_m0: 0.18
-arcface_m_delta: 0.10
+arcface_m_delta: 0.20 # HD-3's m_delta (was 0.10 under the F1-driven rule)
 margin_warmup_ep: 20
 focal_gamma: 1.5
+
+# ── Signed precision/recall margin rule (HD-3 / T2-8) ─────────────────
+# M(c) = clip(arcface_m + arcface_m_delta * (R_c - P_c), min, max).
+# pairwise_margin_delta scales the row-normalised confusion matrix term that
+# targets the margin at the confusion rather than at the class.
+arcface_m_min: 0.20
+arcface_m_max: 0.50
+pairwise_margin_delta: 0.10
 
 # ── Class-Difficulty-Weighted Sampling (also used by Stage 1/3 diagnostics) ──
 cdws_max_weight: 3.0

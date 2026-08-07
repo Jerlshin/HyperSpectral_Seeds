@@ -19,6 +19,17 @@ class FocalLoss(nn.Module):
     ``(1 - p_t) ** gamma`` is then applied on top, so the model keeps the
     smoothing's regularisation while still being pushed to focus its
     gradient on hard (low-confidence) examples.
+
+    ``p_t`` is the model's **unsmoothed** probability of the true class,
+    ``softmax(z)_y`` — not ``exp(-ce)`` (IMPROVEMENT_PLAN §2.4.5, §3.6 OP-1).
+    The two agree exactly at ``label_smoothing=0``, but with smoothing on, the
+    smoothed cross-entropy is bounded below by the target distribution's
+    entropy ``H(q)``, so ``exp(-ce) <= exp(-H(q)) < 1`` and the modulator can
+    never reach zero: at ``C=90``, ``gamma=1.5``, ``eps=0.10`` it bottoms out
+    at 0.3955 instead of 0, compressing focal loss into a mild monotone
+    rescaling of cross-entropy and mining the smoothing floor rather than the
+    model's confidence. Modulating on ``p_y`` restores the full ``[0, 1]``
+    range for every ``eps``.
     """
 
     def __init__(self, gamma: float = 1.5, label_smoothing: float = 0.0) -> None:
@@ -45,4 +56,8 @@ class FocalLoss(nn.Module):
             ce = -(soft * logp).sum(1)
         else:
             ce = F.nll_loss(logp, targets, reduction="none")
-        return ((1.0 - torch.exp(-ce)) ** self.gamma * ce).mean()
+        # The modulator reads the unsmoothed p_y; `ce` stays the smoothed
+        # cross-entropy. At ls == 0 the two are the same number, so Stage 2 and
+        # Stage 3 (which pass no smoothing) are bit-identical to before.
+        p_true = logp.gather(1, targets.view(-1, 1)).squeeze(1).exp()
+        return ((1.0 - p_true) ** self.gamma * ce).mean()

@@ -9,8 +9,22 @@ Orchestration only. Two details that read as arbitrary but are load-bearing:
   ``ep - 1 >= margin_warmup_ep`` the call site switches to ``arc_m=None`` so the
   head applies its own per-class adaptive margins instead of a global one.
 
-Mixup is off for the whole stage — ``train_one_epoch`` raises if ArcFace and
-mixup are combined.
+Mixup is off for the whole stage — ``train_one_epoch`` raises if a non-zero
+margin and mixup are combined.
+
+The per-class margins are calibrated once at stage entry by HD-3's **signed**
+rule (T2-8): ``M(c) = clip(m + m_delta (R_c - P_c), 0.20, 0.50)``, plus the
+row-normalised confusion matrix that aims a pairwise term at the classes each
+class is actually mistaken for. Both come from a fresh
+:func:`~spectralquadnet.engine.evaluate.evaluate_pr_and_confusion` pass on the
+shadow the stage inherits.
+
+**Which split that pass runs on is P-5 (T4-5).** ``calib_ldr`` — never used
+for a gradient, never used for selection — when a calibration split exists;
+``val_ldr`` when it does not, which is the pre-Tier-4 behaviour and exactly the
+contamination §2.1.4/C-9 is about: 270 fitted parameters read off the split
+that also selects the checkpoint. Once, not per epoch, either way —
+recalibrating every epoch would multiply that leak rather than reduce it.
 """
 
 from __future__ import annotations
@@ -22,13 +36,14 @@ from torch.utils.data import DataLoader
 
 from spectralquadnet.engine.checkpoint import save_ckpt
 from spectralquadnet.engine.diagnostics import compute_class_difficulty
-from spectralquadnet.engine.evaluate import evaluate
+from spectralquadnet.engine.evaluate import evaluate, evaluate_pr_and_confusion
 from spectralquadnet.engine.train_epoch import train_one_epoch
+from spectralquadnet.losses.auxiliary import GradNormAuxWeights
 from spectralquadnet.losses.contrastive import ProtoNCELoss, SupConLoss
 from spectralquadnet.losses.focal import FocalLoss
 from spectralquadnet.models.ema import ModelEMA
 from spectralquadnet.optim.param_groups import build_optimizer_s2
-from spectralquadnet.optim.schedulers import arcface_margin, sgdr_scheduler
+from spectralquadnet.optim.schedulers import arcface_margin, sgdr_scheduler, subcentre_tau
 from spectralquadnet.tracking.base import ExperimentTracker, NullTracker
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -44,28 +59,31 @@ def run_stage2(
     val_ldr: DataLoader[Any],
     device: torch.device,
     best_ckpt: str,
-    class_f1: dict[int, float] | None = None,
     tracker: ExperimentTracker | None = None,
+    calib_ldr: DataLoader[Any] | None = None,
 ) -> float:
     """Run Stage 2's ArcFace fine-tuning and return the best validation F1.
 
-    Switches the model onto the ArcFace head, warms the global angular
-    margin up to ``cfg.stage2.arcface_m`` over ``margin_warmup_ep`` epochs
-    (then lets per-class adaptive margins take over), ramps in SupCon/ProtoNCE
-    contrastive weights over the first 10 epochs, and trains under an SGDR
-    schedule with separate head/backbone learning rates.
+    Turns the shared head's margin on, warming it up to ``cfg.stage2.arcface_m``
+    over ``margin_warmup_ep`` epochs (then letting the per-class adaptive
+    margins take over), ramps in SupCon/ProtoNCE contrastive weights over the
+    first 10 epochs, and trains under an SGDR schedule with separate
+    head/backbone learning rates.
 
     Args:
         cfg: Composed experiment config.
-        model: Model to train; switched onto the ArcFace head.
+        model: Model to train.
         ema: EMA shadow; re-initialised from ``model`` at stage entry.
         train_ldr: Stage-2 (CDWS-weighted) training loader.
         val_ldr: Validation loader for per-epoch evaluation.
         device: Device to train on.
         best_ckpt: Path to write the best-F1 checkpoint to.
-        class_f1: Optional per-class F1 (from Stage 1) used to initialise the
-            ArcFace head's per-class margins before training starts.
         tracker: Experiment tracker for progress reporting; ``None`` logs nowhere.
+        calib_ldr: Calibration loader (P-5 / T4-5). The 90 margins, the
+            ``(90, 90)`` confusion matrix and the CDWS weights are all fitted
+            here, so ``val_ldr`` carries no fitted parameter and stays a clean
+            selection split. ``None`` fits them on ``val_ldr`` — the
+            pre-Tier-4 behaviour.
 
     Returns:
         Best validation macro-F1 (across the live model and its EMA shadow)
@@ -73,17 +91,29 @@ def run_stage2(
     """
     trk = tracker if tracker is not None else NullTracker()
     model.set_dropout(cfg.stage2.dropout)
-    model.use_arcface(True)
-    model.freeze_head("linear")
-    model.unfreeze_head("arcface")
 
     ema.reinit_from(model)
     ema.set_dropout(cfg.stage2.dropout)
-    ema.shadow.use_arcface(True)
 
-    if class_f1 is not None:
-        model.arcface_head.update_margins_from_f1(class_f1)
-        ema.shadow.arcface_head.update_margins_from_f1(class_f1)
+    # One name, one meaning: `val_ldr` selects, `fit_ldr` fits (P-5 / T4-5).
+    fit_ldr = calib_ldr if calib_ldr is not None else val_ldr
+    fit_split = "calib" if calib_ldr is not None else "val"
+
+    # ── HD-3 calibration (T2-8), on the calibration split (T4-5) ──────
+    precision, recall, confusion = evaluate_pr_and_confusion(
+        ema.shadow, fit_ldr, device, cfg.data.num_classes
+    )
+    for head in (model.arcface_head, ema.shadow.arcface_head):
+        head.update_margins_from_pr(precision, recall)
+        head.set_confusion(confusion)
+    hardest = sorted(recall, key=lambda c: recall[c])[:5]
+    trk.log_message(
+        f"HD-3 margins from R−P on {fit_split}. Five lowest-recall classes: "
+        + "  ".join(
+            f"c{c}: R={recall[c]:.2f} P={precision[c]:.2f} m={model.arcface_head.margins[c]:.2f}"
+            for c in hardest
+        )
+    )
 
     focal = FocalLoss(gamma=cfg.stage2.focal_gamma)
     supcon = SupConLoss(temperature=cfg.stage2.supcon_temp)
@@ -97,6 +127,8 @@ def run_stage2(
         T_mult=cfg.stage2.sgdr_Tmult,
         eta_min_frac=cfg.stage2.min_lr / cfg.stage2.head_lr,
     )
+
+    aux_weights = GradNormAuxWeights(alpha=cfg.aux_gradnorm_alpha)
 
     sc_w = cfg.stage2.supcon_weight
     pt_w = cfg.stage2.proto_weight
@@ -118,6 +150,8 @@ def run_stage2(
             f"Losses: Focal(γ={cfg.stage2.focal_gamma}) + SupCon(w={sc_w}) + ProtoNCE(w={pt_w})",
             f"Batch: {cfg.stage2.bal_n_cls} cls × {cfg.stage2.bal_n_spc} spc = "
             f"{cfg.stage2.bal_n_cls * cfg.stage2.bal_n_spc} | Primary metric: macro-F1",
+            f"Fitted on: {fit_split} ({len(fit_ldr.dataset)} patches)  |  "  # type: ignore[arg-type]
+            f"Selected on: val ({len(val_ldr.dataset)} patches)",  # type: ignore[arg-type]
         ],
     )
 
@@ -134,6 +168,11 @@ def run_stage2(
         ramp = min(1.0, ep / 10.0)
         sc_now = sc_w * ramp
         pt_now = pt_w * ramp
+        tau_now = subcentre_tau(
+            ep, ep_total, cfg.model.subcenter_tau_init, cfg.model.subcenter_tau_final
+        )
+        model.set_subcentre_tau(tau_now)
+        ema.shadow.set_subcentre_tau(tau_now)
 
         tl, ta = train_one_epoch(
             cfg,
@@ -154,6 +193,7 @@ def run_stage2(
             current_ep=ep,
             total_ep=ep_total,
             tracker=trk,
+            aux_weights=aux_weights,
         )
         scheduler.step()
 
@@ -161,6 +201,9 @@ def run_stage2(
         f1_ema, acc_ema = evaluate(ema.shadow, val_ldr, device)
         best_ep_f1 = max(f1_live, f1_ema)
         best_ep_acc = max(acc_live, acc_ema)
+        # See stage1_progressive.py — `final_eval` evaluates whichever of the
+        # two won the max (T1-8 / §2.1.4).
+        best_ep_source = "ema" if f1_ema >= f1_live else "live"
         head_lr = optimizer.param_groups[0]["lr"]
         back_lr = optimizer.param_groups[2]["lr"]
         saved = ""
@@ -168,7 +211,7 @@ def run_stage2(
         if best_ep_f1 > best_f1:
             best_f1, no_improve = best_ep_f1, 0
             _cf1_s2, _cdws_s2 = compute_class_difficulty(
-                cfg, ema.shadow, val_ldr, device, "S2", tracker=trk, step=ep
+                cfg, ema.shadow, fit_ldr, device, "S2", tracker=trk, step=ep
             )
             save_ckpt(
                 cfg,
@@ -179,6 +222,7 @@ def run_stage2(
                 ema,
                 val_f1=best_ep_f1,
                 val_acc=best_ep_acc,
+                best_source=best_ep_source,
                 class_f1=_cf1_s2,
                 cdws_weights=_cdws_s2,
                 s2_val_f1=best_ep_f1,
@@ -218,6 +262,10 @@ def run_stage2(
                 "sched/arcface_margin": m_now,
                 "sched/supcon_weight": sc_now,
                 "sched/proto_weight": pt_now,
+                "sched/subcentre_tau": tau_now,
+                "margin/mean": float(model.arcface_head.margins.mean()),
+                "margin/min": float(model.arcface_head.margins.min()),
+                "margin/max": float(model.arcface_head.margins.max()),
             },
             step=ep,
         )
@@ -226,5 +274,4 @@ def run_stage2(
             trk.log_message(f"Early stopping at epoch {ep}.", level="warn")
             break
 
-    model.unfreeze_head("linear")
     return best_f1

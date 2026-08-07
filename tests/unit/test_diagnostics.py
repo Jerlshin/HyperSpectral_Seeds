@@ -56,8 +56,10 @@ def test_branch_grad_norms_match_a_hand_computed_l2() -> None:
 def test_branch_grad_norms_omit_branches_without_gradients() -> None:
     """A frozen head has no `.grad`; it must be absent, not reported as 0.0.
 
-    Stage 1 freezes ``arcface_head`` and Stage 2 freezes ``linear_head``, so this
-    distinguishes "not training" from "training but flat".
+    No stage freezes a head any more — HD-1 (T2-10) left one, and it trains
+    from Stage 1's first epoch — but the distinction between "not training" and
+    "training but flat" is the one this reporting exists to make, and a caller
+    is free to freeze anything.
     """
     model = _Toy()
     model.branch_a.weight.grad = torch.ones(4, 4)

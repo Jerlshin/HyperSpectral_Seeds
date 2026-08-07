@@ -1,0 +1,64 @@
+# 40-band SPA-selected VIS-NIR patches, 90 rice-seed varieties — P-fix protocol.
+#
+# Same arrays as `spa40_90class.yaml`, different protocol: this is the config
+# IMPROVEMENT_PLAN §4.4 means by "RE-BASELINE everything on P-fix". It turns on
+# P-1 (scan-disjoint split) and P-5 (calibration split); P-2/P-3/P-4 are
+# properties of the arrays themselves and arrive when
+# `python scripts/prepare_dataset.py` is re-run, which is also what writes the
+# `groups.npy` this config requires.
+#
+# Expect the headline number to FALL. That is the correct direction, and the
+# difference between the two protocols is itself a result worth reporting
+# (§4.5): an ungrouped 0.889 is a claim about acquisition sessions; a grouped
+# number is a claim about rice varieties.
+defaults:
+  - base_data
+  - _self_
+
+# ── Paths (relative to the process CWD) ────────────────────────────────
+patches_data: ./dataset/patches_spa_40b.npy
+labels_path: ./dataset/labels.npy
+wavelength_path: ./dataset/wavelengths_spa_40b.csv
+groups_path: ./dataset/groups.npy
+
+# ── Tier-3 side inputs (FE-2 / T3-7, FU-4 / P-4) ──────────────────────
+# Both arrive from the same `scripts/prepare_dataset.py` run that writes
+# `groups.npy`, and this config already fails fast without that run. With them
+# the mask is an input rather than a threshold (FE-2) and morphology is a fifth
+# fusion modality (FU-4) instead of eight numbers the pipeline computes, gates
+# on and discards (M-13).
+masks_path: ./dataset/masks.npy
+morphology_path: ./dataset/morphology.npy
+
+# ── Geometry ──────────────────────────────────────────────────────────
+num_bands: 40
+num_classes: 90
+
+# ── Input perturbation used by RiceSeedDataset augmentation ───────────
+max_cutout_bands: 3
+noise_std: 0.02
+
+# ── Same-class CutMix geometry (OP-6 / T2-7) ──────────────────────────
+cutmix_bands: 8
+cutmix_spatial: 24
+
+# ── Split protocol (P-1, P-5 / T4-1, T4-5) ────────────────────────────
+# `grouped` holds out whole scans: no scan in train appears in val or test.
+#
+# On this dataset every variety was captured exactly twice, so a class has two
+# groups and `split_eval_frac` can only resolve to "one scan out" — the split
+# realises ~50/50 rather than 70/30, and val/test are two halves of the same
+# held-out scan. Both facts are reported at startup rather than assumed; see
+# `SplitReport`. Sweeping `split_fold` over {0, 1} is the leave-one-scan-out
+# cross-validation §3.1 P-1 names, and is the honest way to spend the other
+# half of the data.
+split_scheme: grouped
+split_eval_frac: 0.30
+split_fold: 0
+
+# Fraction of the *training pool* held out for calibration. The margins, the
+# CDWS weights and the Phase-3 oversampling weights are fitted here, so that
+# the split which selects the checkpoint carries no fitted parameters at all.
+# 0.15 of a ~50% train pool is the plan's 10-of-70 rescaled to what a
+# two-scan-per-class dataset can actually give.
+calib_frac: 0.15

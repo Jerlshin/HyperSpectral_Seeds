@@ -62,6 +62,57 @@ def arcface_margin(ep: int, m0: float, m_target: float, warmup_ep: int) -> float
     return m0 + (m_target - m0) * 0.5 * (1 - math.cos(math.pi * ep / max(warmup_ep, 1)))
 
 
+def stage3_margin_kappa(ep: int, cycle_len: int, total_ep: int, kappa_final: float) -> float:
+    """Stage 3's multiplicative margin factor ``kappa``, **frozen within a cycle**.
+
+    Stage 3 keeps Stage 2's per-class margin vector ``M(c)`` and trains on
+    ``m_c(e) = M(c) * kappa(e)``, ``kappa: 1.0 -> kappa_final`` linearly across
+    cycles (OP-4.2/4.3 / T2-1). Two properties matter and neither is optional:
+
+    * **Multiplicative on the vector**, so Stage 2's per-class calibration
+      survives. The scalar schedule this replaces threw the vector away at
+      Stage-3 entry and reintroduced a margin discontinuity of the same kind
+      Stage 2 spent 20 epochs warming through (§2.5.2 C-7a).
+    * **Constant across a cycle**, because SWA averages iterates of *one*
+      objective. Changing the margin every epoch makes the trajectory a
+      translation rather than an oscillation, and the mean of a translating
+      sequence is a point it never visited (§2.5.3 C-7b).
+
+    Args:
+        ep: 1-based Stage-3 epoch.
+        cycle_len: Epochs per cyclic-LR cycle; the margin steps only here.
+        total_ep: Total Stage-3 epochs, used to count the cycles.
+        kappa_final: ``kappa`` at the last cycle.
+
+    Returns:
+        The factor to multiply the whole margin vector by this epoch.
+    """
+    cycles = max(1, math.ceil(total_ep / max(cycle_len, 1)))
+    index = min((ep - 1) // max(cycle_len, 1), cycles - 1)
+    if cycles == 1:
+        return 1.0
+    return 1.0 + (kappa_final - 1.0) * index / (cycles - 1)
+
+
+def subcentre_tau(ep: int, total_ep: int, tau_init: float, tau_final: float) -> float:
+    """Cosine anneal of the sub-centre pooling temperature (HD-2(i) / T2-9).
+
+    ``tau_init`` keeps every sub-centre in receipt of gradient while the head
+    is still deciding what its prototypes are; ``tau_final`` hardens the
+    assignment back towards the ``max_k`` the head is defined on. Cosine rather
+    than linear so most of the annealing happens late, after the sub-centres
+    have separated.
+
+    Args:
+        ep: 1-based epoch within the stage.
+        total_ep: Total epochs in the stage.
+        tau_init: Temperature at ``ep = 1``.
+        tau_final: Temperature at ``ep = total_ep``.
+    """
+    progress = min(max((ep - 1) / max(total_ep - 1, 1), 0.0), 1.0)
+    return tau_final + (tau_init - tau_final) * 0.5 * (1.0 + math.cos(math.pi * progress))
+
+
 def phase_aware_lr(cfg: ExperimentConfig | Any, p1_end: int, p2_end: int) -> Callable[[int], float]:
     """Build Stage 1's three-phase LR multiplier schedule.
 

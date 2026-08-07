@@ -13,6 +13,13 @@ class MaskedSpectralECA(nn.Module):
     Residual Channel Attention for Hyperspectral data.
     Prevents band suppression using background masking, local cross-band
     convolutions (ECA), and a residual connection.
+
+    FE-2 / T3-7: ``mask`` is now an argument rather than a threshold this module
+    re-derives. Passing the persisted fill map makes the two statistics below
+    functions of the seed's *pixels* rather than of whether the background
+    happens to still be at zero, which is what makes them invariant to any
+    global brightness transform (§3.2 FE-2, and the prerequisite for §3.7's
+    TTA views).
     """
 
     def __init__(self, channels: int) -> None:
@@ -24,14 +31,19 @@ class MaskedSpectralECA(nn.Module):
         # 1D Conv processes adjacent spectral bands together to find continuous features
         self.conv = nn.Conv1d(2, 1, kernel_size=k_size, padding=k_size // 2, bias=False)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
         # 1. Background-Aware Masking
-        mask = (x.abs().sum(dim=1, keepdim=True) > 1e-5).float()
+        # Imported here rather than at module scope: `stats_ops` imports nothing
+        # from `blocks/`, but a top-level import would still make the two modules
+        # mutually reachable and this package deliberately has no import cycles.
+        from spectralquadnet.models.stats_ops import foreground_mask
+
+        mask = foreground_mask(x, mask)
         valid_pixels = mask.sum(dim=[2, 3]).clamp(min=1e-5)
 
         # 2. Extract accurate physical statistics (strictly ignoring the black background)
         x_mean = (x * mask).sum(dim=[2, 3]) / valid_pixels
-        x_max = x.masked_fill(mask == 0, -1e4).amax(dim=[2, 3])
+        x_max = x.masked_fill(mask <= 0, -1e4).amax(dim=[2, 3])
         x_max = x_max.masked_fill(x_max == -1e4, 0.0)
 
         # 3. Stack for 1D Convolution: Shape (Batch, 2, Channels)

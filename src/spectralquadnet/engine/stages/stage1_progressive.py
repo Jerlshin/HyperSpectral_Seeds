@@ -10,6 +10,19 @@ All progress reporting goes through the injected ``tracker``: the banner
 block calls :meth:`~spectralquadnet.tracking.base.ExperimentTracker.banner`,
 status notices call ``log_message``, and the per-epoch line is a
 ``log_row``/``log_scalars`` pair.
+
+Since HD-1 (T2-10) this stage trains the **same** sub-centre cosine head as
+Stages 2-3, at ``cfg.stage1.arcface_m = 0``. There is no head to select and
+none to freeze; the transition to Stage 2 turns a margin on and changes
+nothing else, which is what §2.4.6's six-way discontinuity was about.
+
+Since P-5 (T4-5) the stage reads **two** evaluation loaders and keeps their
+jobs apart: ``val_ldr`` decides which epoch is checkpointed, and ``calib_ldr``
+is where the CDWS weights and the Phase-3 oversampling weights are measured.
+Both were ``val_ldr`` before, which is C-9: the weights were fitted on the same
+1,294 patches that then chose the checkpoint, and the val→test gap 0-C measured
+(+0.011 on the two checkpoints selected that way, −0.003 on the one that was
+not) is what that costs.
 """
 
 from __future__ import annotations
@@ -28,12 +41,12 @@ from spectralquadnet.engine.checkpoint import save_ckpt
 from spectralquadnet.engine.diagnostics import compute_class_difficulty
 from spectralquadnet.engine.evaluate import evaluate
 from spectralquadnet.engine.train_epoch import train_one_epoch
-from spectralquadnet.losses.auxiliary import _aux_loss_weight
+from spectralquadnet.losses.auxiliary import GradNormAuxWeights, _aux_loss_weight
 from spectralquadnet.losses.contrastive import ProtoNCELoss, SupConLoss
 from spectralquadnet.losses.focal import FocalLoss
 from spectralquadnet.models.ema import ModelEMA
 from spectralquadnet.optim.param_groups import build_optimizer_s1
-from spectralquadnet.optim.schedulers import phase_aware_lr
+from spectralquadnet.optim.schedulers import phase_aware_lr, subcentre_tau
 from spectralquadnet.tracking.base import ExperimentTracker, NullTracker
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -52,6 +65,7 @@ def run_stage1(
     device: torch.device,
     best_ckpt: str,
     tracker: ExperimentTracker | None = None,
+    calib_ldr: DataLoader[Any] | None = None,
 ) -> float:
     """Run Stage 1's full three-phase curriculum and return the best validation F1.
 
@@ -66,7 +80,7 @@ def run_stage1(
     Args:
         cfg: Composed experiment config.
         store: Memory-mapped patch store, needed to build the Phase-3 loader.
-        model: Model to train; the linear head is used (ArcFace stays frozen).
+        model: Model to train; the shared cosine head runs at zero margin.
         ema: EMA shadow, re-initialised at the Phase 2 and Phase 3 boundaries.
         loaders_by_phase: Loaders for phases 1 and 2, keyed by phase number;
             the Phase-3 loader is built internally once Phase 3 begins.
@@ -74,15 +88,20 @@ def run_stage1(
         device: Device to train on.
         best_ckpt: Path to write the best-F1 checkpoint to.
         tracker: Experiment tracker for progress reporting; ``None`` logs nowhere.
+        calib_ldr: Calibration loader (P-5 / T4-5). Every *fitted* quantity —
+            the CDWS weights and the Phase-3 oversampling weights — is measured
+            on this split, so it is never measured on the split that also
+            selects the checkpoint. ``None`` falls back to ``val_ldr``, the
+            pre-Tier-4 behaviour.
 
     Returns:
         Best validation macro-F1 (across the live model and its EMA shadow)
         seen during the run.
     """
     trk = tracker if tracker is not None else NullTracker()
-    model.use_arcface(False)
-    model.unfreeze_head("linear")
-    model.freeze_head("arcface")
+    # One name, one meaning: `val_ldr` selects, `fit_ldr` fits.
+    fit_ldr = calib_ldr if calib_ldr is not None else val_ldr
+    fit_split = "calib" if calib_ldr is not None else "val"
 
     ep_total = cfg.stage1.epochs
     p1_end = int(ep_total * cfg.stage1.phase1_frac)
@@ -110,6 +129,9 @@ def run_stage1(
     supcon_p3 = SupConLoss(temperature=0.10)
     proto_p3 = ProtoNCELoss(temperature=0.10)
 
+    # OP-2 / T2-6: the per-branch auxiliary balance, measured rather than asserted.
+    aux_weights = GradNormAuxWeights(alpha=cfg.aux_gradnorm_alpha)
+
     # Phase 3 loader — built lazily at the Phase 2 → 3 boundary
     phase3_ldr: DataLoader[Any] | None = None
     class_f1_phase2: dict[int, float] = {}
@@ -127,7 +149,11 @@ def run_stage1(
             f"hard_thresh={cfg.stage1.p3_hard_f1_thresh}",
             f"P3 contrastive: SupCon(w={cfg.stage1.p3_supcon_weight}) "
             f"ProtoNCE(w={cfg.stage1.p3_proto_weight})",
-            "Branch aux weights: A/B×2.0  C/D×1.0  |  Drop probs: A=0 B=0 C=0.30 D=0.20",
+            f"Branch aux weights: GradNorm α={cfg.aux_gradnorm_alpha} from A/B×2.0 C/D×1.0  |  "
+            f"Head: cosine (m={cfg.stage1.arcface_m})  τ: "
+            f"{cfg.model.subcenter_tau_init} → {cfg.model.subcenter_tau_final}",
+            f"Fitted on: {fit_split} ({len(fit_ldr.dataset)} patches)  |  "  # type: ignore[arg-type]
+            f"Selected on: val ({len(val_ldr.dataset)} patches)",  # type: ignore[arg-type]
         ],
     )
 
@@ -158,9 +184,11 @@ def run_stage1(
 
         # ── Phase 3 loader construction (once, at first Phase-3 epoch) ─
         if phase == 3 and phase3_ldr is None:
-            trk.log_message("Phase 2→3 boundary: measuring per-class F1 for oversampling ...")
+            trk.log_message(
+                f"Phase 2→3 boundary: measuring per-class F1 for oversampling on {fit_split} ..."
+            )
             class_f1_phase2, _ = compute_class_difficulty(
-                cfg, ema.shadow, val_ldr, device, "Phase2→3", tracker=trk, step=ep
+                cfg, ema.shadow, fit_ldr, device, "Phase2→3", tracker=trk, step=ep
             )
             phase3_ldr = build_phase3_loader(
                 cfg,
@@ -191,6 +219,13 @@ def run_stage1(
 
         use_mx = phase != 3  # no Mixup in Phase 3
 
+        # HD-2(i): every sub-centre keeps receiving gradient while tau is large.
+        tau_now = subcentre_tau(
+            ep, ep_total, cfg.model.subcenter_tau_init, cfg.model.subcenter_tau_final
+        )
+        model.set_subcentre_tau(tau_now)
+        ema.shadow.set_subcentre_tau(tau_now)
+
         # Phase 3 uses SupCon + ProtoNCE for better embedding geometry
         sc_w_now = cfg.stage1.p3_supcon_weight if phase == 3 else 0.0
         pt_w_now = cfg.stage1.p3_proto_weight if phase == 3 else 0.0
@@ -212,9 +247,11 @@ def run_stage1(
             proto=proto_p3 if phase == 3 else None,
             proto_weight=pt_w_now,
             accum_steps=cfg.stage1.accum,
+            arc_m=cfg.stage1.arcface_m,
             current_ep=ep,
             total_ep=ep_total,
             tracker=trk,
+            aux_weights=aux_weights,
         )
         scheduler.step()
 
@@ -223,6 +260,11 @@ def run_stage1(
         f1_ema, acc_ema = evaluate(ema.shadow, val_ldr, device)
         best_ep_f1 = max(f1_live, f1_ema)
         best_ep_acc = max(acc_live, acc_ema)
+        # Which of the two `best_ep_f1` came from. `final_eval` evaluates that
+        # one, so the reported test number describes the model that was
+        # actually selected (T1-8 / §2.1.4). Ties keep the EMA shadow, the
+        # historical choice.
+        best_ep_source = "ema" if f1_ema >= f1_live else "live"
         lr_now = optimizer.param_groups[0]["lr"]
         aux_w_now = _aux_loss_weight(cfg, ep, ep_total)
         saved = ""
@@ -231,7 +273,7 @@ def run_stage1(
         if best_ep_f1 > best_f1:
             best_f1, no_improve = best_ep_f1, 0
             _cf1, _cdws = compute_class_difficulty(
-                cfg, ema.shadow, val_ldr, device, "S1", tracker=trk, step=ep
+                cfg, ema.shadow, fit_ldr, device, "S1", tracker=trk, step=ep
             )
             save_ckpt(
                 cfg,
@@ -242,6 +284,7 @@ def run_stage1(
                 ema,
                 val_f1=best_ep_f1,
                 val_acc=best_ep_acc,
+                best_source=best_ep_source,
                 class_f1=_cf1,
                 cdws_weights=_cdws,
                 arcface_init_done=False,
@@ -279,6 +322,7 @@ def run_stage1(
                 "sched/lr": lr_now,
                 "sched/label_smooth": ls_now,
                 "sched/aux_weight": aux_w_now,
+                "sched/subcentre_tau": tau_now,
                 "sched/phase": float(phase),
             },
             step=ep,
@@ -288,5 +332,4 @@ def run_stage1(
             trk.log_message(f"Early stopping at epoch {ep}.", level="warn")
             break
 
-    model.unfreeze_head("arcface")
     return best_f1

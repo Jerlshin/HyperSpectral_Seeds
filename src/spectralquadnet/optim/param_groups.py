@@ -1,4 +1,4 @@
-"""Weight-decay parameter grouping and the three per-stage optimiser builders.
+"""Weight-decay parameter grouping, per-group clipping, and the optimiser builders.
 
 The two grouping rules are load-bearing:
 
@@ -9,6 +9,14 @@ The two grouping rules are load-bearing:
   group order — head-wd, head-no-wd, backbone-wd, backbone-no-wd — is what
   ``stage2_arcface.py`` reads back as ``param_groups[0]`` and ``[2]`` when it
   logs the two learning rates, so the concatenation order must not change.
+
+:func:`clip_grad_norm_by_group` is OP-3 / T2-5. One global
+``clip_grad_norm_(model.parameters(), 1.0)`` rescales *every* parameter by
+``1/||g||`` whenever the total norm exceeds the threshold, and the head's
+gradients are amplified by ``s = 48`` relative to the backbone's. A single
+saturated batch in the head therefore divided the whole model's effective
+learning rate (§2.5.8 M-10). Clipping the three groups independently decouples
+them.
 """
 
 from __future__ import annotations
@@ -22,6 +30,18 @@ import torch.optim as optim
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from spectralquadnet.config.schema import ExperimentConfig
+
+#: The three independently-clipped parameter groups, in match order.
+#:
+#: A parameter joins the first group whose prefix tuple it matches; anything
+#: unmatched is ``backbone``, which is why that entry's tuple is empty. The
+#: prefixes are ``SpectralQuadNet``'s own attribute names, the same strings
+#: ``build_optimizer_s2`` and ``engine/diagnostics.py`` match on.
+CLIP_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("head", ("arcface_head.",)),
+    ("fusion", ("cross_interaction.", "embed_net.")),
+    ("backbone", ()),
+)
 
 
 def _wd_groups(
@@ -50,6 +70,47 @@ def _wd_groups(
         {"params": wd, "lr": lr, "weight_decay": cfg.weight_decay},
         {"params": no_wd, "lr": lr, "weight_decay": 0.0},
     ]
+
+
+def split_by_clip_group(model: nn.Module) -> dict[str, list[torch.nn.Parameter]]:
+    """Partition a model's trainable parameters into the :data:`CLIP_GROUPS`.
+
+    Every trainable parameter lands in exactly one group, so the three
+    per-group clips together cover the same set the one global clip did.
+    Groups that own no parameter are omitted rather than returned empty.
+    """
+    groups: dict[str, list[torch.nn.Parameter]] = {}
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        for label, prefixes in CLIP_GROUPS:
+            if not prefixes or name.startswith(prefixes):
+                groups.setdefault(label, []).append(param)
+                break
+    return groups
+
+
+def clip_grad_norm_by_group(model: nn.Module, max_norm: float) -> dict[str, torch.Tensor]:
+    """Clip head, fusion and backbone gradients independently (OP-3 / T2-5).
+
+    Call it exactly where the single global ``clip_grad_norm_`` used to be:
+    after ``backward()`` (and after ``scaler.unscale_``), before the step.
+
+    Args:
+        model: The live model, with gradients populated.
+        max_norm: Per-group maximum L2 norm — the same ``cfg.grad_clip`` the
+            global clip used, now applied three times rather than once.
+
+    Returns:
+        ``{"head": tensor, "fusion": tensor, "backbone": tensor}`` — each
+        group's **pre-clip** norm, left on the device as a 0-dim tensor so a
+        caller running this every step is not forced into a host
+        synchronisation. Groups owning no parameter are absent.
+    """
+    return {
+        label: nn.utils.clip_grad_norm_(params, max_norm)
+        for label, params in split_by_clip_group(model).items()
+    }
 
 
 def build_optimizer_s1(cfg: ExperimentConfig | Any, model: nn.Module, lr: float) -> optim.AdamW:

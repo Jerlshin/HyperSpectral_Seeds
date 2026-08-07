@@ -35,7 +35,9 @@ def download(cfg: PrepConfig | None = None) -> None:
         cfg.data_url,
     ]
 
-    if subprocess.run(cmd).returncode != 0:  # noqa: PLW1510 - `check=True` would raise CalledProcessError instead of this message
+    if (
+        subprocess.run(cmd).returncode != 0
+    ):  # noqa: PLW1510 - `check=True` would raise CalledProcessError instead of this message
         raise RuntimeError("Download failed.")
 
     print("Download complete.")

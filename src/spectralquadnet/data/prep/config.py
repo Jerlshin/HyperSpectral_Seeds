@@ -22,12 +22,25 @@ DATA_URL = (
 
 @dataclass
 class PrepConfig:
-    """Settings for download → segmentation → patch extraction."""
+    """Settings for download → segmentation → patch extraction.
+
+    Tier 4 adds one setting (``radiometry``) and five output arrays. The
+    outputs are not optional: ``groups.npy`` is what makes a grouped split
+    constructible at all (P-1), and the other four are the data the model was
+    computing badly or throwing away (P-2, P-3, P-4).
+    """
 
     root: Path = Path("./dataset")
     data_url: str = DATA_URL
     patch_size: int = 64
     num_bands: int = 256
+
+    #: P-2 / T4-2. ``auto`` divides by a white panel when the archive has one
+    #: and applies per-pixel SNV when it does not — which is this archive's
+    #: case, verified: its only reference cubes are ``black.hdr``. ``none``
+    #: reproduces the pre-Tier-4 radiance domain, and therefore §2.1.1's leak
+    #: channel; it exists so the two can be compared rather than argued about.
+    radiometry: str = "auto"
 
     @property
     def zip_file(self) -> Path:
@@ -40,6 +53,33 @@ class PrepConfig:
     @property
     def labels_path(self) -> Path:
         return self.root / "labels.npy"
+
+    # ── Tier-4 outputs ────────────────────────────────────────────────
+
+    @property
+    def groups_path(self) -> Path:
+        """P-1 / T4-1 — ``(N,)`` int64 cube-level ``scan_id`` per patch."""
+        return self.root / "groups.npy"
+
+    @property
+    def scan_table_path(self) -> Path:
+        """P-1 / T4-1 — ``scan_id`` → session, variety, label, member, patch count."""
+        return self.root / "scan_table.csv"
+
+    @property
+    def masks_path(self) -> Path:
+        """P-3 / T4-3 — ``(N, S, S)`` float16 resized mask, i.e. the fill map alpha."""
+        return self.root / "masks.npy"
+
+    @property
+    def gain_path(self) -> Path:
+        """P-2 / T4-2 — ``(N, 2, S, S)`` float32 per-pixel ``(mean, sd)`` along lambda."""
+        return self.root / "gain.npy"
+
+    @property
+    def morphology_path(self) -> Path:
+        """P-4 / T4-4 — ``(N, 8)`` float32 morphometrics, unstandardised."""
+        return self.root / "morphology.npy"
 
     def ensure_root(self) -> Path:
         """Create the dataset root directory (and parents) if it doesn't exist."""
@@ -61,10 +101,25 @@ class BandSelectionConfig:
     corr_threshold: float = 0.995  # Drop band if |r| > this with any kept band
 
     # Band selection
-    n_select_max: int = 100  # Rank up to this many bands in mRMR / SPA
+    #
+    # T4-6 / M-14. Both of these ran to 100 and were validated at ten counts
+    # ending at 100, but the shipped run recorded a curve that stops at its own
+    # chosen k = 40 (`dataset/band_selection_report.csv`), so the "elbow at 40"
+    # claim is unfalsifiable from the artifact: the peak the 98 % threshold is
+    # measured against is the peak of a truncated curve. The curve now runs to
+    # the full band count, which is the only thing that makes an elbow
+    # demonstrable rather than asserted.
+    n_select_max: int = 256  # Rank up to this many bands in mRMR / SPA
     n_candidates: list[int] = field(
-        default_factory=lambda: [5, 10, 15, 20, 25, 30, 40, 50, 70, 100]
+        default_factory=lambda: [5, 10, 15, 20, 25, 30, 40, 50, 70, 100, 128, 160, 192, 224, 256]
     )
+    #: T4-6 / F-3. Optional CSV of the **deployed** estimator's accuracy curve
+    #: (columns ``n_bands`` and ``accuracy``), i.e. SpectralQuadNet itself
+    #: rather than LDA/LinearSVC on mean spectra. When set, it — not the proxy
+    #: classifiers — decides the winner and the elbow. F-3 predicts the curve
+    #: does not plateau at k = 40 under this estimator, and the six runs that
+    #: would produce it are the cost of settling that.
+    deployed_curve_path: str | None = None
 
     # mRMR: k-NN for MI estimation (5 is standard)
     mi_neighbors: int = 5
