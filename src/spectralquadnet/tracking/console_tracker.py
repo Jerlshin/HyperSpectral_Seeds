@@ -1,36 +1,25 @@
-"""Rich terminal rendering — the default backend (REFACTOR_PLAN.md §4.1).
+"""Rich terminal rendering — the default tracking backend.
 
-This is the backend that replaces the baseline's ``print(...)`` surface. It has
-zero external-service dependencies, so the framework works offline out of the
-box, and it renders the *same information* the monolith printed:
-
-=========================================  ===============================
-Baseline print site                        Rendered here as
-=========================================  ===============================
-``print(f"{'═'*66}")`` + stage title       :meth:`banner` — a bordered panel
-``print("[INFO] …")`` / ``[WARN]``         :meth:`log_message`
-``print(f"Ep {ep:03d}/{ep_total} │ …")``   :meth:`log_row` — a running table
-``classification_report`` per-class dump   :meth:`log_table`
-=========================================  ===============================
+Has zero external-service dependencies, so the framework works offline out
+of the box.
 
 Two deliberate design points:
 
 * **Text is never wrapped or cropped.** Every text-emitting method passes
-  ``soft_wrap=True``, because ``rich`` otherwise wraps at the detected terminal
-  width — and falls back to 80 columns whenever stdout is not a TTY, which is
-  exactly the case when a run is piped to a log file. The baseline's ``print``
-  never wrapped, so neither does this.
+  ``soft_wrap=True``, because ``rich`` otherwise wraps at the detected
+  terminal width — and falls back to 80 columns whenever stdout is not a
+  TTY, which is exactly the case when a run is piped to a log file.
 * **Rows stream, they do not redraw.** A Stage 1 run is 600 epochs; a
   ``rich.live`` table that grows without bound would scroll the terminal's
-  scrollback into uselessness and break piping to a log file. Instead the first
-  row of each table emits a header, column widths are frozen from it, and every
-  subsequent row is padded to match — so output stays aligned while remaining
-  append-only, exactly like the baseline's line-per-epoch stream.
-* **Scalars are quiet by default.** Everything in the baseline's epoch line
-  arrives through :meth:`log_row`; the §4.2 diagnostics (per-branch losses,
-  per-branch gradient norms) arrive through :meth:`log_scalars` and are meant to
-  be read as curves in W&B/TensorBoard. Rendering both would print every epoch
-  twice. Set ``tracking.show_diagnostics=true`` to echo them here as well.
+  scrollback into uselessness and break piping to a log file. Instead the
+  first row of each table emits a header, column widths are frozen from it,
+  and every subsequent row is padded to match — so output stays aligned
+  while remaining append-only.
+* **Scalars are quiet by default.** The epoch summary arrives through
+  :meth:`log_row`; per-branch diagnostics (losses, gradient norms) arrive
+  through :meth:`log_scalars` and are meant to be read as curves in
+  W&B/TensorBoard. Rendering both would print every epoch twice. Set
+  ``tracking.show_diagnostics=true`` to echo them here as well.
 """
 
 from __future__ import annotations
@@ -61,8 +50,8 @@ class ConsoleTracker:
     """Render the run to a terminal with ``rich``.
 
     Args:
-        show_diagnostics: Echo :meth:`log_scalars` groups to the terminal. Off by
-            default so console output matches the pre-refactor line density.
+        show_diagnostics: Echo :meth:`log_scalars` groups to the terminal. Off
+            by default so console output stays limited to one line per epoch.
         console: Injected :class:`rich.console.Console`, for tests.
     """
 
@@ -94,14 +83,13 @@ class ConsoleTracker:
         self._console.print(table)
 
     def log_hyperparams(self, cfg: dict[str, Any]) -> None:
-        # The baseline printed the whole CONFIG dict at import (monolith line
-        # 145). Reproduced here as a two-column table of the top-level groups.
+        # Rendered as a two-column table of the top-level config groups.
         rows = [{"group": k, "value": _summarise(v)} for k, v in cfg.items()]
         self.log_table("config", rows, step=0)
 
     def watch(self, model: nn.Module) -> None:
-        # No console equivalent of gradient histograms; parameter count is the
-        # useful terminal-sized summary and the baseline printed it (line 2734).
+        # No console equivalent of gradient histograms; trainable parameter
+        # count is the useful terminal-sized summary instead.
         n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         self.log_message(f"Params : {n_params / 1e6:.2f}M", level="plain")
 

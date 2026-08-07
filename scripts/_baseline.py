@@ -1,32 +1,27 @@
-"""Load the pre-refactor monolith from git, without its import-time side effects.
+"""Load a pinned historical reference implementation from git, without its import-time side effects.
 
-Shared by ``check_ast_no_op_move.py`` (REFACTOR_PLAN.md §3.2.1) and
-``capture_golden.py`` (§3.2.2). Not part of the installed package — this is
-migration scaffolding that exists only while Phases 2-3 are in flight.
+Shared by ``check_ast_no_op_move.py`` and ``capture_golden.py``, both of
+which compare the current package against the reference implementation
+pinned at :data:`BASELINE_REF`. Not part of the installed package.
 
 Why the module cannot simply be imported
 ────────────────────────────────────────
-``HSI_modality_training/hsi_training.py`` executes eight module-level statements
-at import (baseline SHA ``886560f``):
-
-    line  23-25  warnings.filterwarnings(...)         — noise
-    line  145    print(CONFIG)                        — noise
-    line  147    Path(CONFIG["output_dir"]).mkdir(...) — recreates the directory
-                                                        Phase 1 relocated
-    line  148    torch.cuda.empty_cache()             — requires CUDA init
-    line  150    torch.set_float32_matmul_precision   — mutates global torch state
-    line  200    set_seed(CONFIG["seed"])             — consumes the global RNG
+The reference file executes several module-level statements at import time —
+``warnings.filterwarnings(...)`` calls, a ``print(CONFIG)``, directory
+creation, ``torch.cuda.empty_cache()`` (requires CUDA init), global torch
+state mutation, and RNG-consuming seeding. None of these are safe or
+meaningful to run just to obtain the module's class/function definitions.
 
 :func:`load_baseline_module` therefore parses the source and executes only its
 *declarations* — imports, assignments, and every ``class``/``def`` — dropping
-bare expression statements and the ``if __name__`` guard. The result is a module
-object whose classes and functions are the genuine pre-refactor ones, obtained
-without touching the filesystem or the RNG.
+bare expression statements and the ``if __name__`` guard. The result is a
+module object whose classes and functions are the genuine reference ones,
+obtained without touching the filesystem, the RNG or any global torch state.
 
-Dropping ``set_seed(CONFIG["seed"])`` is safe for the golden capture because
-§3.2.2's procedure calls ``set_seed(42)`` explicitly immediately before model
-construction — which is exactly the state the baseline's line-200 call left the
-RNG in before ``main()`` ran.
+Dropping the reference's own RNG seeding is safe for the golden capture
+because that procedure calls ``set_seed(42)`` explicitly immediately before
+model construction, reproducing the RNG state the dropped call would have
+left behind.
 """
 
 from __future__ import annotations

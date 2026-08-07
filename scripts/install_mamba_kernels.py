@@ -1,22 +1,12 @@
 #!/usr/bin/env python3
 """Compile ``causal-conv1d`` and ``mamba-ssm`` against the active conda env.
 
-Relocated from the root ``installation.py`` — REFACTOR_PLAN.md §2.1's last row,
-"unchanged behavior, relocated only".
-
-**This is not part of the training path.** The audit (§1.1) confirmed the current
-``SpectralQuadNet`` imports neither ``mamba_ssm`` nor ``causal_conv1d``; the
-script is kept for a future SpecMamba branch, and §7's open question 3 asks
-whether to keep it at all. Nothing in ``src/spectralquadnet`` imports it.
+**This is not part of the training path.** The current ``SpectralQuadNet``
+imports neither ``mamba_ssm`` nor ``causal_conv1d``; the script is kept for a
+future Mamba-based branch. Nothing in ``src/spectralquadnet`` imports it.
 
 It also assumes a CUDA Linux toolchain (``targets/x86_64-linux/{include,lib}``
 under ``$CONDA_PREFIX``) and will not do anything useful on macOS.
-
-Declared deviations from the original, neither of which changes behaviour:
-
-* type annotations added, so ``mypy --strict`` covers ``scripts/`` (§4.4);
-* the verification imports carry ``noqa: F401`` — they are import-availability
-  probes, not usages, and were always dead-looking by design.
 
 Usage
 ─────
@@ -31,6 +21,7 @@ import sys
 
 
 def run_command(command: str) -> None:
+    """Run a shell command, exiting the process on failure."""
     print(f"Executing: {command}")
     try:
         # We use shell=True to allow for environment variable expansion

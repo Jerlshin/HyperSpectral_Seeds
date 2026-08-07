@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
-"""SpectralQuadNet training entrypoint — REFACTOR_PLAN.md §4.3.
-
-Replaces ``HSI_modality_training/hsi_training.py`` @ ``886560f`` lines 2701-2858:
-
-=====================================  ==============
-Symbol                                 Baseline lines
-=====================================  ==============
-:func:`_run`                           2701-2837  (was ``main``)
-:func:`main`                           2843-2858  (was ``if __name__``)
-=====================================  ==============
+"""SpectralQuadNet training entrypoint.
 
 Usage
 ─────
@@ -17,27 +8,15 @@ Usage
     python train.py -m stage1.max_lr=1e-4,5e-4,1e-3  # sweep
     python train.py tracking.backend=multi tracking.backends=[console,wandb]
 
-The auto-resume orchestration is unchanged (§3.5): ``latest_completed_stage()``
-probes stages 3 → 2 → 1, each completed stage is loaded rather than retrained,
-and ``_pick_best_checkpoint`` — not the stage order — decides which checkpoint
+Auto-resume: ``latest_completed_stage()`` probes stages 3 → 2 → 1, each
+completed stage is loaded rather than retrained, and
+``_pick_best_checkpoint`` — not the stage order — decides which checkpoint
 the final evaluation runs on. Pointing ``output_dir`` at a directory with all
 three stages present therefore skips straight to ``final_evaluation``.
 
-Declared deviations from the baseline ``main()``
-────────────────────────────────────────────────
-1. ``CONFIG[...]`` → ``cfg.<group>.<field>`` throughout, and every collaborator
-   gains the leading ``cfg``/``store``/``device`` arguments Phases 2-3 gave it.
-2. ``print(...)`` → ``tracker`` calls (§4.1), one-for-one.
-3. ``torch.cuda.mem_get_info(device)`` (baseline line 2718) is now guarded by
-   ``device.type == "cuda"``. The baseline called it unconditionally, which
-   raises on a CPU/MPS host; the VRAM figure is simply omitted off-CUDA and the
-   dataset size is still reported.
-4. ``CONFIG["device"]`` held a live ``torch.device``; it is now a strategy string
-   resolved by ``utils/device.py`` (§4.3), because YAML cannot carry a device.
-
-Everything else — stage order, the ArcFace bootstrap, the recompute fallbacks,
-the augmentation strings passed to each stage's loaders, the batch sizes — is
-byte-for-byte the same decision tree the baseline ran.
+``torch.cuda.mem_get_info(device)`` is guarded by ``device.type == "cuda"``,
+since it raises on a CPU/MPS host; the VRAM figure is simply omitted off-CUDA
+and the dataset size is still reported.
 """
 
 from __future__ import annotations
@@ -78,25 +57,23 @@ from spectralquadnet.utils.device import resolve_device
 from spectralquadnet.utils.seed import set_seed
 
 # Makes the dataclass schemas available to Hydra's composition, so a typo in a
-# YAML field fails at startup instead of hours into Stage 1 (§4.3).
+# YAML field fails at startup instead of hours into Stage 1.
 register_configs()
 
-#: Baseline line 2706 — how `latest_completed_stage()`'s return value reads.
+#: How `latest_completed_stage()`'s return value reads in the resume banner.
 _RESUME_LABELS = {0: "starting fresh", 1: "Stage 1 done", 2: "Stages 1–2 done", 3: "all done"}
 
 
 def _run(cfg: DictConfig, tracker: ExperimentTracker) -> None:
-    """The baseline's ``main()`` body, reading ``cfg`` instead of ``CONFIG``."""
+    """Run the full auto-resuming training pipeline: Stages 1-3 plus final evaluation."""
     # ══════════════════════════════════════════════════════════════════
-    #  RNG ORDERING — REFACTOR_PLAN.md §3.6. DO NOT MOVE THIS CALL.
+    #  RNG ORDERING. DO NOT MOVE THIS CALL.
     #
-    #  The baseline ran `set_seed(CONFIG["seed"])` as an import-time side
-    #  effect (monolith line 200), so it always executed *before* `main()`
-    #  and therefore before the model was built. Every `kaiming_normal_` /
-    #  `trunc_normal_` / `xavier_uniform_` inside the branches' `_init_weights`
-    #  draws from the same global torch RNG stream, in the order
-    #  `SpectralQuadNet.__init__` constructs them — so the seed must be set
-    #  here, and the required call order is exactly:
+    #  Every `kaiming_normal_` / `trunc_normal_` / `xavier_uniform_` inside the
+    #  branches' `_init_weights` draws from the same global torch RNG stream,
+    #  in the order `SpectralQuadNet.__init__` constructs them — so the seed
+    #  must be set before model construction, and the required call order is
+    #  exactly:
     #
     #      load config → set_seed(cfg.seed) → DataStore → SpectralQuadNet → ModelEMA
     #
@@ -156,8 +133,8 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker) -> None:
         "Model  : SpectralQuadNet v4 (4× AuxHead deep supervision + P3 oversampling)",
         level="plain",
     )
-    # Replaces the baseline's `Params : …M` print: the console backend renders
-    # exactly that line, and the structured backends attach gradient histograms.
+    # Logs a `Params : …M` line on the console backend; structured backends
+    # additionally attach gradient histograms.
     tracker.watch(model)
     tracker.log_message(f"Device : {device}", level="plain")
 
@@ -219,7 +196,7 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker) -> None:
             tracker.log_message("Bootstrapping ArcFace from linear head")
             # `nn.Module.__getattr__` is typed `Tensor | Module`, so the `.weight`
             # of the Sequential's last layer needs a cast for mypy; at runtime it
-            # is the nn.Linear the baseline indexed the same way (line 2765).
+            # is always the `nn.Linear` at that index.
             lw = cast(torch.Tensor, model.linear_head[-1].weight).data.clone()
             model.arcface_head.init_from_linear(lw)
             ema.shadow.arcface_head.init_from_linear(lw)
@@ -242,8 +219,8 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker) -> None:
             cfg.stage2.batch,
             balanced=True,
             all_labels=all_labels,
-            # FIXED: was "light" (no spectral aug) — "very_light" adds mild spectral noise
-            # so ArcFace doesn't overfit the train set's exact spectral signatures
+            # "very_light" adds mild spectral noise so ArcFace doesn't overfit
+            # the train set's exact spectral signatures.
             train_aug="very_light",
             class_weights=cdws_wts_s1,
         )
@@ -255,7 +232,7 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker) -> None:
         load_ckpt(ckpt_s2, model, ema, device)
 
     meta_s2 = load_stage_meta(cfg, 2)
-    class_f1_s2 = meta_s2.get("class_f1", {})  # noqa: F841 - parity with the baseline binding
+    class_f1_s2 = meta_s2.get("class_f1", {})  # noqa: F841 - kept for readability/symmetry with class_f1_s1
     cdws_wts_s2 = meta_s2.get("cdws_weights", {})
     s2_best_f1 = meta_s2.get("val_f1", meta_s2.get("s2_val_f1", meta_s2.get("val_acc", 0.0)))
     tracker.log_message(f"Stage 2 → F1={s2_best_f1:.3f}")
@@ -315,10 +292,10 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker) -> None:
 def main(cfg: DictConfig) -> None:
     """Compose the config, set up logging and the tracker, then run.
 
-    The ``logging`` setup and the top-level handler reproduce the baseline's
-    ``if __name__ == "__main__"`` block (lines 2843-2858): a ``training.log`` in
-    the output directory plus a stdout stream, and a ``logging.critical`` +
-    ``sys.exit(1)`` on any escaping exception.
+    Logs to both a ``training.log`` file in the output directory and stdout.
+    Any exception escaping :func:`_run` is logged at ``critical`` and exits
+    with status 1, so a crashed run is visible in both the log file and the
+    process exit code.
     """
     Path(cfg.output_dir).mkdir(parents=True, exist_ok=True)
 

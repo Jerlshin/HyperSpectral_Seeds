@@ -1,15 +1,15 @@
-"""Auto-resume and checkpoint-selection against the real artifacts — §3.5 / Gate 4.
+"""Auto-resume and checkpoint-selection against the real artifacts of a trained run.
 
-REFACTOR_PLAN.md §3.5 calls pointing a refactored run at the existing
-``outputs/output_v12_spa40/`` directory "the strongest possible end-to-end
-regression signal because it requires every one of §3.1–3.5 to be correct
-simultaneously". This module pins that signal as a permanent test rather than a
-one-off manual run.
+Pointing a run at the existing ``outputs/output_v12_spa40/`` directory is the
+strongest available end-to-end regression signal, since it exercises
+checkpoint discovery, sidecar schema, checkpoint selection and evaluation
+together, against real trained weights rather than synthetic ones. This
+module pins that signal as a permanent test rather than a one-off manual run.
 
-A correction the gate forced (see also this file's last test)
-────────────────────────────────────────────────────────────
-§5's Phase 4 gate asks the run to "reproduce ``stage3_meta.json``'s Macro F1
-(0.8745) on ``final_evaluation``". Those are two different quantities:
+A distinction this suite depends on (see also this file's last test)
+──────────────────────────────────────────────────────────────────────
+It is tempting to assert that ``final_evaluation`` reproduces
+``stage3_meta.json``'s Macro F1 (0.8745). Those are two different quantities:
 
 * **0.8745 is a validation-split number** — the SWA model's ``val_f1``, written
   by ``run_stage3_swa``'s own ``save_ckpt`` call.
@@ -17,11 +17,10 @@ A correction the gate forced (see also this file's last test)
   checkpoint ``_pick_best_checkpoint`` ranks highest by ``val_f1`` — which on
   these artifacts is **Stage 1** (0.8877), not Stage 3.
 
-So no correct implementation can make ``final_evaluation`` print 0.8745. What is
+So no correct implementation makes ``final_evaluation`` print 0.8745. What is
 verifiable, and stronger, is checked here: the recorded ``val_f1`` of each stage
 is reproducible from its checkpoint, and the recorded test predictions are
-reproducible end-to-end (that half lives in the Gate 4 run itself, since it
-needs the full 12-view TTA pass).
+reproducible end-to-end.
 
 Everything that needs ``dataset/`` or ``outputs/`` skips itself when those are
 absent, so a fresh clone stays green.
@@ -51,7 +50,7 @@ OUTPUTS = REPO_ROOT / "outputs" / "output_v12_spa40"
 #: Recorded by the original CUDA run; the numbers this module regresses against.
 RECORDED_VAL_F1 = {1: 0.8876597527386549, 2: 0.8866637678171172, 3: 0.8745051282416407}
 
-#: REFACTOR_PLAN.md §3.5 — the bundle schema that must not drift.
+#: The checkpoint bundle schema that must not drift.
 REQUIRED_META_KEYS = {"epoch", "stage", "val_f1", "val_acc", "use_arcface"}
 
 
@@ -66,14 +65,14 @@ def outputs_cfg(cfg):
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  Auto-resume detection (§3.5)
+#  Auto-resume detection
 # ══════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.regression
 @pytest.mark.requires_dataset
 def test_filename_templates_resolve_to_the_recorded_artifacts(outputs_cfg) -> None:
-    """``best_stage{n}.pth`` / ``stage{n}_meta.json`` — the templates §3.5 pins."""
+    """``best_stage{n}.pth`` / ``stage{n}_meta.json`` — the pinned filename templates."""
     for stage in (1, 2, 3):
         assert Path(stage_ckpt_path(outputs_cfg, stage)).name == f"best_stage{stage}.pth"
         assert Path(stage_meta_path(outputs_cfg, stage)).name == f"stage{stage}_meta.json"
@@ -83,14 +82,14 @@ def test_filename_templates_resolve_to_the_recorded_artifacts(outputs_cfg) -> No
 @pytest.mark.regression
 @pytest.mark.requires_dataset
 def test_auto_resume_reports_all_three_stages_complete(outputs_cfg) -> None:
-    """The Phase 4 gate's first assertion: ``done_stage == 3``, so nothing retrains."""
+    """``done_stage == 3`` against the real artifacts, so nothing retrains."""
     assert latest_completed_stage(outputs_cfg) == 3
 
 
 @pytest.mark.regression
 @pytest.mark.requires_dataset
 def test_incomplete_stage_resumes_rather_than_skipping(outputs_cfg, tmp_path) -> None:
-    """A ``.pth`` with no ``.json`` means the stage did not finish (§3.5).
+    """A ``.pth`` with no ``.json`` means the stage did not finish.
 
     Copies only the checkpoint side of Stage 1 into an empty directory: the
     resume probe must report 0, not 1, so a crash between the two writes replays
@@ -103,7 +102,7 @@ def test_incomplete_stage_resumes_rather_than_skipping(outputs_cfg, tmp_path) ->
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  Checkpoint selection (§3.5)
+#  Checkpoint selection
 # ══════════════════════════════════════════════════════════════════════
 
 
@@ -113,8 +112,9 @@ def test_pick_best_checkpoint_ranks_by_val_f1_not_by_stage_order(outputs_cfg) ->
     """Stage 1's 0.8877 outranks Stage 3's 0.8745, so the final eval loads Stage 1.
 
     This is the behaviour ``stage3_meta.json``'s own ``note`` field anticipates
-    ("Stage 2 ckpt preferred for eval") and the reason the plan's "reproduce
-    0.8745" phrasing does not describe what ``final_evaluation`` computes.
+    ("Stage 2 ckpt preferred for eval") and the reason "final_evaluation
+    reproduces stage3_meta.json's Macro F1" is not a valid assertion — see
+    the module docstring.
     """
     paths = [stage_ckpt_path(outputs_cfg, s) for s in (1, 2, 3)]
     best = _pick_best_checkpoint(outputs_cfg, *paths)
@@ -125,7 +125,7 @@ def test_pick_best_checkpoint_ranks_by_val_f1_not_by_stage_order(outputs_cfg) ->
 @pytest.mark.regression
 @pytest.mark.requires_dataset
 def test_stage_meta_sidecars_keep_the_pinned_schema(outputs_cfg) -> None:
-    """§3.5's sidecar schema: the bundle minus ``model``/``ema``, JSON-safe only."""
+    """The sidecar schema: the bundle minus ``model``/``ema``, JSON-safe only."""
     for stage in (1, 2, 3):
         meta = json.loads(Path(stage_meta_path(outputs_cfg, stage)).read_text())
         assert set(meta) >= REQUIRED_META_KEYS, f"stage {stage} sidecar lost a pinned key"
@@ -155,8 +155,8 @@ def test_stage3_checkpoint_reproduces_its_recorded_val_f1(outputs_cfg) -> None:
 
     Rebuilds the model from the config, loads ``best_stage3.pth`` and evaluates
     the **EMA shadow** — the model ``final_evaluation`` scores — on the
-    validation split. Exercises §3.1 (state-dict keys), §3.4 (mmap loading),
-    §3.5 (bundle schema) and the relocated ``evaluate`` together.
+    validation split. Exercises the state-dict key schema, mmap loading, the
+    checkpoint bundle schema and ``evaluate`` together.
 
     Slow: one full pass over 1,294 samples with a 7.9M-parameter model on CPU.
     The tolerance is loose enough to absorb the original run having been on CUDA
@@ -181,7 +181,7 @@ def test_stage3_checkpoint_reproduces_its_recorded_val_f1(outputs_cfg) -> None:
     device = torch.device("cpu")
     DataStore.reset()
     try:
-        # §3.6's ordering, the same one train.py documents at its call site.
+        # Seed before construction — the ordering train.py documents at its call site.
         set_seed(outputs_cfg.seed)
         store = DataStore.from_config(outputs_cfg.data, device)
         _, train_idx, val_idx, test_idx = build_splits(outputs_cfg)
@@ -202,10 +202,11 @@ def test_stage3_checkpoint_reproduces_its_recorded_val_f1(outputs_cfg) -> None:
 def test_recorded_test_predictions_match_their_reported_metrics() -> None:
     """The test-split numbers ``final_evaluation`` actually produces.
 
-    Guards the §3.5 claim from the other direction: whatever the run writes to
-    ``test_preds_*.npy`` must be what the printed metrics describe. The two
-    values below are what the recorded artifacts evaluate to — **not** 0.8745,
-    which is a validation number for a different checkpoint.
+    Guards the module docstring's claim from the other direction: whatever
+    the run writes to ``test_preds_*.npy`` must be what the printed metrics
+    describe. The two values below are what the recorded artifacts evaluate
+    to — **not** 0.8745, which is a validation number for a different
+    checkpoint.
     """
     from sklearn.metrics import f1_score
 

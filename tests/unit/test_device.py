@@ -1,9 +1,9 @@
-"""Device resolution and the Metal compatibility rules — REFACTOR_PLAN.md §4.3.
+"""Device resolution and the Metal compatibility rules.
 
-Phase 5 widened ``resolve_device("auto")`` from the baseline's cuda-or-cpu to
-Metal → CUDA → CPU. These tests pin the precedence and the two device-dependent
-behaviours that ride on it, without requiring any particular accelerator to be
-present on the machine running them.
+``resolve_device("auto")`` prefers Metal → CUDA → CPU. These tests pin that
+precedence and the two device-dependent behaviours that ride on it, without
+requiring any particular accelerator to be present on the machine running
+them.
 """
 
 from __future__ import annotations

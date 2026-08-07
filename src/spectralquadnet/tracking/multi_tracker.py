@@ -1,15 +1,11 @@
-"""Fan-out composite: log to N backends at once (REFACTOR_PLAN.md §4.1).
+"""Fan-out composite: log to N backends at once.
 
-The plan's motivating use is the migration itself — running ``console`` and
-``wandb`` together so the new structured logs can be diffed against the old
-console output for the same run::
+The main use is keeping a readable terminal while streaming to a remote
+backend, since :class:`~spectralquadnet.tracking.wandb_tracker.WandbTracker`
+and :class:`~spectralquadnet.tracking.tensorboard_tracker.TensorBoardTracker`
+leave the human channel inert by design::
 
     python train.py tracking.backend=multi tracking.backends=[console,wandb]
-
-It is also the way to keep a readable terminal while streaming to a remote
-backend, since :class:`~spectralquadnet.tracking.wandb_tracker.WandbTracker` and
-:class:`~spectralquadnet.tracking.tensorboard_tracker.TensorBoardTracker` leave
-the human channel inert by design.
 
 :meth:`MultiTracker.close` closes every child even if one raises, so a failing
 backend cannot strand another's file handle or leave a W&B run unfinished.

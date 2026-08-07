@@ -1,8 +1,8 @@
 #!/usr/bin/env python
-"""Capture golden regression values from the pre-refactor model — §3.2.2.
+"""Capture golden regression values from a pinned reference implementation.
 
-Builds :class:`SpectralQuadNet` from the **baseline** ``hsi_training.py``
-(``git show 886560f``, loaded side-effect-free by :mod:`_baseline`), runs one
+Builds :class:`SpectralQuadNet` from the reference ``hsi_training.py``
+(``git show <ref>``, loaded side-effect-free by :mod:`_baseline`), runs one
 fixed-seed forward pass and one fixed-seed training epoch, and writes the
 artifacts that ``tests/regression/test_golden_forward_pass.py`` asserts against.
 
@@ -11,19 +11,19 @@ Artifacts written to ``tests/regression/golden/``
 ``physical_wl_spa40.npy``       the min-max-normalised wavelength vector, so the
                                 test never needs the gitignored ``dataset/``.
 ``forward_logits_seed42.npy``   ``(4, 90)`` eval-mode logits.
-``init_state_sha256.json``      SHA-256 of every one of the 352 freshly
-                                initialised state-dict tensors, plus a combined
-                                digest. This is the sharpest available check on
-                                §3.6's "identical weight initialization" claim —
-                                it catches a construction-order change that a
-                                4-sample forward pass might average away.
+``init_state_sha256.json``      SHA-256 of every one of the freshly initialised
+                                state-dict tensors, plus a combined digest.
+                                This is the sharpest available check on
+                                identical weight initialization — it catches a
+                                construction-order change that a 4-sample
+                                forward pass might average away.
 ``stage1_epoch1_loss_seed42.json``  scalar loss and accuracy from one Stage-1
                                 epoch over 32 synthetic samples, plus post-step
                                 digests of the model and EMA weights.
 ``README.md``                   provenance: git SHA, versions, exact procedure.
 
 Each procedure is defined **once** — :func:`forward_pass` and :func:`train_step` —
-and applied to both the baseline and the refactored code, so the two runs cannot
+and applied to both the reference and the current code, so the two runs cannot
 diverge in setup. :func:`refactored_train_step` is imported by ``tests/conftest.py``
 for the same reason.
 
@@ -61,9 +61,9 @@ BATCH = 4
 SPATIAL = 64
 DEVICE = torch.device("cpu")  # CPU keeps the capture portable and deterministic
 
-# §3.2.2's training step: "one train_one_epoch-equivalent step on 32 synthetic
-# samples". Four batches of eight, so the accumulation boundary, the optimiser
-# step and the EMA update all execute more than once.
+# One train_one_epoch-equivalent step on 32 synthetic samples, four batches
+# of eight, so the accumulation boundary, the optimiser step and the EMA
+# update all execute more than once.
 TRAIN_SAMPLES = 32
 TRAIN_BATCH = 8
 
@@ -81,8 +81,8 @@ def forward_pass(
     """Seed → construct → eval → one forward pass. Identical on both sides.
 
     ``set_seed`` is called immediately before construction so the branches'
-    ``_init_weights`` draws land in the same order the baseline's import-time
-    seeding produced (REFACTOR_PLAN.md §3.6).
+    ``_init_weights`` draws consume the global RNG in a known, reproducible
+    order.
     """
     set_seed(SEED)
     model = build_model()
@@ -124,7 +124,7 @@ def train_step(
     ``CrossEntropyLoss(label_smoothing=s1_label_smooth_hi)``, mixup on, no
     contrastive losses — and returns everything that could drift:
 
-    * ``loss``/``acc`` — §3.2.2's scalar, compared for **exact** equality.
+    * ``loss``/``acc`` — the epoch's scalars, compared for **exact** equality.
     * ``model_sha256``/``ema_sha256`` — digests of the weights *after* the step.
       These are what make the check bite: they cover the mixup draw, the
       auxiliary-loss weighting, gradient clipping, the AdamW parameter-group
@@ -182,7 +182,7 @@ def _baseline_model_builder(mod: Any) -> Callable[[], torch.nn.Module]:
     def build() -> torch.nn.Module:
         # `_load_wavelengths_to_gpu` populates the module global that
         # SpectralQuadNet.__init__ reads. It consumes no RNG, so running it
-        # after set_seed matches §3.6's mandated ordering exactly.
+        # after set_seed keeps the weight-init RNG order deterministic.
         mod._load_wavelengths_to_gpu(cfg["wavelength_path"], DEVICE)
         model: torch.nn.Module = mod.SpectralQuadNet(
             num_classes=cfg["num_classes"],
@@ -251,7 +251,7 @@ def capture_baseline(
 
 
 def refactored_train_step(cfg: Any, physical_wl: torch.Tensor) -> dict[str, Any]:
-    """§3.2.2's training step on the post-refactor code.
+    """The training step on the current codebase.
 
     Imported by ``tests/conftest.py`` so the regression test and this capture
     script cannot drift apart in setup — the whole point of defining each

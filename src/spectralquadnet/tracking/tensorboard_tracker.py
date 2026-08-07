@@ -1,4 +1,4 @@
-"""TensorBoard backend (REFACTOR_PLAN.md §4.1).
+"""TensorBoard backend.
 
 Selected via ``configs/tracking/tensorboard.yaml``, which points ``log_dir`` at
 ``${output_dir}/tensorboard``. Requires the optional extra::

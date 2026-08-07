@@ -1,17 +1,5 @@
 """Validation-set evaluation: macro-F1, accuracy and the per-class breakdown.
 
-Relocated verbatim from ``HSI_modality_training/hsi_training.py`` @ ``886560f``:
-
-=====================================  ==============
-Symbol                                 Baseline lines
-=====================================  ==============
-:func:`_run_eval`                      2034-2049
-:func:`evaluate`                       2052-2055
-:func:`evaluate_per_class`             2058-2063
-=====================================  ==============
-
-None of the three read ``CONFIG``, so all three relocate with zero translation.
-
 :func:`_run_eval` keeps two details that look incidental and are not:
 
 * ``autocast(..., enabled=False)`` forces fp32 evaluation even mid-AMP-training,
@@ -40,6 +28,12 @@ from torch.utils.data import DataLoader
 def _run_eval(
     model: nn.Module, loader: DataLoader[Any], device: torch.device
 ) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
+    """Run inference over the whole loader and collect predictions/targets.
+
+    Returns:
+        ``(preds, targets)`` as flat 1-D numpy arrays, concatenated across
+        every batch in ``loader``.
+    """
     model.eval()
     preds, targets = [], []
     with autocast(device_type=device.type, enabled=False):
@@ -58,7 +52,10 @@ def _run_eval(
 def evaluate(
     model: nn.Module, loader: DataLoader[Any], device: torch.device
 ) -> tuple[float, float]:
-    """Returns (macro_f1, accuracy)."""
+    """Macro-F1 and accuracy over ``loader``. Macro-F1 is the primary metric —
+    it drives every checkpointing decision across all three stages; accuracy
+    is reported alongside but never gates a save.
+    """
     p, t = _run_eval(model, loader, device)
     return f1_score(t, p, average="macro", zero_division=0), accuracy_score(t, p)
 
@@ -66,6 +63,7 @@ def evaluate(
 def evaluate_per_class(
     model: nn.Module, loader: DataLoader[Any], device: torch.device, num_classes: int
 ) -> dict[int, float]:
+    """Per-class F1 over ``loader``, keyed by class index 0..num_classes-1."""
     p, t = _run_eval(model, loader, device)
     f1_arr = f1_score(t, p, average=None, zero_division=0, labels=list(range(num_classes)))
     return {i: float(v) for i, v in enumerate(f1_arr)}

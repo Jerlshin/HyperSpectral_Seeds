@@ -1,5 +1,4 @@
 # Stage 1 — 3-phase progressive augmentation with per-branch deep supervision.
-# Source: CONFIG["s1_*"] + aux_loss_weight_{init,final} (monolith lines 46-76, 85-86).
 defaults:
   - base_stage1
   - _self_

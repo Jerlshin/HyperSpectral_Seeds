@@ -1,27 +1,12 @@
 """Three-pass patch extraction: count → allocate → write.
 
-Relocated from ``data_setup_v3.py`` @ ``886560f``:
+The CLI entry point is ``scripts/prepare_dataset.py``.
 
-===============================  ==============
-Symbol                           Baseline lines
-===============================  ==============
-:func:`pad_to_square`            124-132
-:func:`resize_patch`             135-143
-:func:`build_patch_dataset`      150-353  (was ``main``)
-===============================  ==============
-
-Declared deviations, all mechanical:
-
-* module-level ``PATCH_SIZE``/``NUM_BANDS``/``ZIP_FILE``/``PATCHES_PATH``/
-  ``LABELS_PATH`` globals → :class:`~spectralquadnet.data.prep.config.PrepConfig`
-  fields;
-* ``main`` renamed to :func:`build_patch_dataset` and the ``if __name__ ==
-  "__main__"`` guard dropped — Phase 4 adds ``scripts/prepare_dataset.py`` as the
-  CLI wrapper (REFACTOR_PLAN.md §2.1, last row).
-
-The pass-1/pass-2 duplication is preserved deliberately: the counting pass exists
-so pass 2 can allocate the exact ``(N, 256, 64, 64)`` float32 array up front, and
-de-duplicating it would be a logic change, not a relocation (REFACTOR_PLAN.md §6).
+The pass-1/pass-2 duplication (each walks the same zip archive and reruns
+segmentation) is deliberate: the counting pass exists so pass 2 can allocate
+the exact ``(N, num_bands, patch_size, patch_size)`` float32 array up front,
+avoiding either a list-of-arrays intermediate or a resizable-array
+implementation for a multi-GB output.
 """
 
 from __future__ import annotations
@@ -45,6 +30,7 @@ from spectralquadnet.data.prep.segmentation import preprocess_raw, segment
 
 
 def pad_to_square(p: npt.NDArray[Any]) -> npt.NDArray[Any]:
+    """Centre-pad an ``(H, W, C)`` patch with zeros to a square ``(S, S, C)``."""
     h, w, c = p.shape
     s = max(h, w)
     out = np.zeros((s, s, c), dtype=p.dtype)
@@ -56,6 +42,11 @@ def pad_to_square(p: npt.NDArray[Any]) -> npt.NDArray[Any]:
 
 
 def resize_patch(p: npt.NDArray[Any], patch_size: int) -> npt.NDArray[np.float32]:
+    """Resize a square patch to ``(patch_size, patch_size)``, band by band.
+
+    Bands are resized independently rather than as one multi-channel image
+    because OpenCV's area interpolation is defined per 2-D plane.
+    """
     out = np.zeros((patch_size, patch_size, p.shape[2]), dtype=np.float32)
     for i in range(p.shape[2]):
         out[:, :, i] = cv2.resize(
@@ -65,6 +56,19 @@ def resize_patch(p: npt.NDArray[Any], patch_size: int) -> npt.NDArray[np.float32
 
 
 def build_patch_dataset(cfg: PrepConfig | None = None) -> None:
+    """Download, segment and extract fixed-size patches, saving ``patches.npy``/``labels.npy``.
+
+    Downloads the archive if needed, then makes two passes over every cube
+    in it: pass 1 segments each cube to count the total number of seed
+    patches (so the output array can be allocated exactly once), and pass 2
+    re-segments and writes each patch, centre-padded to square and resized
+    to ``cfg.patch_size``. Class labels are factorised from each cube's
+    variety name.
+
+    Args:
+        cfg: Prep configuration; a default :class:`PrepConfig` is used if
+            omitted.
+    """
     cfg = cfg or PrepConfig()
     cfg.ensure_root()
 

@@ -1,35 +1,11 @@
 """Research-correct hyperspectral band selection (mRMR + SPA + validated elbow).
 
-Relocated from the root script ``band_selection.py`` @ ``886560f``:
+Importing this module has no side effects: RNG seeding and warning-filter
+configuration both happen inside :func:`select_bands`, not at module scope.
+The CLI entry point is ``scripts/select_bands.py``.
 
-===================================  ==============
-Symbol                               Baseline lines
-===================================  ==============
-:func:`extract_mean_spectra`         98-127
-:func:`decorrelation_prefilter`      133-159
-:func:`fisher_discriminant_ratio`    165-196
-:func:`run_mrmr`                     202-273
-:func:`run_spa`                      279-361
-:func:`validate`                     367-422
-:func:`find_elbow`                   428-441
-:func:`save_outputs`                 447-472
-:func:`select_bands`                 478-563  (was ``main``)
-===================================  ==============
-
-Declared deviations, all mechanical:
-
-* the module-level ``CONFIG`` dict → an explicit
-  :class:`~spectralquadnet.data.prep.config.BandSelectionConfig` parameter;
-* ``np.random.seed(CONFIG["seed"])`` at import (line 92) is gone — it is now
-  applied inside :func:`select_bands`, so importing this module no longer
-  perturbs the global NumPy RNG (REFACTOR_PLAN.md §3.6);
-* the module-level ``warnings.filterwarnings`` calls (lines 58-60) moved into
-  :func:`select_bands` for the same reason;
-* ``main`` renamed to :func:`select_bands`; the ``if __name__`` guard is dropped
-  in favour of Phase 4's ``scripts/select_bands.py``.
-
-This is the pipeline that produced ``dataset/patches_spa_40b.npy`` — the 40-band
-SPA subset the ``output_v12_spa40`` experiment trains on.
+This pipeline produces reduced-band patch arrays (e.g. a 40-band SPA subset)
+that a training config can point ``cfg.data.patches_data`` at.
 
 Why mRMR + SPA for this task
 ------------------------------
@@ -489,10 +465,21 @@ def save_outputs(
 # MAIN
 # =====================================================================
 def select_bands(cfg: BandSelectionConfig | None = None) -> None:
+    """Run the full band-selection pipeline: extract, pre-filter, select, validate, save.
+
+    Loads mean spectra, decorrelation-prefilters the candidate pool, runs
+    both mRMR and SPA selection, cross-validates each at several band
+    counts, picks the winning method and its elbow-point band count, and
+    writes the reduced patch array plus a comparison report.
+
+    Args:
+        cfg: Band-selection configuration; a default :class:`BandSelectionConfig`
+            is used if omitted.
+    """
     cfg = cfg or BandSelectionConfig()
 
-    # Baseline lines 58-60 and 92 ran these at import time; scoping them to the
-    # entrypoint keeps `import spectralquadnet.data.prep.band_selection` inert.
+    # Scoped to the entrypoint (not module scope) so importing this module
+    # has no side effects on global warning filters or the NumPy RNG.
     warnings.filterwarnings("ignore", category=UserWarning)
     warnings.filterwarnings("ignore", category=ConvergenceWarning)
     warnings.filterwarnings("ignore", category=FutureWarning)

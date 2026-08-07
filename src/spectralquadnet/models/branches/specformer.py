@@ -1,19 +1,9 @@
 """Branch D — SpecFormer, a spatial-spectral factorised transformer.
 
-Relocated verbatim from ``HSI_modality_training/hsi_training.py`` @ ``886560f``:
-
-=======================================  ==============
-Symbol                                   Baseline lines
-=======================================  ==============
-:class:`MultiScaleSpectralTokenizer`     1030-1056
-:class:`_PreLNBlock`                     1059-1075
-:class:`SpecFormerBranch`                1078-1164
-=======================================  ==============
-
-``SpecFormerBranch`` accepts ``physical_wl`` and ``patch_size`` but uses neither
-(the tokenizer is stride-based and carries no wavelength encoding). Both are
-preserved verbatim — dropping dead parameters is an explicit non-goal
-(REFACTOR_PLAN.md §6) and would change ``SpectralQuadNet.__init__``'s call site.
+``SpecFormerBranch`` accepts ``physical_wl`` and ``patch_size`` but uses
+neither: the tokenizer is stride-based and carries no wavelength encoding.
+Both are kept in the signature for interface consistency with
+``SpectralQuadNet.__init__``'s branch-construction call sites.
 """
 
 from __future__ import annotations
@@ -23,6 +13,13 @@ import torch.nn as nn
 
 
 class MultiScaleSpectralTokenizer(nn.Module):
+    """Strided 1-D conv tokenizer with three parallel kernel widths (3/5/7).
+
+    Narrow kernels resolve sharp absorption lines while wide kernels capture
+    broad spectral shape; the three token streams are concatenated channel-wise
+    into a single ``d_model``-wide sequence.
+    """
+
     def __init__(self, in_channels: int, d_model: int, stride: int = 4):
         super().__init__()
         # 3 parallel tokenizers with different receptive fields to capture
@@ -52,6 +49,8 @@ class MultiScaleSpectralTokenizer(nn.Module):
 
 
 class _PreLNBlock(nn.Module):
+    """Standard pre-norm Transformer encoder block (MHSA + GELU feed-forward)."""
+
     def __init__(self, d: int, heads: int, d_ff: int, drop: float) -> None:
         super().__init__()
         self.ln1 = nn.LayerNorm(d)

@@ -1,13 +1,4 @@
-"""Branch A — spectral profile (raw signal through multi-scale large kernels).
-
-Relocated verbatim from ``HSI_modality_training/hsi_training.py`` @ ``886560f``:
-
-===================================  ==============
-Symbol                               Baseline lines
-===================================  ==============
-:class:`SpectralProfileBranch`       846-907
-===================================  ==============
-"""
+"""Branch A — spectral profile (raw signal through multi-scale large kernels)."""
 
 from __future__ import annotations
 
@@ -18,6 +9,13 @@ from spectralquadnet.models.blocks.conv_blocks import LargeKernelBlock1D
 
 
 class SpectralProfileBranch(nn.Module):
+    """Processes the raw per-pixel spectrum through parallel multi-scale 1-D towers.
+
+    Three ``LargeKernelBlock1D`` towers with kernel sizes 3/5/7 read the same
+    stem output at different receptive fields, are concatenated, fused back
+    down to ``tower_ch``, and attention-pooled across the band axis.
+    """
+
     def __init__(
         self,
         out_dim: int = 256,
@@ -27,14 +25,14 @@ class SpectralProfileBranch(nn.Module):
         super().__init__()
         self.wl_pe_module = wl_pe_module
 
-        # Removed Savitzky-Golay; Stem now takes 1 channel (raw signal)
+        # Stem consumes the raw single-channel spectrum directly (no smoothing filter)
         self.stem = nn.Sequential(
             nn.Conv1d(1, tower_ch, kernel_size=3, padding=1, bias=False),
             nn.GroupNorm(1, tower_ch),
             nn.GELU(),
         )
 
-        # Scaled down Large Kernels for a 40-band input
+        # Three parallel receptive-field scales over the band axis
         self.tower_s = nn.Sequential(
             LargeKernelBlock1D(tower_ch, 3), LargeKernelBlock1D(tower_ch, 3)
         )

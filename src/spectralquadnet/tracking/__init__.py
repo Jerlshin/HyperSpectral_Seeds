@@ -1,8 +1,7 @@
 """Experiment-tracking backends behind a single ExperimentTracker protocol.
 
-Net-new in this refactor (REFACTOR_PLAN.md §4.1) — the monolith had no equivalent
-beyond bare ``print(...)``. :func:`build_tracker` is the only entry point callers
-need; it maps ``cfg.tracking.backend`` onto a concrete backend:
+:func:`build_tracker` is the only entry point callers need; it maps
+``cfg.tracking.backend`` onto a concrete backend:
 
 ===============  ==================================================
 ``backend``      Result

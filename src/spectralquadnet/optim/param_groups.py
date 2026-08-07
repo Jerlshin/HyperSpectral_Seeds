@@ -1,21 +1,6 @@
 """Weight-decay parameter grouping and the three per-stage optimiser builders.
 
-Relocated from ``HSI_modality_training/hsi_training.py`` @ ``886560f``:
-
-=====================================  ==============
-Symbol                                 Baseline lines
-=====================================  ==============
-:func:`_wd_groups`                     1750-1759
-:func:`build_optimizer_s1`             1762-1763
-:func:`build_optimizer_s2`             1766-1772
-:func:`build_optimizer_s3`             1775-1776
-=====================================  ==============
-
-Declared deviation, mechanical: ``CONFIG["weight_decay"]`` → ``cfg.weight_decay``,
-which makes ``cfg`` the leading parameter of all four functions (the convention
-Phase 2 established in ``data/loaders.py``).
-
-The two grouping rules are load-bearing and unchanged:
+The two grouping rules are load-bearing:
 
 * **No weight decay on 1-D tensors or biases** — norms, ECA/CBAM gates and every
   ``.bias`` land in the ``no_wd`` group.
@@ -44,6 +29,18 @@ def _wd_groups(
     named_params: Iterable[tuple[str, torch.nn.Parameter]],
     lr: float,
 ) -> list[dict[str, Any]]:
+    """Split named parameters into weight-decayed and non-decayed AdamW groups.
+
+    Args:
+        cfg: Composed experiment config, read for ``cfg.weight_decay``.
+        named_params: Iterable of ``(name, parameter)`` pairs, typically from
+            ``model.named_parameters()`` or a filtered subset of it.
+        lr: Learning rate applied to both resulting groups.
+
+    Returns:
+        Two param-group dicts: weight-decayed params first, then the
+        zero-weight-decay group (1-D tensors and biases).
+    """
     wd, no_wd = [], []  # type: ignore[var-annotated]
     for n, p in named_params:
         if not p.requires_grad:
@@ -56,12 +53,18 @@ def _wd_groups(
 
 
 def build_optimizer_s1(cfg: ExperimentConfig | Any, model: nn.Module, lr: float) -> optim.AdamW:
+    """AdamW over the whole model at a single learning rate, with weight-decay grouping."""
     return optim.AdamW(_wd_groups(cfg, model.named_parameters(), lr))
 
 
 def build_optimizer_s2(
     cfg: ExperimentConfig | Any, model: nn.Module, head_lr: float, back_lr: float
 ) -> optim.AdamW:
+    """AdamW with the ArcFace head and the backbone on separate learning rates.
+
+    Group order is head-wd, head-no-wd, backbone-wd, backbone-no-wd — callers
+    that read ``param_groups[0]`` / ``[2]`` back for logging depend on it.
+    """
     hp, bp = [], []  # type: ignore[var-annotated]
     for n, p in model.named_parameters():
         if not p.requires_grad:
@@ -71,4 +74,5 @@ def build_optimizer_s2(
 
 
 def build_optimizer_s3(cfg: ExperimentConfig | Any, model: nn.Module, lr: float) -> optim.AdamW:
+    """AdamW over the whole model at a single learning rate; wrapped in :class:`SAM` by the caller."""
     return optim.AdamW(_wd_groups(cfg, model.named_parameters(), lr))

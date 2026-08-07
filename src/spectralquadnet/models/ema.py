@@ -1,16 +1,9 @@
 """Exponential moving average of model weights.
 
-Relocated verbatim from ``HSI_modality_training/hsi_training.py`` @ ``886560f``:
-
-======================  ==============
-Symbol                  Baseline lines
-======================  ==============
-:class:`ModelEMA`       207-246
-======================  ==============
-
 ``ModelEMA.state_dict()`` returns the *shadow model's* ``state_dict()``, which is
-what ``save_ckpt`` persists under the bundle's ``"ema"`` key — so the shadow
-shares every attribute-name constraint listed in REFACTOR_PLAN.md §3.1.
+what ``save_ckpt`` persists under the bundle's ``"ema"`` key — so the shadow's
+top-level attribute names must match :class:`~spectralquadnet.models.spectral_quadnet.SpectralQuadNet`'s
+checkpoint schema exactly.
 """
 
 from __future__ import annotations
@@ -23,6 +16,14 @@ import torch.nn as nn
 
 
 class ModelEMA:
+    """Maintains a shadow copy of a model whose weights are an exponential moving average.
+
+    The shadow is typically what gets evaluated and checkpointed: EMA weights
+    trade a small amount of representational freshness for a smoother, less
+    noisy optimum, which usually generalises better than the raw trained
+    weights alone.
+    """
+
     def __init__(self, model: nn.Module, decay: float = 0.9999) -> None:
         self.max_decay = decay
         self._num_updates = 0
@@ -35,11 +36,23 @@ class ModelEMA:
 
     @property
     def current_decay(self) -> float:
+        """Warms up from a low decay towards ``max_decay`` over the first ~10 updates.
+
+        Early in training the raw weights move quickly and are still useful
+        signal, so a low initial decay lets the shadow track them closely;
+        the ``(1+n)/(10+n)`` schedule saturates to ``max_decay`` as ``n`` grows.
+        """
         n = self._num_updates
         return min(self.max_decay, (1.0 + n) / (10.0 + n))
 
     @torch.no_grad()
     def update(self, model: nn.Module) -> None:
+        """Blend the shadow's parameters towards ``model``'s by ``current_decay``.
+
+        Buffers (e.g. BatchNorm running stats) are copied outright rather
+        than averaged, since an EMA of running statistics is not itself a
+        meaningful running statistic.
+        """
         self._num_updates += 1
         d = self.current_decay
         lp = dict(model.named_parameters())
@@ -52,6 +65,12 @@ class ModelEMA:
                 sb.copy_(lb[n])
 
     def reinit_from(self, model: nn.Module) -> None:
+        """Hard-reset the shadow to ``model``'s current weights and restart the decay warm-up.
+
+        Used at stage-transition boundaries, where the loss landscape shifts
+        enough (e.g. new head, new loss) that continuing the old average
+        would anchor the shadow to a stale optimum.
+        """
         self.shadow.load_state_dict(copy.deepcopy(model.state_dict()))
         self._num_updates = 0
 

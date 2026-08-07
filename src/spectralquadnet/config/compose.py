@@ -1,9 +1,9 @@
 """Programmatic Hydra composition for callers that are not ``@hydra.main``.
 
-``train.py`` (Phase 4) is decorated with ``@hydra.main`` and gets its config
-injected. Tests, notebooks and the migration scripts need the *same* composed
-config without that decorator — this module is the single place that knows how to
-build it, so the composition rules cannot drift between entrypoints.
+``train.py`` is decorated with ``@hydra.main`` and gets its config injected.
+Tests, notebooks and other scripts need the *same* composed config without
+that decorator — this module is the single place that knows how to build it,
+so the composition rules cannot drift between entrypoints.
 """
 
 from __future__ import annotations

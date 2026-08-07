@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Config round-trip check — REFACTOR_PLAN.md §3.3.
+"""Config round-trip check against a pinned reference implementation.
 
-Migration-time verification (not a permanent test): asserts that every one of the
-81 keys in the pre-refactor ``CONFIG`` dict resolves to *exactly one* field in the
-composed Hydra config, with an identical value — nothing silently dropped,
-renamed or re-defaulted by the mechanical migration.
+Asserts that every key in the reference implementation's flat ``CONFIG``
+dict resolves to *exactly one* field in the composed Hydra config, with an
+identical value — nothing silently dropped, renamed or re-defaulted relative
+to that reference.
 
 The rename table lives in :data:`RENAME` below and is the single source of truth;
 ``docs/config_rename_table.md`` is generated from it via ``--emit-markdown``.
@@ -32,8 +32,7 @@ from omegaconf import OmegaConf
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-#: Commit that recorded the pre-refactor monolith (see git log: "chore: record
-#: pre-refactor baseline"). Everything §3.2/§3.3 compares against comes from here.
+#: Pinned commit holding the reference implementation this check compares against.
 BASELINE_REF = "886560fe531c99197f20c2ebd06e0bc7ded8ac8f"
 BASELINE_PATH = "HSI_modality_training/hsi_training.py"
 
@@ -45,10 +44,10 @@ EXPERIMENT = "experiment/output_v12_spa40"
 #  Rules applied, in order:
 #    1. `s{1,2,3}_` prefix → `stage{1,2,3}.` group, remainder verbatim
 #       (incl. original capitalisation: sgdr_T0, subcenter_K).
-#    2. Everything else is assigned to the group that owns its concern, per
-#       REFACTOR_PLAN.md §2's `configs/` layout; the field name is unchanged.
-#    3. Keys with no group in §2's layout (Shared / TTA / seed / device) stay at
-#       the experiment root.
+#    2. Everything else is assigned to the group that owns its concern in the
+#       `configs/` layout; the field name is unchanged.
+#    3. Keys with no owning group (Shared / TTA / seed / device) stay at the
+#       experiment root.
 # ══════════════════════════════════════════════════════════════════════
 
 RENAME: dict[str, str] = {
@@ -183,7 +182,7 @@ INTENDED_VALUE_CHANGES: dict[str, str] = {
 
 
 def load_baseline_config(ref: str) -> dict[str, Any]:
-    """Parse the ``CONFIG`` dict literal out of the pre-refactor monolith.
+    """Parse the ``CONFIG`` dict literal out of the reference implementation.
 
     Values are ``ast.literal_eval``'d where possible; non-literal entries (only
     ``device``, a ``torch.device(...)`` call) are kept as their source text.

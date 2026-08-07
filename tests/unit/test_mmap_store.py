@@ -1,8 +1,6 @@
-"""DataStore invariants — REFACTOR_PLAN.md §3.4.
+"""DataStore invariants.
 
-The baseline kept the dataset in three module-level globals guarded by
-``if _GPU_PATCHES is not None: return``. :class:`DataStore` replaces them, and
-these tests pin the properties that made the original zero-RAM:
+These tests pin the properties that keep :class:`DataStore` zero-RAM:
 
 * the mapping is opened read-only (``mmap_mode="r"``) and stays an
   :class:`numpy.memmap` — never a materialised array;
@@ -11,8 +9,8 @@ these tests pin the properties that made the original zero-RAM:
 * indexing pages in one patch, and the ``np.array(...)`` copy in
   ``RiceSeedDataset.__getitem__`` does not drag the whole array in.
 
-Everything here runs against a tiny synthetic ``.npy``; the real 5.6 GB RSS check
-stays a manual Phase 5 step, as the plan specifies.
+Everything here runs against a tiny synthetic ``.npy``; checking RSS against
+the real multi-GB cube stays a manual step.
 """
 
 from __future__ import annotations
@@ -53,7 +51,7 @@ def tiny_dataset(tmp_path):
 
 
 def test_second_construction_is_a_noop(fresh_store, tiny_dataset):
-    """§3.4: re-instantiating must not re-mmap or duplicate the file handle."""
+    """Re-instantiating must not re-mmap or duplicate the file handle."""
     _, _, patches_path, labels_path, _ = tiny_dataset
 
     first = DataStore(patches_path=patches_path, labels_path=labels_path)

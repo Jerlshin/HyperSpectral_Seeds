@@ -1,5 +1,4 @@
 # SpectralQuadNet v4 — 4 branches + Perceiver-style fusion + 4 auxiliary heads.
-# Source: CONFIG["branch_drop_prob" … "fusion_drop"] (monolith lines 78-84, 132-139).
 defaults:
   - base_model
   - _self_
@@ -12,7 +11,7 @@ subcenter_K: 3
 aux_head_hidden: 128
 
 # ── SpecFormer branch (D) ─────────────────────────────────────────────
-wl_embed_dim: 16 # accepted by SpectralQuadNet.__init__ but unused (§1.3 tech debt)
+wl_embed_dim: 16 # accepted by SpectralQuadNet.__init__ but currently unused in its body
 specf_patch: 8
 specf_dim: 256
 specf_heads: 8

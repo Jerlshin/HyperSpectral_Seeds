@@ -1,17 +1,11 @@
 """Branch B — masked spectral statistics (9 moments/percentiles per band).
 
-Relocated verbatim from ``HSI_modality_training/hsi_training.py`` @ ``886560f``:
-
-=================================  ==============
-Symbol                             Baseline lines
-=================================  ==============
-:class:`SpectralStatsBranch`       914-988
-=================================  ==============
-
-The ``num_bands`` parameter is accepted but unused in the body (the branch is
-band-count agnostic because every stat is pooled over the spatial dimensions);
-it is carried across verbatim rather than dropped — removing dead parameters is
-an explicit non-goal of this refactor (REFACTOR_PLAN.md §6).
+The ``num_bands`` constructor parameter is accepted but unused in the body:
+the branch is band-count agnostic because every statistic is already pooled
+over the spatial dimensions before this module sees it, and ``in_channels``
+is fixed at 9 (the moment/percentile count), not ``num_bands``. It is kept
+in the signature for interface consistency with the other three branches,
+which do need it.
 """
 
 from __future__ import annotations
@@ -80,7 +74,7 @@ class SpectralStatsBranch(nn.Module):
                 nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
             elif isinstance(m, nn.Linear):
                 nn.init.trunc_normal_(m.weight, std=0.02)
-                if m.bias is not None:  # FIX-4: guard against bias=False linears
+                if m.bias is not None:  # guard against bias=False linears
                     nn.init.zeros_(m.bias)
 
     def forward(

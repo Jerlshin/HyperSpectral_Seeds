@@ -1,31 +1,20 @@
 """Zero-RAM memory-mapped access to the patch cube, labels and wavelengths.
 
-Replaces the three module-level globals in ``HSI_modality_training/hsi_training.py``
-@ ``886560f``:
-
-=========================================  ==============  ==========================
-Baseline symbol                            Baseline lines  Replacement
-=========================================  ==============  ==========================
-``_GPU_PATCHES`` / ``_load_data_mmap``     154, 163-170    :attr:`DataStore.patches`
-``_GLOBAL_LABELS`` / ``_load_data_mmap``   155, 163-170    :attr:`DataStore.labels`
-``_PHYSICAL_WL`` / ``_load_wavelengths_to_gpu``  156, 173-187  :attr:`DataStore.wavelengths`
-=========================================  ==============  ==========================
-
-Non-negotiable invariants carried over verbatim (REFACTOR_PLAN.md §3.4)
-─────────────────────────────────────────────────────────────────────
+Non-negotiable invariants
+──────────────────────────
 * ``np.load(..., mmap_mode="r")`` — a **read-only** mapping. Never pass
-  ``mmap_mode=None`` here; that would page the full 5.6 GB cube into RAM.
+  ``mmap_mode=None`` here; that would page the full multi-GB cube into RAM.
 * **Load-once guard.** :meth:`load_patches` returns early when ``patches`` is
-  already set, mirroring the baseline's ``if _GPU_PATCHES is not None: return``.
-  :class:`DataStore` is additionally a process-wide singleton, so constructing it
-  twice yields the *same object* and never re-mmaps or duplicates the file
-  handle — the property ``tests/unit/test_mmap_store.py`` asserts.
-* **The per-item copy lives in the Dataset, not here.** ``DataStore`` deliberately
-  exposes the raw ``np.memmap``; only
-  :meth:`~spectralquadnet.data.datasets.RiceSeedDataset.__getitem__` touches it,
-  and only via ``np.array(self.patches[ri])``, which pages in exactly one
-  ``(bands, 64, 64)`` patch. Never add a batched ``.copy()`` over the full array
-  anywhere on the loader path.
+  already set. :class:`DataStore` is additionally a process-wide singleton,
+  so constructing it twice yields the *same object* and never re-mmaps or
+  duplicates the file handle — the property ``tests/unit/test_mmap_store.py``
+  asserts.
+* **The per-item copy lives in the Dataset, not here.** ``DataStore``
+  deliberately exposes the raw ``np.memmap``; only
+  :meth:`~spectralquadnet.data.datasets.RiceSeedDataset.__getitem__` touches
+  it, and only via ``np.array(self.patches[ri])``, which pages in exactly one
+  ``(bands, 64, 64)`` patch. Never add a batched ``.copy()`` over the full
+  array anywhere on the loader path.
 """
 
 from __future__ import annotations
@@ -46,15 +35,14 @@ class DataStore:
 
     Construct it directly (``DataStore(patches_path=..., labels_path=...)``) or via
     :meth:`from_config`. Repeat construction is a no-op that returns the existing
-    instance, which is what makes it a drop-in replacement for the baseline's
-    lazily-initialised module globals.
+    instance, so every caller in the process shares one open mmap handle.
     """
 
     _instance: DataStore | None = None
 
     #: The mmapped cube. Typed as a plain array because `np.load(mmap_mode="r")`
     #: returns `np.memmap`, an `ndarray` subclass — nothing on the read path may
-    #: depend on which of the two it is (§3.4).
+    #: depend on which of the two it is.
     patches: npt.NDArray[Any] | None
     labels: npt.NDArray[Any] | None
     wavelengths: torch.Tensor | None
@@ -84,7 +72,7 @@ class DataStore:
 
     @classmethod
     def from_config(cls, cfg: DataConfig | Any, device: torch.device | str = "cpu") -> DataStore:
-        """Load everything the baseline's ``main()`` loaded (lines 2715-2716)."""
+        """Build/fetch the singleton, loading patches, labels and wavelengths from ``cfg``."""
         return cls(
             patches_path=cfg.patches_data,
             labels_path=cfg.labels_path,
@@ -101,19 +89,17 @@ class DataStore:
     def reset(cls) -> None:
         """Drop the singleton so a fresh one can be built.
 
-        Only for tests — production code loads once per process, exactly as the
-        baseline's module-level globals did.
+        Only for tests — production code loads once per process.
         """
         cls._instance = None
 
-    # ── Loading (mirrors the baseline free functions) ──────────────────
+    # ── Loading ──────────────────────────────────────────────────────
 
     def load_patches(self, patches_path: str, labels_path: str) -> None:
         """Memory-map the patch cube and read the labels array into RAM.
 
-        Verbatim translation of ``_load_data_mmap`` (baseline lines 163-170); the
-        ``global`` statement becomes instance state and the ``is not None`` guard
-        is preserved exactly.
+        A no-op if patches are already loaded (see the load-once invariant
+        in the module docstring).
         """
         if self.patches is not None:
             return
@@ -126,9 +112,12 @@ class DataStore:
     def load_wavelengths(self, csv_path: str, device: torch.device | str) -> None:
         """Read and min-max normalise the physical wavelengths.
 
-        Verbatim translation of ``_load_wavelengths_to_gpu`` (baseline lines
-        173-187), including the ``sep=None`` sniffing, the last-column selection
-        and the re-raise as ``RuntimeError``.
+        Uses ``sep=None`` to sniff the CSV's delimiter and takes the last
+        column as the wavelength value; a no-op if wavelengths are already
+        loaded.
+
+        Raises:
+            RuntimeError: The CSV could not be read or parsed as expected.
         """
         if self.wavelengths is not None:
             return
@@ -146,16 +135,31 @@ class DataStore:
     # ── Typed accessors ───────────────────────────────────────────────
 
     def require_patches(self) -> npt.NDArray[Any]:
+        """The mmapped patch cube, narrowed to non-``None`` for callers.
+
+        Raises:
+            RuntimeError: :meth:`load_patches` has not been called yet.
+        """
         if self.patches is None:
             raise RuntimeError("DataStore.load_patches() has not been called.")
         return self.patches
 
     def require_labels(self) -> npt.NDArray[Any]:
+        """The in-RAM label array, narrowed to non-``None`` for callers.
+
+        Raises:
+            RuntimeError: :meth:`load_patches` has not been called yet.
+        """
         if self.labels is None:
             raise RuntimeError("DataStore.load_patches() has not been called.")
         return self.labels
 
     def require_wavelengths(self) -> torch.Tensor:
+        """The normalised wavelength tensor, narrowed to non-``None`` for callers.
+
+        Raises:
+            RuntimeError: :meth:`load_wavelengths` has not been called yet.
+        """
         if self.wavelengths is None:
             raise RuntimeError("DataStore.load_wavelengths() has not been called.")
         return self.wavelengths

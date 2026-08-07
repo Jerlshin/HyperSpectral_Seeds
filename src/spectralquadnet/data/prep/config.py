@@ -1,22 +1,12 @@
 """Config objects for the offline dataset-preparation pipeline.
 
-The two root scripts this package absorbs each carried their own module-level
-constants, applied as import-time side effects:
+Both dataclasses are passed explicitly into the functions that need them, so
+importing :mod:`spectralquadnet.data.prep` creates no directories, touches no
+global RNG and reads no disk.
 
-* ``data_setup_v3.py`` lines 27-40 — ``ROOT``/``ZIP_FILE``/``PATCHES_PATH``/
-  ``LABELS_PATH``/``PATCH_SIZE``/``NUM_BANDS``, plus ``ROOT.mkdir(exist_ok=True)``
-  executed at import.
-* ``band_selection.py`` lines 66-92 — a ``CONFIG`` dict, plus
-  ``np.random.seed(CONFIG["seed"])`` executed at import.
-
-Both are now plain dataclasses passed explicitly into the functions that need
-them, so importing :mod:`spectralquadnet.data.prep` creates no directories,
-touches no global RNG and reads no disk. Every default below is transcribed
-verbatim from those scripts — nothing is re-defaulted (REFACTOR_PLAN.md §6).
-
-These are **preparation-time** settings and intentionally live outside the Hydra
-training config: they describe how ``dataset/patches_spa_40b.npy`` was built once,
-not how a training run behaves.
+These are **preparation-time** settings and intentionally live outside the
+Hydra training config: they describe how a reduced-band patch dataset is
+built once, offline, not how a training run behaves.
 """
 
 from __future__ import annotations
@@ -32,10 +22,7 @@ DATA_URL = (
 
 @dataclass
 class PrepConfig:
-    """Settings for download → segmentation → patch extraction.
-
-    Source: ``data_setup_v3.py`` lines 27-40.
-    """
+    """Settings for download → segmentation → patch extraction."""
 
     root: Path = Path("./dataset")
     data_url: str = DATA_URL
@@ -55,21 +42,14 @@ class PrepConfig:
         return self.root / "labels.npy"
 
     def ensure_root(self) -> Path:
-        """Create the dataset root.
-
-        The baseline did this at import time (``ROOT.mkdir(exist_ok=True)``,
-        line 28); it is now an explicit call made by the entrypoints.
-        """
+        """Create the dataset root directory (and parents) if it doesn't exist."""
         self.root.mkdir(parents=True, exist_ok=True)
         return self.root
 
 
 @dataclass
 class BandSelectionConfig:
-    """Settings for mRMR / SPA band selection.
-
-    Source: ``band_selection.py`` lines 66-91, field-for-field.
-    """
+    """Settings for mRMR / SPA band selection."""
 
     # Paths
     patches_path: str = "./dataset/patches.npy"

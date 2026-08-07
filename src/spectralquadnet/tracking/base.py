@@ -1,12 +1,9 @@
 """The tracker protocol every backend implements, plus the no-op backend.
 
-REFACTOR_PLAN.md §4.1 specifies six methods; this protocol has nine. The three
-extra ones exist because §5 Phase 4 requires the pre-refactor ``print(...)`` call
-sites to be replaced **one-for-one**, and the baseline's print surface was not
-purely numeric — roughly a third of it is banners, ``[INFO]``/``[WARN]`` notices
-and formatted epoch rows carrying non-scalar cells (the ``✓`` save marker, the
-``[P3]`` phase tag, the ``↻R1`` SGDR restart flag). Dropping them would have made
-the replacement lossy, which §4.1 forbids ("same information density").
+The protocol splits into two channels — machine (structured, numeric) and
+human (formatted, readable) — because the two audiences want different
+things from the same training run: a plotted loss curve versus a readable
+terminal log with banners and running tables.
 
 ===================  =========================================================
 Method               Channel
@@ -22,10 +19,10 @@ Method               Channel
 ``log_row``          human — one pre-formatted row of a running table
 ===================  =========================================================
 
-The split matters for the console backend: the human channel reproduces the
-baseline's terminal output, while the machine channel carries the §4.2
-diagnostics (per-branch losses, per-branch gradient norms) that are only useful
-as curves. :class:`~spectralquadnet.tracking.console_tracker.ConsoleTracker`
+The split matters for the console backend: the human channel produces
+readable terminal output, while the machine channel carries diagnostics
+(per-branch losses, per-branch gradient norms) that are only useful as
+curves. :class:`~spectralquadnet.tracking.console_tracker.ConsoleTracker`
 therefore stays quiet on ``log_scalar``/``log_scalars`` unless
 ``tracking.show_diagnostics`` is set — otherwise every epoch would print twice.
 
@@ -54,7 +51,7 @@ MessageLevel = str
 class ExperimentTracker(Protocol):
     """Structural type for every tracking backend."""
 
-    # ── Machine channel (REFACTOR_PLAN.md §4.1) ───────────────────────
+    # ── Machine channel ─────────────────────────────────────────────
 
     def log_scalar(self, tag: str, value: float, step: int) -> None:
         """Record a single metric at ``step``."""
@@ -93,10 +90,10 @@ class ExperimentTracker(Protocol):
     def log_row(self, tag: str, cells: dict[str, str], step: int) -> None:
         """Render one row of the running table identified by ``tag``.
 
-        Cells are **pre-formatted strings**, not numbers: the call site owns the
-        formatting (``.4f`` for a loss, ``.1%`` for an accuracy) exactly as the
-        baseline's f-strings did. A backend seeing a ``tag`` for the first time
-        emits a header before the row.
+        Cells are **pre-formatted strings**, not numbers: the call site owns
+        the formatting (``.4f`` for a loss, ``.1%`` for an accuracy). A
+        backend seeing a ``tag`` for the first time emits a header before
+        the row.
         """
         ...
 
@@ -104,11 +101,12 @@ class ExperimentTracker(Protocol):
 class NullTracker:
     """The ``tracking.backend=none`` backend — every method is a no-op.
 
-    Used by the CI smoke path and by any caller that wants the tracker parameter
-    satisfied without producing output. It is also the implicit default inside
-    the engine: ``train_one_epoch(..., tracker=None)`` skips diagnostics entirely
-    rather than routing them here, so the regression gates keep running the exact
-    pre-refactor code path.
+    Used by the CI smoke path and by any caller that wants the tracker
+    parameter satisfied without producing output. Note that the engine's
+    default is ``tracker=None``, not an implicit ``NullTracker()``:
+    ``train_one_epoch(..., tracker=None)`` skips diagnostic accumulation
+    entirely rather than accumulating it only to discard it here, which
+    keeps the no-tracker path free of any tracking-related overhead.
     """
 
     def log_scalar(self, tag: str, value: float, step: int) -> None:

@@ -1,13 +1,12 @@
-"""Golden forward-pass and training-step regression — REFACTOR_PLAN.md §3.2.2.
+"""Golden forward-pass and training-step regression against a pinned reference.
 
-The **primary numerical gate** for Phases 2-3, covering both of §3.2.2's
-artifacts: the eval-mode logits (Phase 2) and the Stage-1 epoch-1 loss
-(Phase 3). Both were captured from the pre-refactor ``hsi_training.py`` at SHA
-``886560f`` by ``scripts/capture_golden.py``; see ``golden/README.md`` for the
-exact procedures and provenance.
+The **primary numerical gate**: covers both the eval-mode logits and the
+Stage-1 epoch-1 loss, captured from the pinned reference implementation by
+``scripts/capture_golden.py``; see ``golden/README.md`` for the exact
+procedures and provenance.
 
-If one of these tests fails, the refactor changed the model's numerics. The fix
-is to find the drift — never to regenerate the golden files.
+If one of these tests fails, something changed the model's numerics. The fix
+is to find the drift — never to regenerate the golden files to match.
 """
 
 from __future__ import annotations
@@ -26,11 +25,11 @@ def _digest(t: torch.Tensor) -> str:
 
 
 def test_forward_logits_match_golden(seeded_model, synthetic_batch, golden_logits):
-    """Eval-mode logits reproduce the pre-refactor values within ``atol=1e-6``.
+    """Eval-mode logits reproduce the reference values within ``atol=1e-6``.
 
-    The tolerance is §3.2.2's: float32 matmul order is unchanged because no math
-    moved, so in practice the difference is exactly zero — but 1e-6 leaves room
-    for a different BLAS build without letting a real regression through.
+    In practice the difference is exactly zero when float32 matmul order is
+    unchanged, but 1e-6 leaves room for a different BLAS build without
+    letting a real regression through.
     """
     with torch.no_grad():
         out = seeded_model(synthetic_batch)
@@ -50,11 +49,11 @@ def test_forward_logits_match_golden(seeded_model, synthetic_batch, golden_logit
 
 
 def test_weight_init_is_bit_identical(seeded_model, golden_init_digests):
-    """Every initialised tensor hashes to its pre-refactor value.
+    """Every initialised tensor hashes to its reference value.
 
-    Stronger than the forward pass for §3.6's purposes: it fails on a *single*
-    reordered sub-module construction, which a 4-sample forward could average
-    into invisibility. The golden digests cover all 352 state-dict entries.
+    Stronger than the forward pass: it fails on a *single* reordered
+    sub-module construction, which a 4-sample forward could average into
+    invisibility. The golden digests cover every state-dict entry.
     """
     actual = {name: _digest(t) for name, t in seeded_model.state_dict().items()}
     expected = {k: v for k, v in golden_init_digests.items() if k != "__combined__"}
@@ -85,11 +84,11 @@ def test_forward_is_deterministic_in_eval_mode(seeded_model, synthetic_batch):
 
 
 def test_stage1_epoch_loss_matches_golden(stage1_train_step, golden_stage1_loss):
-    """The Stage-1 epoch-1 loss reproduces the pre-refactor value **exactly**.
+    """The Stage-1 epoch-1 loss reproduces the reference value **exactly**.
 
-    §3.2.2 asks for exact equality here, not a tolerance: nothing in the loop
-    reorders a float operation, so any difference at all is a behavioural
-    change. The accuracy is compared the same way.
+    Exact equality, not a tolerance: nothing in the loop reorders a float
+    operation, so any difference at all is a behavioural change. The
+    accuracy is compared the same way.
     """
     assert stage1_train_step["loss"] == golden_stage1_loss["loss"], (
         f"Stage-1 epoch loss drifted: {stage1_train_step['loss']!r} != "
@@ -99,7 +98,7 @@ def test_stage1_epoch_loss_matches_golden(stage1_train_step, golden_stage1_loss)
 
 
 def test_stage1_epoch_weights_match_golden(stage1_train_step, golden_stage1_loss):
-    """Post-step model and EMA weights hash to their pre-refactor values.
+    """Post-step model and EMA weights hash to their reference values.
 
     This is the half of the gate that actually bites. A single loss scalar says
     nothing about what the *update* did, so it would survive a wrong gradient
@@ -121,8 +120,8 @@ def test_training_mode_returns_auxiliary_logits(seeded_model, synthetic_batch, c
     """Training mode still yields the 4 auxiliary heads alongside the main logits.
 
     Not a numerical check — a structural one. Stage 1's deep supervision reads
-    these five keys by name, so a silent contract change here would only surface
-    much later, in Phase 3.
+    these five keys by name, so a silent contract change here would only
+    surface much later, deep into a training run.
     """
     seeded_model.train()
     with torch.no_grad():

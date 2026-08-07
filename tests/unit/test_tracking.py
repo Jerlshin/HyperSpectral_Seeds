@@ -1,9 +1,9 @@
-"""Tracking-backend behaviour — REFACTOR_PLAN.md §4.1.
+"""Tracking-backend behaviour.
 
-The tracking package is net-new in Phase 4 (the monolith used bare ``print``), so
-unlike everything under ``tests/regression/`` there is no pre-refactor baseline
-to compare against. What these tests pin instead is the contract the stage
-orchestrators now rely on:
+Unlike everything under ``tests/regression/`` there is no reference
+implementation to compare against, since the tracking package has no
+numerical behaviour of its own. What these tests pin instead is the contract
+the stage orchestrators rely on:
 
 * every backend structurally satisfies :class:`ExperimentTracker`, so a stage can
   be handed any of them;
@@ -11,8 +11,8 @@ orchestrators now rely on:
   nonsense loudly rather than silently falling back to a default;
 * :class:`MultiTracker` fans out and closes every child;
 * the console backend renders each channel, and stays quiet about scalars unless
-  ``show_diagnostics`` is set — the property that keeps its output at the
-  pre-refactor line density.
+  ``show_diagnostics`` is set — the property that keeps its output to one
+  line per epoch.
 
 ``wandb``/``tensorboard`` are exercised through the factory's error paths only;
 instantiating them would open a real run directory or network session.

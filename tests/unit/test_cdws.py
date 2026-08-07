@@ -1,10 +1,10 @@
-"""Class-Difficulty-Weighted Sampling bit-exactness — REFACTOR_PLAN.md §3.2.3.
+"""Class-Difficulty-Weighted Sampling bit-exactness against a pinned reference.
 
 ``build_cdws_weights`` turns per-class validation F1 into the sampling weights
 ``ClassBalancedBatchSampler`` uses for Stage 2 and Stage 3 batch composition, and
 every checkpoint's meta sidecar carries a frozen copy under ``cdws_weights``. A
 drift here would silently re-weight training without changing a single shape or
-raising a single error, so it is compared with ``==`` against the pre-refactor
+raising a single error, so it is compared with ``==`` against a pinned reference
 implementation across the F1 distributions a real run produces — including the
 pathological ones (all-zero F1, missing classes) that pin the clamp and the
 ``.get(c, 0.0)`` fallback.

@@ -1,16 +1,8 @@
 """Stateless spectral feature extractors used by :class:`SpectralQuadNet.forward`.
 
-Relocated verbatim from ``HSI_modality_training/hsi_training.py`` @ ``886560f``:
-
-=====================================  ==============
-Symbol                                 Baseline lines
-=====================================  ==============
-:func:`extract_grid_spectra`           1367-1386
-:func:`masked_spectral_stats`          1388-1422
-=====================================  ==============
-
-Both are pure functions of their input tensor (no config, no globals, no RNG),
-so they relocate with zero translation.
+Both functions are pure — they depend only on their input tensor (no config,
+no module state, no RNG) — and operate on background-masked hyperspectral
+cubes where padded pixels are exactly zero across every band.
 """
 
 from __future__ import annotations
@@ -20,9 +12,17 @@ import torch.nn.functional as F
 
 
 def extract_grid_spectra(x: torch.Tensor, grid_size: int = 4) -> torch.Tensor:
-    """
-    Splits the 64x64 spatial dimensions into a grid and extracts the mean
-    spectrum for each grid cell, actively ignoring zero-padded background pixels.
+    """Splits the spatial dimensions into a grid of per-cell mean spectra.
+
+    Background pixels (zero across every band) are excluded from each cell's
+    mean so that padding never dilutes the seed's spectral signal.
+
+    Args:
+        x: Hyperspectral cube, shape ``(B, C, H, W)``.
+        grid_size: Number of grid cells per spatial axis.
+
+    Returns:
+        Per-region mean spectra, shape ``(B, grid_size * grid_size, C)``.
     """
     B, C, H, W = x.shape
 

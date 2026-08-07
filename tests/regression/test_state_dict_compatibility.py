@@ -1,13 +1,12 @@
-"""Checkpoint compatibility — REFACTOR_PLAN.md §3.1.
+"""Checkpoint compatibility with real trained weights.
 
-The migration's **highest-priority** guarantee: real trained weights exist, and
-``save_ckpt``/``load_ckpt`` persist plain tensors keyed by attribute path. File
-relocation therefore carries no pickling risk — the only way to break these
-checkpoints is to rename an ``nn.Module`` attribute inside
-``SpectralQuadNet.__init__``.
+The **highest-priority** guarantee for this codebase: real trained weights
+exist, and ``save_ckpt``/``load_ckpt`` persist plain tensors keyed by
+attribute path. The only way to break these checkpoints is to rename an
+``nn.Module`` attribute inside ``SpectralQuadNet.__init__``.
 
 This module loads all three real checkpoints from ``outputs/output_v12_spa40/``
-into a freshly constructed refactored model with ``strict=True`` and asserts zero
+into a freshly constructed model with ``strict=True`` and asserts zero
 missing and zero unexpected keys — for the ``"model"`` bundle *and* the ``"ema"``
 shadow, since ``ModelEMA.state_dict()`` is the shadow model's state dict and
 inherits the same constraint.
@@ -23,7 +22,7 @@ import torch
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_dataset]
 
-# The 14 top-level ``nn.Module`` attribute names §3.1 pins as unrenameable.
+# The 14 top-level ``nn.Module`` attribute names that must never be renamed.
 SACRED_ATTRIBUTES = {
     "se",
     "wl_pe_cnn",
@@ -89,7 +88,7 @@ def test_checkpoint_tensor_shapes_match(stage, checkpoint_paths, seeded_model):
 
 @pytest.mark.parametrize("stage", STAGES)
 def test_sacred_attribute_names_present(stage, checkpoint_paths, seeded_model):
-    """The 14 attribute names §3.1 pins are still exactly the model's top level."""
+    """The 14 pinned attribute names are still exactly the model's top level."""
     ckpt_tops = {k.split(".")[0] for k in _load_bundle(checkpoint_paths[stage])["model"]}
     model_tops = {k.split(".")[0] for k in seeded_model.state_dict()}
 
@@ -99,10 +98,10 @@ def test_sacred_attribute_names_present(stage, checkpoint_paths, seeded_model):
 
 @pytest.mark.parametrize("stage", STAGES)
 def test_bundle_schema_unchanged(stage, checkpoint_paths):
-    """``save_ckpt``'s bundle keys are intact (§3.5).
+    """``save_ckpt``'s bundle keys are intact.
 
-    Phase 3 relocates ``engine/checkpoint.py``; this pins the schema those
-    functions must keep producing so the existing artifacts stay loadable.
+    Pins the schema ``engine/checkpoint.py`` must keep producing so the
+    existing artifacts stay loadable.
     """
     bundle = _load_bundle(checkpoint_paths[stage])
     required = {"epoch", "stage", "model", "ema", "val_f1", "val_acc", "use_arcface"}
@@ -112,9 +111,9 @@ def test_bundle_schema_unchanged(stage, checkpoint_paths):
 def test_ema_and_model_share_key_structure(checkpoint_paths):
     """``ModelEMA``'s shadow has the same keys as the live model, in every stage.
 
-    This is why §3.1's attribute-name constraint applies to the EMA too: the
-    shadow is a ``deepcopy`` of the model, so a rename breaks both halves of every
-    bundle at once.
+    This is why the attribute-name constraint applies to the EMA too: the
+    shadow is a ``deepcopy`` of the model, so a rename breaks both halves of
+    every bundle at once.
     """
     for stage in STAGES:
         bundle = _load_bundle(checkpoint_paths[stage])

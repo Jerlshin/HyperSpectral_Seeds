@@ -1,30 +1,12 @@
 """Learning-rate and ArcFace-margin schedules.
 
-Relocated from ``HSI_modality_training/hsi_training.py`` @ ``886560f``:
+:func:`phase_aware_lr` is built as a standalone factory (rather than a
+closure defined inline in the Stage-1 training loop) so the schedule is
+callable in isolation and can be unit-tested across its full epoch range —
+see ``tests/unit/test_schedulers.py``.
 
-=====================================  ==============
-Symbol                                 Baseline lines
-=====================================  ==============
-:func:`sgdr_scheduler`                 1779-1794
-:func:`arcface_margin`                 1797-1800
-:func:`phase_aware_lr`                 2218-2246 (closure inside ``run_stage1``)
-=====================================  ==============
-
-:func:`sgdr_scheduler` and :func:`arcface_margin` relocate verbatim — neither
-touched ``CONFIG``.
-
-:func:`phase_aware_lr` is the one structural change in this module, and it is
-mandated by the plan: §2's tree lists a "phase_aware_lr factory" here, and
-§3.2.3 requires the schedule to be callable in isolation so it can be compared
-bit-exactly against the baseline closure over its full epoch range
-(``tests/unit/test_schedulers.py``). The lifted body is identical apart from
-``CONFIG["s1_min_lr"]``/``CONFIG.get("s1_mid_lr", 2.5e-4)``/``CONFIG["s1_max_lr"]``
-→ ``cfg.stage1.{min_lr,mid_lr,max_lr}``; ``p1_end``/``p2_end``, previously read
-from the enclosing scope, become explicit parameters, and the hardcoded
-30-epoch Phase-3 restart cycle stays hardcoded (REFACTOR_PLAN.md §6 forbids
-promoting baseline literals to config during the mechanical move).
-
-All three return *multipliers* on the optimiser's base LR, not absolute LRs.
+All three functions return *multipliers* on the optimiser's base LR, not
+absolute LRs.
 """
 
 from __future__ import annotations
@@ -110,12 +92,12 @@ def phase_aware_lr(cfg: ExperimentConfig | Any, p1_end: int, p2_end: int) -> Cal
             # Decays from 0.6 (3e-4) down to 0.2 (1e-4)
             return 0.2 + 0.4 * 0.5 * (1.0 + math.cos(math.pi * progress))
 
-        # Phase 3: Fine-tuning with cosine restarts every 30 epochs (was 40).
-        # Higher peak LR (s1_mid_lr=2.5e-4) lets the model escape the overfit basin
-        # that forms when very_light aug still can't fully prevent memorization.
-        # Shorter cycles (30 eps) give more restarts in the same 193-ep window.
+        # Phase 3: fine-tuning with cosine restarts every CYCLE epochs. The
+        # periodic peak back up to mid_lr lets the model escape the overfit
+        # basin that forms when light augmentation alone can't fully prevent
+        # memorisation late in training.
         else:
-            CYCLE = 30  # FIXED: was 40 — more restarts per P3 window
+            CYCLE = 30
             cycle_ep = (ep - p2_end - 1) % CYCLE
             min_ratio = cfg.stage1.min_lr / cfg.stage1.max_lr
             mid_ratio = cfg.stage1.mid_lr / cfg.stage1.max_lr

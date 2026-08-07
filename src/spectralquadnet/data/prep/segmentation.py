@@ -1,24 +1,9 @@
 """ENVI cube loading, dark-current correction and seed segmentation.
 
-Relocated verbatim from ``data_setup_v3.py`` @ ``886560f``:
-
-=========================  ==============
-Symbol                     Baseline lines
-=========================  ==============
-:func:`load_hsi`           74-78
-:func:`preprocess_raw`     81-88
-:func:`segment`            95-117
-=========================  ==============
-
-All three function bodies are unchanged, including the magic constants
-(``cube[:600]`` crop, ``0.4 * otsu`` threshold, the ``300 < area < 800`` /
-``eccentricity > 0.6`` / ``solidity > 0.85`` region filter, and the
-top-left-first centroid sort that fixes label ordering).
-
 ``spectral`` is imported lazily inside :func:`load_hsi` rather than at module
-scope: the baseline's module-level ``spectral.settings.envi_support_nonlowercase_params
-= True`` (line 20) was an import-time side effect, and ``spectral`` is an
-optional dependency (``pip install -e ".[prep]"``) that training never needs.
+scope, both to defer its ``envi_support_nonlowercase_params = True``
+import-time side effect and because it is an optional dependency
+(``pip install -e ".[prep]"``) that training never needs.
 """
 
 from __future__ import annotations
@@ -41,6 +26,7 @@ from skimage.segmentation import clear_border
 
 
 def load_hsi(hdr: str | Path) -> npt.NDArray[np.float32]:
+    """Load an ENVI hyperspectral cube from its ``.hdr`` file into a float32 array."""
     import spectral
 
     spectral.settings.envi_support_nonlowercase_params = True
@@ -52,6 +38,16 @@ def load_hsi(hdr: str | Path) -> npt.NDArray[np.float32]:
 
 
 def preprocess_raw(hdr: str | Path, dark_hdr: str | Path) -> npt.NDArray[np.float32]:
+    """Subtract the dark-current reference and crop to the first 600 rows.
+
+    Args:
+        hdr: Path to the raw scan's ``.hdr`` file.
+        dark_hdr: Path to the dark-current reference scan's ``.hdr`` file.
+
+    Returns:
+        Dark-corrected cube, clipped to non-negative and cropped to rows
+        ``[0, 600)`` (the sensor's valid-data band).
+    """
     cube = load_hsi(hdr)
     dark = load_hsi(dark_hdr)
 

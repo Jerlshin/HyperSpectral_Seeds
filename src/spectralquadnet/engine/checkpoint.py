@@ -1,29 +1,6 @@
 """Stage checkpoints, JSON meta sidecars and auto-resume detection.
 
-Relocated from ``HSI_modality_training/hsi_training.py`` @ ``886560f``:
-
-=====================================  ==============
-Symbol                                 Baseline lines
-=====================================  ==============
-:func:`stage_ckpt_path`                2070-2071
-:func:`stage_meta_path`                2074-2075
-:func:`stage_exists`                   2078-2079
-:func:`latest_completed_stage`         2082-2086
-:func:`save_ckpt`                      2089-2106
-:func:`_is_json_serialisable`          2109-2113
-:func:`load_stage_meta`                2116-2130
-:func:`load_ckpt`                      2133-2139
-:func:`update_bn_stats`                2142-2150
-:func:`_pick_best_checkpoint`          2675-2694
-=====================================  ==============
-
-Declared deviation, mechanical and confined to the five functions that touched
-it: ``CONFIG["output_dir"]`` → ``cfg.output_dir``, which makes ``cfg`` their
-leading parameter. Only the *value* of ``output_dir`` moved (from a hardcoded
-absolute path to a config field, REFACTOR_PLAN.md §4.3) — every filename
-template is untouched.
-
-REFACTOR_PLAN.md §3.5 pins the following, all preserved exactly:
+The following conventions are load-bearing and must not drift:
 
 * **Filenames** — ``best_stage{1,2,3}.pth`` and ``stage{1,2,3}_meta.json``.
 * **Bundle schema** — ``{"epoch", "stage", "model", "ema", "val_f1", "val_acc",
@@ -43,9 +20,9 @@ samplers to index them.
 
 from __future__ import annotations
 
-# The baseline imports `json as _json`; the alias is kept so every function body
-# below is *provably* byte-identical to it under `check_ast_no_op_move.py`
-# rather than differing by a cosmetic module name.
+# Aliased as `_json` (not `json`) so this module stays symbol-for-symbol
+# comparable against the reference implementation `scripts/check_ast_no_op_move.py`
+# checks it against.
 import json as _json
 import os
 from typing import TYPE_CHECKING, Any
@@ -62,18 +39,25 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 
 def stage_ckpt_path(cfg: ExperimentConfig | Any, s: int) -> str:
+    """Path to stage ``s``'s ``.pth`` checkpoint under ``cfg.output_dir``."""
     return os.path.join(cfg.output_dir, f"best_stage{s}.pth")
 
 
 def stage_meta_path(cfg: ExperimentConfig | Any, s: int) -> str:
+    """Path to stage ``s``'s JSON meta sidecar under ``cfg.output_dir``."""
     return os.path.join(cfg.output_dir, f"stage{s}_meta.json")
 
 
 def stage_exists(cfg: ExperimentConfig | Any, s: int) -> bool:
+    """True only if both stage ``s``'s checkpoint and its meta sidecar are present."""
     return os.path.isfile(stage_ckpt_path(cfg, s)) and os.path.isfile(stage_meta_path(cfg, s))
 
 
 def latest_completed_stage(cfg: ExperimentConfig | Any) -> int:
+    """Highest stage (3, 2 or 1) that has a complete checkpoint, or 0 if none do.
+
+    Used to decide where auto-resume should pick up training.
+    """
     for s in (3, 2, 1):
         if stage_exists(cfg, s):
             return s
@@ -91,6 +75,26 @@ def save_ckpt(
     val_acc: float,
     **metadata: Any,
 ) -> None:
+    """Persist the full checkpoint bundle plus a JSON-only meta sidecar.
+
+    The sidecar carries every JSON-serialisable bundle key except ``model``
+    and ``ema`` (their tensors are only in the ``.pth``), so downstream code
+    can inspect ``val_f1``/``val_acc``/metadata without deserialising torch
+    state.
+
+    Args:
+        cfg: Composed experiment config, read for ``cfg.output_dir``.
+        path: Destination path for the ``.pth`` bundle.
+        epoch: Epoch number to record.
+        stage: Stage label (e.g. ``"stage 2"``); its trailing token must be
+            the stage's digit, since the sidecar path is derived from it.
+        model: Model whose ``state_dict()`` and ``_use_arcface`` flag are saved.
+        ema: EMA shadow whose ``state_dict()`` is saved under ``"ema"``.
+        val_f1: Validation macro-F1 to record.
+        val_acc: Validation accuracy to record.
+        **metadata: Extra JSON-serialisable fields merged into the bundle
+            (and, where serialisable, into the sidecar).
+    """
     bundle = {
         "epoch": epoch,
         "stage": stage,
@@ -111,6 +115,7 @@ def save_ckpt(
 
 
 def _is_json_serialisable(v: Any) -> bool:
+    """Whether ``v`` survives a round trip through ``json.dumps``."""
     try:
         _json.dumps(v)
         return True
@@ -119,6 +124,15 @@ def _is_json_serialisable(v: Any) -> bool:
 
 
 def load_stage_meta(cfg: ExperimentConfig | Any, s: int) -> dict[str, Any]:
+    """Load stage ``s``'s JSON sidecar, re-integerising any string-keyed dict values.
+
+    JSON forces object keys to strings, so any top-level dict value (e.g.
+    ``class_f1``, ``cdws_weights``) has its keys coerced back to ``int``
+    where possible, restoring the ``{int: float}`` shape callers expect.
+
+    Returns:
+        The sidecar contents, or ``{}`` if the file does not exist.
+    """
     p = stage_meta_path(cfg, s)
     if not os.path.isfile(p):
         return {}
@@ -137,6 +151,15 @@ def load_stage_meta(cfg: ExperimentConfig | Any, s: int) -> dict[str, Any]:
 
 
 def load_ckpt(path: str, model: nn.Module, ema: ModelEMA, device: torch.device) -> dict[str, Any]:
+    """Load a checkpoint bundle into ``model`` and its EMA shadow in place.
+
+    Also restores the ``use_arcface`` head-selection flag on both, so a
+    resumed model routes through the same classification head it was saved
+    with.
+
+    Returns:
+        The full deserialised bundle (including ``val_f1``/``val_acc``/metadata).
+    """
     ckpt = torch.load(path, map_location=device, weights_only=False)
     model.load_state_dict(ckpt["model"])
     ema.load_state_dict(ckpt["ema"])
@@ -149,6 +172,13 @@ def load_ckpt(path: str, model: nn.Module, ema: ModelEMA, device: torch.device) 
 
 
 def update_bn_stats(loader: DataLoader[Any], model: nn.Module, device: torch.device) -> None:
+    """Recompute BatchNorm running statistics over ``loader`` (used after SWA averaging).
+
+    Resets every BatchNorm layer's running mean/var and momentum to ``None``
+    (cumulative-average mode), then runs one pass over ``loader`` in
+    ``train()`` mode so the running stats reflect the SWA-averaged weights
+    rather than any individual snapshot's stats.
+    """
     model.train()
     for m in model.modules():
         if isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d)):
@@ -168,7 +198,20 @@ def update_bn_stats(loader: DataLoader[Any], model: nn.Module, device: torch.dev
 
 
 def _pick_best_checkpoint(cfg: ExperimentConfig | Any, *ckpt_paths: str) -> str:
-    """Select checkpoint with highest val_f1 across all stages."""
+    """Select the checkpoint with the highest recorded ``val_f1`` across stages.
+
+    For each path, ``val_f1`` is read from the JSON sidecar first (cheap);
+    if absent, falls back to ``val_acc``, then to loading the full ``.pth``
+    bundle, then to 0.0 if even that fails.
+
+    Args:
+        cfg: Composed experiment config, used to locate each path's sidecar.
+        *ckpt_paths: Candidate checkpoint paths to rank.
+
+    Returns:
+        The path with the highest score, or the last path given if none
+        exist on disk.
+    """
     best_val, best_path = -1.0, ckpt_paths[-1]
     for p in ckpt_paths:
         if not os.path.isfile(p):

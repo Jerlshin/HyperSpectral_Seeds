@@ -1,25 +1,22 @@
 """Structured config schemas for SpectralQuadNet.
 
-These dataclasses are the typed mirror of the pre-refactor ``CONFIG`` dict
-(``HSI_modality_training/hsi_training.py`` lines 34-143, baseline SHA ``886560f``).
-Every one of its 81 keys maps to exactly one field here — see
-``docs/config_rename_table.md`` for the complete old-key → new-path table and
-``scripts/check_config_roundtrip.py`` for the automated check that enforces it
-(REFACTOR_PLAN.md §3.3).
+Every experiment knob is a typed dataclass field, registered with Hydra's
+``ConfigStore`` so a malformed or missing key in ``configs/`` fails at
+composition time rather than at some arbitrary point deep in training.
+``scripts/check_config_roundtrip.py`` cross-checks every field against its
+YAML value.
 
 Design notes
 ────────────
 * **YAML is the single source of truth for values.** Every value-carrying field
   defaults to ``omegaconf.MISSING`` so that a key missing from ``configs/`` fails
   loudly at composition time rather than silently falling back to a default that
-  drifts from the YAML. The one exception is :class:`TrackingConfig`, which is
-  net-new in this refactor (REFACTOR_PLAN.md §4.1) and has no ``CONFIG``
-  ancestor to stay faithful to.
-* **No key is renamed beyond mechanical prefix stripping.** ``s1_max_lr`` becomes
-  ``stage1.max_lr``; original capitalisation (``sgdr_T0``, ``subcenter_K``) is
-  preserved verbatim so the rename table stays a pure prefix rule.
-* **Values are not re-defaulted** (REFACTOR_PLAN.md §6): the YAML files carry the
-  exact numbers from the pre-refactor ``CONFIG``.
+  drifts from the YAML. :class:`TrackingConfig` is the exception, since its
+  fields are genuinely optional (a run with no tracking backend configured is
+  a valid, common case) and carries real defaults.
+* **Field names follow a consistent prefix-per-group convention** (e.g.
+  ``stage1.max_lr``, ``stage2.sgdr_T0``) rather than a flat namespace, so a
+  field's owning group is always unambiguous from its path alone.
 """
 
 from __future__ import annotations
@@ -38,10 +35,10 @@ from omegaconf import MISSING
 class DataConfig:
     """Dataset location, geometry and input-perturbation strengths.
 
-    ``max_cutout_bands``/``noise_std`` sit under the *Architecture* banner in the
-    pre-refactor ``CONFIG`` but are read exclusively by ``RiceSeedDataset``'s
-    augmentation primitives (monolith lines 291, 298), so they live with the data
-    concern here.
+    ``max_cutout_bands``/``noise_std`` group here rather than under
+    :class:`ModelConfig` because they are read exclusively by
+    ``RiceSeedDataset``'s augmentation primitives — they parameterise the
+    input pipeline, not the model architecture.
     """
 
     patches_data: str = MISSING
@@ -62,9 +59,9 @@ class DataConfig:
 class ModelConfig:
     """Architecture knobs consumed by ``SpectralQuadNet.__init__``.
 
-    ``wl_embed_dim`` is accepted by the constructor but unused in its body
-    (REFACTOR_PLAN.md §1.3 tech debt); it is carried across verbatim rather than
-    dropped, since removing it is an explicit non-goal (§6).
+    ``wl_embed_dim`` is accepted by the model constructor but currently
+    unused in its body; kept in the schema for forward compatibility with
+    the constructor's signature.
     """
 
     branch_drop_prob: float = MISSING
@@ -138,12 +135,10 @@ class Stage1Config:
 class Stage2Config:
     """Stage 2: sub-centre ArcFace with SGDR, SupCon/ProtoNCE and CDWS.
 
-    ``cdws_*`` and ``supcon_temp``/``proto_temp`` sit under the Stage 2 banner in
-    the pre-refactor ``CONFIG`` and keep that home, but note they are also read
-    from Stage 1 and Stage 3 code paths (``compute_class_difficulty``, monolith
-    line 2167; Stage 3 contrastive auxiliaries, line 2557). Promoting them to a
-    shared group would be a config-layout change and is deliberately out of scope
-    here (REFACTOR_PLAN.md §6).
+    ``cdws_*`` live under this group even though they are also read from
+    Stage 1 (``compute_class_difficulty``) and Stage 3 (contrastive
+    auxiliaries) code paths, since Stage 2 is where CDWS-weighted sampling
+    is the primary batch-composition strategy.
     """
 
     epochs: int = MISSING
@@ -198,7 +193,7 @@ class Stage3Config:
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  TRACKING — net-new in this refactor (REFACTOR_PLAN.md §4.1)
+#  TRACKING
 # ══════════════════════════════════════════════════════════════════════
 
 
@@ -206,13 +201,11 @@ class Stage3Config:
 class TrackingConfig:
     """Experiment-tracking backend selection.
 
-    Has no pre-refactor ``CONFIG`` ancestor (the monolith used bare ``print``), so
-    it is excluded from the §3.3 round-trip key diff and carries real defaults.
-
-    ``show_diagnostics`` and ``log_grad_norms`` were added in Phase 4 alongside
-    the §4.2 diagnostics. Both default to console output that matches the
-    pre-refactor line density: gradient norms *are* computed and sent to the
-    machine channel, but the console stays quiet about them unless asked.
+    ``show_diagnostics`` and ``log_grad_norms`` gate the per-branch
+    diagnostics: gradient norms *are* always computed and sent to the
+    structured backends (W&B/TensorBoard) when tracking is enabled, but the
+    console stays quiet about them unless ``show_diagnostics`` is set, to
+    keep the default console output readable.
     """
 
     backend: str = "console"
@@ -222,7 +215,7 @@ class TrackingConfig:
     watch_model: bool = False
     backends: list[str] = field(default_factory=list)  # used by backend == "multi"
 
-    # ── §4.2 diagnostics ──────────────────────────────────────────────
+    # ── Per-branch diagnostics ──────────────────────────────────────────
     #: Compute per-branch gradient norms each optimiser step and log the epoch
     #: mean. Costs one extra pass over ``named_parameters()`` per step.
     log_grad_norms: bool = True
@@ -240,19 +233,17 @@ class TrackingConfig:
 class ExperimentConfig:
     """Top-level composed config.
 
-    Root-level fields are the pre-refactor ``CONFIG``'s *Shared*, *TTA*, ``seed``
-    and ``device`` entries, which §2's config-group layout gives no group of their
-    own.
+    Root-level fields (run identity, shared training knobs, TTA, seed,
+    device) are the settings that don't belong to any single stage or
+    component and so have no group of their own.
 
-    Two intentional deviations from a pure 1:1 transcription, both called out in
-    REFACTOR_PLAN.md §4.3:
+    Two notable field shapes:
 
-    * ``output_dir`` is no longer a hardcoded absolute path; it is interpolated
-      from the net-new ``output_root``/``run_name`` pair.
+    * ``output_dir`` is not set directly; it is interpolated from the
+      ``output_root``/``run_name`` pair in the composed YAML.
     * ``device`` is a resolution *strategy* string (``"auto"``/``"cuda"``/
-      ``"cpu"``/``"mps"``) instead of a live ``torch.device`` object, since YAML
-      cannot hold one. ``utils/device.py`` resolves it, reproducing the monolith's
-      ``torch.device("cuda" if torch.cuda.is_available() else "cpu")``.
+      ``"cpu"``/``"mps"``) rather than a live ``torch.device`` object, since
+      YAML cannot hold one — ``utils/device.py`` resolves it at runtime.
     """
 
     data: DataConfig = MISSING

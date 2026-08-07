@@ -27,27 +27,27 @@ SEED = 42
 BATCH = 4
 SPATIAL = 64
 
-# `scripts/` is migration scaffolding, not part of the installed package, but the
-# §3.2.3 gates need its baseline loader. Adding it to the path here keeps the
-# `_baseline` import in the fixtures below plain and unconditional.
+# `scripts/` is not part of the installed package, but the regression gates
+# below need its reference-implementation loader. Adding it to the path here
+# keeps the `_baseline` import in the fixtures below plain and unconditional.
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  The pre-refactor baseline
+#  The pinned reference implementation
 # ══════════════════════════════════════════════════════════════════════
 
 
 @pytest.fixture(scope="session")
 def baseline() -> types.ModuleType:
-    """The pre-refactor ``hsi_training.py``, executed side-effect-free from git.
+    """The pinned reference ``hsi_training.py``, executed side-effect-free from git.
 
-    ``scripts/_baseline.py`` reads the file at SHA ``886560f`` and runs only its
-    declarations, so importing it neither seeds the RNG nor writes to disk. The
-    §3.2.3 tests call the functions on this module object rather than compare
-    against transcribed constants — a transcription could itself carry the drift
-    the test exists to catch.
+    ``scripts/_baseline.py`` reads the file at a fixed git ref and runs only
+    its declarations, so importing it neither seeds the RNG nor writes to
+    disk. The regression tests call the functions on this module object
+    rather than compare against transcribed constants — a transcription
+    could itself carry the drift the test exists to catch.
     """
     from _baseline import load_baseline_module
 
@@ -56,7 +56,7 @@ def baseline() -> types.ModuleType:
 
 @pytest.fixture(scope="session")
 def baseline_src() -> str:
-    """Source text of the baseline monolith, for reaching nested closures.
+    """Source text of the reference implementation, for reaching nested closures.
 
     ``phase_aware_lr`` and ``_s3_margin`` are defined *inside* ``run_stage1`` /
     ``run_stage3_swa``, so they cannot be read off the module object.
@@ -125,7 +125,7 @@ def golden_stage1_loss() -> dict[str, Any]:
 
 @pytest.fixture(scope="session")
 def stage1_train_step(cfg, physical_wl) -> dict[str, Any]:
-    """One fixed-seed Stage-1 epoch through the *relocated* ``train_one_epoch``.
+    """One fixed-seed Stage-1 epoch through ``train_one_epoch``.
 
     The procedure is imported from ``scripts/capture_golden.py`` rather than
     re-implemented, so the test and the capture that produced the golden file
@@ -147,8 +147,8 @@ def seeded_model(cfg, physical_wl):
     """A freshly seeded, eval-mode ``SpectralQuadNet`` on CPU.
 
     Mirrors ``scripts/capture_golden.py::forward_pass`` step for step. The
-    ``set_seed`` call must stay immediately before construction — REFACTOR_PLAN.md
-    §3.6 makes the seed→construct ordering load-bearing.
+    ``set_seed`` call must stay immediately before construction — weight
+    initialisation depends on that exact ordering.
     """
     from spectralquadnet.models.spectral_quadnet import SpectralQuadNet
     from spectralquadnet.utils.seed import set_seed

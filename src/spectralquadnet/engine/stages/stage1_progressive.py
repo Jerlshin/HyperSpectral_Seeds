@@ -1,34 +1,15 @@
 """Stage 1 — three-phase progressive augmentation with deep supervision.
 
-Relocated from ``HSI_modality_training/hsi_training.py`` @ ``886560f``:
+Orchestration only: every unit of work — the epoch loop, evaluation,
+class-difficulty measurement, checkpointing — is a call into ``engine/``,
+``losses/`` or ``optim/``. ``phase_aware_lr`` is built as a standalone
+factory in ``optim/schedulers.py`` (rather than defined inline here) so the
+schedule is independently testable — see ``tests/unit/test_schedulers.py``.
 
-=====================================  ==============
-Symbol                                 Baseline lines
-=====================================  ==============
-:func:`run_stage1`                     2190-2388
-=====================================  ==============
-
-Orchestration only, exactly as §2 requires: every unit of work — the epoch loop,
-evaluation, class-difficulty measurement, checkpointing — is a call into
-``engine/``, ``losses/`` or ``optim/``.
-
-Declared deviations, all mechanical:
-
-* ``CONFIG[...]`` → ``cfg.stage1.*`` (and ``CONFIG.get("s1_p3_dropout", 0.25)``
-  → ``cfg.stage1.p3_dropout``, whose YAML value *is* 0.25).
-* The relocated collaborators take ``cfg`` (and ``build_phase3_loader`` a
-  ``store``) as their leading argument, so ``run_stage1`` now receives both.
-* The ``phase_aware_lr`` closure moved to ``optim/schedulers.py`` as a factory
-  (§2's tree, §3.2.3's testability requirement) and is called here instead of
-  defined here. ``tests/unit/test_schedulers.py`` proves the schedule is
-  unchanged for all 600 epochs.
-
-Phase 4 (REFACTOR_PLAN.md §4.1) replaced every ``print`` here one-for-one with a
-``tracker`` call — the banner block became :meth:`~spectralquadnet.tracking.base.ExperimentTracker.banner`,
-the ``[INFO]`` notices became ``log_message`` and the per-epoch line became a
-``log_row``/``log_scalars`` pair. That is the **only** behavioural touch to this
-function's body beyond the mechanical rewrites above, and it is
-observability-only: every value logged was already a local variable here.
+All progress reporting goes through the injected ``tracker``: the banner
+block calls :meth:`~spectralquadnet.tracking.base.ExperimentTracker.banner`,
+status notices call ``log_message``, and the per-epoch line is a
+``log_row``/``log_scalars`` pair.
 """
 
 from __future__ import annotations
@@ -72,14 +53,31 @@ def run_stage1(
     best_ckpt: str,
     tracker: ExperimentTracker | None = None,
 ) -> float:
-    """
+    """Run Stage 1's full three-phase curriculum and return the best validation F1.
+
     Phase 1 (0 → ~25%):   heavy aug  + mixup  + high LS   → explore representation
     Phase 2 (~25 → ~60%): medium aug + mixup  + decay LS  → robustness consolidation
     Phase 3 (~60 → 100%): light aug  + Focal  + NO mixup  → discriminate hard classes
-                          └─ Uses HardClassOversampledSampler built from Phase 2 F1 scores
+                          └─ uses HardClassOversampledSampler built from Phase 2 F1 scores
 
     Deep supervision via per-branch AuxiliaryHeads with decaying weight.
     Primary metric: macro-F1 (not accuracy).
+
+    Args:
+        cfg: Composed experiment config.
+        store: Memory-mapped patch store, needed to build the Phase-3 loader.
+        model: Model to train; the linear head is used (ArcFace stays frozen).
+        ema: EMA shadow, re-initialised at the Phase 2 and Phase 3 boundaries.
+        loaders_by_phase: Loaders for phases 1 and 2, keyed by phase number;
+            the Phase-3 loader is built internally once Phase 3 begins.
+        val_ldr: Validation loader for per-epoch evaluation.
+        device: Device to train on.
+        best_ckpt: Path to write the best-F1 checkpoint to.
+        tracker: Experiment tracker for progress reporting; ``None`` logs nowhere.
+
+    Returns:
+        Best validation macro-F1 (across the live model and its EMA shadow)
+        seen during the run.
     """
     trk = tracker if tracker is not None else NullTracker()
     model.use_arcface(False)
@@ -97,10 +95,10 @@ def run_stage1(
         warnings.simplefilter("ignore")
         scheduler = optim.lr_scheduler.LambdaLR(optimizer, phase_aware_lr(cfg, p1_end, p2_end))
 
-    # `device=` is what makes AMP real: the baseline's bare `GradScaler()` binds
-    # to CUDA, so on any other accelerator it prints "CUDA is not available.
-    # Disabling." and every scale/step call becomes a pass-through. Metal
-    # autocasts to fp16, which needs the loss scaling this now actually performs.
+    # `device=` is what makes AMP real: a bare `GradScaler()` binds to CUDA, so on
+    # any other accelerator it prints "CUDA is not available. Disabling." and
+    # every scale/step call becomes a pass-through. Metal autocasts to fp16,
+    # which needs the loss scaling this performs.
     scaler = GradScaler(device=device.type)
     ls_hi = cfg.stage1.label_smooth_hi
     ls_lo = cfg.stage1.label_smooth_lo
@@ -150,7 +148,8 @@ def run_stage1(
 
         if phase == 3 and not ema_reinited[1] and cfg.stage1.ema_reinit_phases:
             ema.reinit_from(model)
-            # FIXED: raise dropout in P3 to fight memorisation (was 0.15, now 0.25)
+            # Dropout is raised for Phase 3 to fight memorisation on the
+            # lighter-augmentation, hard-class-oversampled data it trains on.
             p3_drop = cfg.stage1.p3_dropout
             model.set_dropout(p3_drop)
             ema.set_dropout(p3_drop)

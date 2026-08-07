@@ -1,13 +1,4 @@
-"""Branch C — 2-D spatial texture CNN over the full band cube.
-
-Relocated verbatim from ``HSI_modality_training/hsi_training.py`` @ ``886560f``:
-
-==============================  ==============
-Symbol                          Baseline lines
-==============================  ==============
-:class:`SpatialCNNBranch`       995-1024
-==============================  ==============
-"""
+"""Branch C — 2-D spatial texture CNN over the full band cube."""
 
 from __future__ import annotations
 
@@ -20,6 +11,13 @@ from spectralquadnet.models.blocks.conv_blocks import ResBlock2D
 
 
 class SpatialCNNBranch(nn.Module):
+    """Depthwise band reduction into a CBAM-gated ResNet-2D stack over spatial texture.
+
+    Pools the fused feature map with concatenated signed-power-normalised mean
+    and max statistics, which is more stable than raw mean/max pooling under
+    the heavy-tailed activations a ResNet stack produces.
+    """
+
     def __init__(self, num_bands: int = 256, out_dim: int = 256) -> None:
         super().__init__()
 
