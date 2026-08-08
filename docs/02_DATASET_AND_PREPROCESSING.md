@@ -127,13 +127,43 @@ $(H, W, C) \to (C, H, W)$.
 > fragile. `tests/unit/test_patch_extraction.py` measures both the old failure and the fix.
 
 Two more Tier-4 items happen here. **P-2 / T4-2**: the cube is radiance, not reflectance, so a
-per-session illumination gain multiplies every spectrum captured in that session (C-1). With no
-white panel in the archive — verified: its only reference cubes are `black.hdr` — the
-resolution is per-pixel SNV along $\lambda$, applied *after* masking, which removes that gain
-and the per-pixel geometric gain identically. The gain it removes is persisted rather than
-discarded, so brightness stays available as an explicit input. **P-4 / T4-4**: the eight
+per-session illumination gain multiplies every spectrum captured in that session (C-1); the full
+resolution is `data/prep/radiometry.py`, a dedicated module (below). **P-4 / T4-4**: the eight
 morphometrics `segment` already computed, gated on and threw away are written out, in physical
 pixel units — the absolute scale the resize destroys.
+
+### Radiometry (`data/prep/radiometry.py`, T4-2)
+
+`PrepConfig.radiometry: str = "auto"` selects one of four modes, resolved once per archive by
+`resolve_radiometry`:
+
+| Mode | Behaviour |
+|---|---|
+| `auto` | `white` if `find_white_reference()` locates a panel cube in the archive, else `snv` |
+| `white` | physically-correct reflectance division against a located white panel |
+| `snv` | per-pixel Standard Normal Variate along $\lambda$ (the operative path today) |
+| `none` | no radiometric correction — raw dark-corrected radiance |
+
+`find_white_reference()` scans archive members for white-panel filename hints; on the *RGB and
+VIS-NIR HSI Data for 90 Rice Seed Varieties* archive this returns nothing — its only reference
+cubes are `black.hdr` — so `auto` resolves to `snv`, applied by `apply_radiometry()` **after**
+masking:
+
+$$
+\tilde x_{c,p} = \frac{x_{c,p} - \bar x_{\cdot,p}}{\operatorname{sd}_c(x_{\cdot,p}) + \varepsilon},
+\qquad \varepsilon = \texttt{RADIOMETRY\_EPS} = 10^{-6}
+$$
+
+(mean/std taken across bands, per pixel) — this removes the per-pixel geometric gain and the
+per-session illumination gain identically, since both multiply every band of a pixel's spectrum
+by the same scalar. The gain it removes is persisted rather than discarded (`gain.npy`, order
+$(\bar x, \operatorname{sd})$), so brightness stays available as an explicit input rather than
+being thrown away.
+
+`white_reference_correct()`/`white_gain()` implement the physically-correct P-2(a) path — cube-level
+reflectance division against a located panel, applied **before** segmentation — fully
+implemented and unit-tested even though no cube in this archive exercises it; `radiometry="white"`
+would select it automatically the moment a compatible archive supplied one.
 
 Failures on any single cube are caught, printed and skipped, so one unreadable scan does not
 abort a multi-hour extraction; a cube counted in pass 1 that fails in pass 2 leaves no
@@ -234,10 +264,11 @@ This minimises multicollinearity in the resulting subset.
 
 ### Step 6 — Cross-validated selection and the elbow
 
-Both orderings are evaluated at $k \in \{5,10,15,20,25,30,40,50,70,100\}$ (restricted to
-$k \le |\text{ordering}|$) with 5-fold `StratifiedKFold`, using two classifiers on standardised
-mean spectra: LDA (`solver='svd'`, pseudo-inverse — safe at 90 classes) and
-`LinearSVC(C=0.1, max_iter=3000)`.
+Both orderings are evaluated with 5-fold `StratifiedKFold`, using two classifiers on
+standardised mean spectra: LDA (`solver='svd'`, pseudo-inverse — safe at 90 classes) and
+`LinearSVC(C=0.1, max_iter=3000)`. `BandSelectionConfig.n_candidates` (T4-6) now defaults to
+$k\in\{5,10,15,20,25,30,40,50,70,100,128,160,192,224,256\}$ — extended past the 10-point curve
+ending at 100 that produced the checked-in report below — restricted to $k\le|\text{ordering}|$.
 
 Recorded curve — `dataset/band_selection_report.csv`:
 
@@ -262,9 +293,22 @@ With $\max = 0.4755$ the threshold is $0.4660$, met only at $k = 40$; hence
 $k^{\star} = 40$, a $84.4\%$ reduction of the spectral axis. The final band set is sorted
 ascending before writing (selection *order* is discarded; only the *set* matters downstream).
 
+> **The shipped curve cannot demonstrate its own elbow.** `verify_elbow()` and its
+> `ElbowVerdict` (T4-6/M-14) explicitly check whether a chosen $k^\star$ is *demonstrable* — the
+> curve must extend past $k^\star$ and clear `elbow_pct · peak` there — rather than merely being
+> the curve's own last point. The checked-in `dataset/band_selection_report.csv` (the table
+> above) terminates at $k=40$, its own chosen value: the 98% criterion is satisfied *vacuously*,
+> not demonstrated. `tests/unit/test_band_curve.py::test_the_shipped_curve_cannot_demonstrate_its_elbow`
+> pins exactly this as a known property of the current artifact. Re-running
+> `scripts/select_bands.py` under the current, wider `n_candidates` default would produce a
+> genuinely testable curve out to $k=256$ and may move the winner/elbow; `cfg.deployed_curve_path`
+> (F-3) additionally lets that curve be overridden by cross-validating the actually-deployed
+> SpectralQuadNet estimator rather than the LDA/SVC proxy.
+
 **Outputs** — `dataset/patches_spa_40b.npy` $(8624, 40, 64, 64)$ `float32` (written in
-2,048-row chunks off the memory map) and `dataset/wavelengths_spa_40b.csv`, whose 40 centres
-span $383.22$–$1006.47$ nm.
+2,048-row chunks off the memory map), `dataset/wavelengths_spa_40b.csv`, whose 40 centres
+span $383.22$–$1006.47$ nm, and `dataset/band_selection_elbow.json` (T4-6), the serialised
+`ElbowVerdict`.
 
 ---
 
@@ -302,9 +346,18 @@ pages being reclaimed, not a dataset accumulating. Every `DataLoader` in the sys
 
 ## 2.6 Dataset and augmentation profiles
 
-`RiceSeedDataset.__getitem__(idx)` returns
-$\big(\text{patch} \in \mathbb{R}^{40\times64\times64},\; \text{label} \in \mathbb{Z}\big)$,
-both already on the training device.
+`RiceSeedDataset.__getitem__(idx)` returns **CPU tensors and never touches an accelerator** —
+it used to build every tensor directly on the training device, which cost one host-to-device
+copy per sample per tensor and made `num_workers > 0` impossible (a worker process cannot hand a
+CUDA tensor back through the multiprocessing queue). The batched transfer now happens once, in
+`engine/batch.py::unpack_batch`. The return shape is also conditional: with neither a persisted
+mask nor morphometrics configured it is the 2-tuple
+$\big(\text{patch}\in\mathbb{R}^{40\times64\times64},\;\text{label}\in\mathbb{Z}\big)$; with
+either `data.masks_path` or `data.morphology_path` set, it is a 4-tuple
+$(\text{patch},\,\text{label},\,\text{mask\_or\_ABSENT},\,\text{morph\_or\_ABSENT})$, where
+`ABSENT = torch.zeros(0)` is a zero-length sentinel signalling "not configured" (a sentinel
+rather than `None` because `None` cannot survive PyTorch's default collate). `unpack_batch`
+accepts both shapes transparently everywhere in `engine/`.
 
 Augmentation is selected by a named profile, each a vector of independent Bernoulli trigger
 probabilities — a sample can receive several augmentations at once:
@@ -331,10 +384,53 @@ Primitives, with foreground mask $m_{h,w} = \mathbb{1}[\sum_c |x_{c,h,w}| > 10^{
 | multiplicative | $x \leftarrow x \odot (1 + 0.05\,s\,\epsilon_c)\, m$, one scalar per band |
 | spatial | random horizontal flip, random vertical flip, random $k\cdot 90^\circ$ rotation — applied **unconditionally** whenever a profile is active |
 
-> **Ordering invariant.** The five `if torch.rand(1) < p[...]` guards consume the global torch
-> RNG stream in a fixed order. Reordering them — even when an augmentation is a no-op at
-> $p=0$ — changes every subsequent draw and breaks fixed-seed reproducibility. The module
-> docstring states this explicitly.
+> **Ordering invariant.** Seven `if torch.rand(1) < p[...]` guards — the five above, plus the two
+> CutMix guards below — consume the global torch RNG stream in a fixed order. Reordering them,
+> even when an augmentation is a no-op at $p=0$, changes every subsequent draw and breaks
+> fixed-seed reproducibility. The module docstring states this explicitly.
+
+### Same-class CutMix (T2-7 / OP-6)
+
+Two more Bernoulli-gated primitives, appended **after** the five above and **before** the spatial
+dihedral transform, each guarded so a profile with the probability at $0$ consumes no RNG state
+and reproduces the exact pre-T2-7 stream:
+
+| Profile | `spec_cutmix` | `spat_cutmix` |
+|---|---:|---:|
+| `heavy` | 0.10 | 0.10 |
+| `medium` | 0.08 | 0.08 |
+| `very_light` | 0.06 | 0.06 |
+| `light` | 0.06 | 0.06 |
+| `none` | — | — |
+
+Configured by `data.cutmix_bands` (shipped $8$, $\approx20\%$ of the 40-band spectrum) and
+`data.cutmix_spatial` (shipped $24$, $\approx14\%$ of the $64\times64$ patch area).
+
+**Partner selection** — lazily built per dataset, only if the active profile needs it: a
+`{label: positions}` index over *this split's own rows only* (a train dataset can never draw a
+val/test partner), drawn uniform-over-pool-minus-anchor in one shot (no rejection sampling); a
+class with fewer than 2 members in the split is skipped (CutMix silently no-ops for it). The
+partner is used **un-augmented** — no independent augmentation draws stack on it, so the
+composite's statistics don't depend on the partner's own luck.
+
+$$
+\text{spectral (band window): } x_{[t:t+w]} \leftarrow x^{\text{partner}}_{[t:t+w]}, \quad w=\texttt{cutmix\_bands}
+$$
+
+$$
+\text{spatial (square, all bands): } x_{[:,\,r:r+s,\,c:c+s]} \leftarrow x^{\text{partner}}_{[:,\,r:r+s,\,c:c+s]}, \quad s=\texttt{cutmix\_spatial}
+$$
+
+with the window/region start drawn uniformly at random on each call; for `spat_cutmix` the
+partner's fill mask (if present) travels with the pasted region, so the dihedral spatial
+transform applied afterwards sees a consistent foreground. Both operators clone before writing
+(the anchor tensor is never mutated in place).
+
+**Label-preserving by construction** — the partner is the same class, so no soft target is
+produced. Unlike mixup, this is not excluded by a non-zero ArcFace margin: the
+`arc_m > 0` guard in `train_epoch.py` checks for mixup specifically, and is untouched by CutMix
+firing. This is what lets Stage 2/3 — which run mixup off, at $\sim$67 training samples/class —
+still get some intra-class variation without ever changing a label (§4.4).
 
 ---
 
@@ -360,9 +456,12 @@ T \;=\; \left\lfloor \frac{N_{\text{train}}}{n_{\text{cls}}\, n_{\text{spc}}} \r
 \;=\; \left\lfloor \frac{6036}{128} \right\rfloor \;=\; 47 \text{ batches}
 $$
 
-Passing `class_weights=None` falls back to uniform class selection. **The RNG is unseeded**
-(`np.random.default_rng()` per `__iter__`) — a documented source of run-to-run
-non-determinism.
+Passing `class_weights=None` falls back to uniform class selection. **The RNG is unseeded by
+default** (`np.random.default_rng()` per `__iter__`) on a single-process run — a documented
+source of run-to-run non-determinism there. Under DDP, `build_loaders` passes an explicit `seed`
+(so every rank composes the *identical* global batch before it is sharded — see below), and the
+sampler advances a per-epoch stream `np.random.default_rng([seed, epoch])` via `set_epoch()`,
+making it fully deterministic in that configuration.
 
 ### `HardClassOversampledSampler` — Stage 1, Phase 3
 
@@ -397,3 +496,51 @@ listed in the sampler's diagnostic print.
 Stage 2 uses `very_light` rather than `none` so ArcFace does not overfit the training split's
 exact spectral signatures; Stage 3 uses `light`, which triggers no perturbation but *does*
 apply the random dihedral spatial transform.
+
+Under DDP, balanced batches are sharded rather than independently redrawn per rank:
+`DistributedBatchShardSampler` wraps the (seeded) `ClassBalancedBatchSampler` and gives each rank
+a **contiguous slice** of the one globally-identical batch, preserving the $n_{\text{cls}}\times
+n_{\text{spc}}$ balance guarantee across shards; `DistributedIndexShardSampler` does the
+analogous round-robin split for `HardClassOversampledSampler`'s flat weighted stream. The plain
+(non-balanced) train path shards its configured batch size directly
+(`batch // world_size`, refused rather than rounded if it doesn't divide evenly). Full DDP
+mechanics are in `06_EXECUTION_AND_HARDWARE.md`.
+
+---
+
+## 2.8 Split protocols and the calibration split
+
+`data/loaders.py::build_split_bundle` builds one of two protocols, selected by
+`cfg.data.split_scheme`, with a module-level `SPLIT_SEED = 42` deliberately decoupled from
+`cfg.seed`.
+
+**`stratified`** (`configs/data/spa40_90class.yaml`) — the protocol every archived checkpoint
+was trained and selected on: a two-step stratified `train_test_split` at the **patch** level,
+$8{,}624\to6{,}036/1{,}294/1{,}294$ (70/15/15). It puts every one of the dataset's 107 capture
+scans in train *and* in val/test (Phase 0, measured 107/107) — part of the reported number is
+therefore scan recognition, not variety recognition.
+
+**`grouped`** (`configs/data/spa40_90class_pfix.yaml`, P-1/T4-1) — holds out whole scans via
+`grouped_split`, rotating which scans are held by `data.split_fold` and targeting
+`data.split_eval_frac` of each class's **groups** (not patches) for val∪test. It requires
+`groups.npy`. On this archive every variety was captured in exactly **two** scans, so a class has
+exactly two groups: full three-way group-disjointness is mathematically impossible, and
+`grouped_split` reports this rather than asserting an unmeetable contract. A `SplitReport`
+records, per class, whether train/eval and val/test are group-disjoint, which classes have only
+one group, and which leak — `data.split_eval_frac=0.30` on a two-scan-per-class dataset realises
+close to a 50/50 one-scan-out split rather than 70/15/15, with val and test literally two halves
+of the same held-out scan. `single_group_policy` (`"error"`, default — refuses to build the split
+and names the offending classes; `"patch_split"` — accepted-leak fallback) governs what happens
+when a class has fewer than 2 groups to split. Sweeping `split_fold` over `{0, 1}` is the
+leave-one-scan-out cross-validation this dataset can actually support.
+
+**The calibration split** (`data.calib_frac`, P-5/T4-5) carves an inner `calib` split out of
+`train` (by group under `grouped`, by patch under `stratified`), never out of val/test. The
+per-class margins (§4.2), the CDWS weights, and the Phase-3 oversampling weights are fitted
+there, so `val` — the split that also selects the checkpoint — carries no fitted parameter.
+`spa40_90class.yaml` ships `calib_frac: 0.0` (everything fitted on `val`, reproducing the
+archived run's contamination); `spa40_90class_pfix.yaml` ships `calib_frac: 0.15`.
+
+`data/morphometrics.py` fits the morphometric standardisation (`MorphometricStats`,
+`STD_FLOOR = 10^{-6}`) on `train_idx` alone — once, threaded to every loader that needs it,
+rather than refit per stage.

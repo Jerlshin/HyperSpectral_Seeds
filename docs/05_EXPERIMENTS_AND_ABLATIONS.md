@@ -20,7 +20,7 @@ truncated to the first $n_{\text{spatial}}$. At $n_{\text{spatial}} = 8$ this is
 symmetry group of the square — correct for this problem, since a segmented seed patch has no
 canonical orientation (§2.3 sorts regions by centroid, not by pose).
 
-### Spectral views — gain about the per-band spatial mean
+### Spectral views — gain about the *foreground* mean, re-masked (T1-1)
 
 $$
 s_j = 0.95 + \frac{0.10\,j}{n_{\text{spectral}} - 1},\quad j = 0,\dots,3
@@ -29,25 +29,29 @@ s \in \{0.95,\; 0.98\overline{3},\; 1.01\overline{6},\; 1.05\}
 $$
 
 $$
-\mu_{b,c} = \frac{1}{HW}\sum_{h,w} x_{b,c,h,w},
+m = \texttt{foreground\_mask}(x),
 \qquad
-x^{(s)} = \mu + (x - \mu)\,s
+\mu_{b,c} = \frac{\sum_{h,w} x_{b,c,h,w}\,m_{b,h,w}}{\max(\sum_{h,w}m_{b,h,w},\,1)},
+\qquad
+x^{(s)} = \big(\mu + (x-\mu)\,s\big)\odot m
 $$
 
-i.e. each band's spatial contrast is scaled by $s$ about its own mean, which perturbs
-brightness and local contrast while leaving the *relative* band ordering of the mean spectrum
-untouched. The $s = 1.0$ view is skipped as a duplicate of the identity spatial view; with
-$n_{\text{spectral}} = 4$ no scale lands exactly on $1.0$, so all four survive.
+i.e. each band's spatial contrast is scaled by $s$ about its **foreground-only** mean, and the
+result is explicitly **re-masked** afterwards — the test-time analogue of the train-time
+`multiplicative` augmentation primitive (§2.6). The $s=1.0$ view is skipped as a duplicate of the
+identity spatial view; with $n_{\text{spectral}}=4$ no scale lands exactly on $1.0$, so all four
+survive.
 
-> **Derived property, verified numerically.** Because the mean is taken over *all* pixels
-> including the zero background, a background pixel maps to $\mu_c(1-s) \ne 0$. Measured on
-> `dataset/patches_spa_40b.npy[0]` (28.4 % foreground): under every one of the four spectral
-> scales the foreground fraction reported by the $>10^{-5}$ mask becomes $1.0$, i.e. the whole
-> frame reads as foreground. The four spectral views are therefore also *masking-perturbation*
-> views: `MaskedSpectralECA`, `extract_grid_spectra` and `masked_spectral_stats` all see a
-> filled frame. This is a property of the transform as written, not a claim about its
-> desirability — empirically the 12-view ensemble still gains $+1.63$ macro-F1 points over the
-> single-view result (0.8933 vs 0.8770).
+> **This is a correctness fix (T1-1), not a cosmetic change.** An earlier version of this
+> transform took the mean over the *whole* patch, including the zero background, and did not
+> re-mask afterward — which moved the background off exactly-zero (breaking every downstream
+> mask-by-testing-for-zero operator: `MaskedSpectralECA`, `extract_grid_spectra_multi`,
+> `masked_mean_spectrum`) and shifted the true foreground mean by a factor of the foreground area
+> fraction, putting the view off the training manifold. The corrected transform reads the mean
+> over foreground pixels only and re-masks the result, so all four spectral views stay
+> consistent with what every masked module in the model assumes about its input. See
+> `MIGRATION_PROGRESS.md` → Tier 1 → T1-1 for the measured effect of the fix on the recorded
+> reference numbers below.
 
 ### Ensembling rule
 
@@ -58,8 +62,12 @@ $$
 
 **Logits are averaged, not softmax probabilities.** With ArcFace's $s = 48$ scaling, softmax
 averaging would be dominated by whichever view happened to be most confident; logit averaging
-keeps every view's contribution linear in its margin. TTA forward passes run under `autocast`
-at the device default — unlike `engine/evaluate.py`, which forces fp32.
+keeps every view's contribution linear in its margin. TTA forward passes run under
+`autocast(enabled=False)` — forced fp32, matching `engine/evaluate.py`'s unconditional fp32 eval,
+so neither a reported metric nor the TTA-vs-no-TTA comparison is confounded by the caller's AMP
+state. Masks are dihedral-transformed identically to the patch before either the spectral-view
+mean or the model sees them; morphometrics pass through every view unchanged, since none of the
+twelve transforms alter shape.
 
 ### Final evaluation protocol
 
@@ -77,22 +85,30 @@ table, and writes three arrays to `cfg.output_dir`:
 Any reported metric is therefore recomputable from disk without re-running inference — which
 is exactly what `test_recorded_test_predictions_match_their_reported_metrics` does.
 
-### Recorded outcome
+### Recorded outcome (pre-Tier-3 reference checkpoint, re-scored through the corrected transform)
 
 | Protocol | Macro F1 | Weighted F1 | Accuracy | $\Delta$ Macro F1 |
 |---|---:|---:|---:|---:|
 | Single view | 0.8770 | 0.8776 | 0.8779 | — |
-| 12-view TTA | **0.8933** | 0.8939 | 0.8941 | **+0.0163** |
+| 12-view TTA (corrected spectral transform, T1-1) | **0.8889** | — | — | **+0.0119** |
 
-> **Superseded by T1-1.** This row was produced by the spectral transform the derived-property
-> box above describes — whole-patch mean, no re-mask. That transform is fixed as of Tier 1
-> (foreground mean, re-masked, fp32 forwards). The same checkpoint re-scored through the
-> corrected views gives **0.8889** macro-F1, i.e. $+0.0119$ over single view rather than
-> $+0.0163$; the single-view row is unaffected. Paired bootstrap on the difference:
-> $-0.0046$, 95 % CI $[-0.0151, +0.0056]$, $p = 0.40$. `MIGRATION_PROGRESS.md` → Tier 1 → T1-1.
+> **Provenance.** `outputs/output_v12_spa40/` was produced under the pre-Tier-3 architecture, and
+> its checkpoints do not load into the current schema-v3 model (§3.8) — there is currently no
+> way to regenerate a TTA number against the architecture this document otherwise describes.
+> The original console log for this run reported **0.8933** macro-F1 under TTA; that number was
+> produced by the *pre-T1-1* spectral view (whole-patch mean, no re-mask — the bug described
+> above), which additionally left every masked module reading a filled frame rather than a
+> foreground-aware one. Re-scoring the identical checkpoint's recorded logits through the
+> corrected transform gives **0.8889**, $+0.0119$ over the single-view result rather than
+> $+0.0163$; the single-view row itself is unaffected by the fix. Paired bootstrap on the
+> before/after TTA difference: $-0.0046$, 95% CI $[-0.0151,+0.0056]$, $p=0.40$ — within noise, but
+> 0.8889 is what a fresh evaluation against this checkpoint under the current code actually
+> produces, and is the number to cite. See `MIGRATION_PROGRESS.md` → Tier 1 → T1-1.
 
-Per-class outcome under TTA: 23 of 90 classes at $F_1 = 1.000$, none below $0.50$, hardest
-five = 49 (0.519), 52 (0.533), 41 (0.538), 51 (0.629), 37 (0.640).
+Per-class outcome recorded against this checkpoint under TTA (as originally logged, precise
+per-class breakdown not re-run against the corrected transform): 23 of 90 classes at
+$F_1=1.000$, none below $0.50$, hardest five = 49 (0.519), 52 (0.533), 41 (0.538), 51 (0.629),
+37 (0.640).
 
 ---
 
@@ -180,9 +196,18 @@ quadrature to the model total. Contract details that matter:
   `branch_grad_norms` is the one-shot variant that does convert.
 
 The diagnostic exists because gradient collapse in the spectral branches A/B is a real failure
-mode of this architecture — the same one the $2\times$ auxiliary weighting (§4.4) counteracts.
-It is gated on `tracking.log_grad_norms` (default `true`), and off entirely when no tracker is
-passed.
+mode of this architecture — the same one the auxiliary weighting (§4.4) counteracts. It is
+gated on `tracking.log_grad_norms` (default `true`), and off entirely when no tracker is passed.
+
+These same per-branch norms are now also a **consumer**, not just a logged quantity: whenever
+`cfg.aux_gradnorm_alpha != 0`, the epoch-mean of this diagnostic drives the GradNorm auxiliary-
+weight update (§4.4) once per epoch. A second, narrower diagnostic exists for Stage 3 only:
+`sam/grad_cos` — the cosine similarity between the SAM ascent and descent gradients — sampled at
+$\sim$32 evenly-spaced steps per epoch (`GRAD_COS_SAMPLES`) rather than every step, since it
+requires a full flattened-gradient copy at 5.19 M parameters. It is computed via three dot
+products over max-normalised inputs rather than `F.cosine_similarity`, because the latter's
+split numerator/denominator reductions can disagree by up to $5\times10^{-3}$ over that many
+elements — enough to report $1.005$ for a vector against itself.
 
 ### Per-branch auxiliary losses
 
@@ -258,21 +283,30 @@ failing backend cannot strand another's file handle or leave a W&B run unfinishe
 
 ### Rich console rendering
 
-Three deliberate design points in `ConsoleTracker`:
+Deliberate design points in `ConsoleTracker`, governed by `runtime.progress`
+(`auto`/`bar`/`rows`/`off`):
 
 1. **Text is never wrapped or cropped** — every emitting method passes `soft_wrap=True`,
    because `rich` otherwise wraps at the detected terminal width and falls back to 80 columns
    whenever stdout is not a TTY, i.e. exactly when a run is piped to a log file.
-2. **Rows stream, they do not redraw** — a Stage-1 run is 600 epochs, so a `rich.live` table
-   would destroy scrollback and break piping. Instead the first row of each `tag` emits a
-   header, freezes the column widths from it (minimum 5 characters), and every later row is
-   padded to match: aligned output that stays append-only.
+2. **A single redrawing progress bar is the default on a real terminal.** `_wants_bar()`
+   resolves `auto` to `console.is_terminal and sys.stdout.isatty()`; on a TTY, `progress_start`/
+   `log_row`/`progress_stop` drive one `rich.progress.Progress` bar whose description suffix
+   carries the row's numbers (`_BAR_FIELDS = (Loss, F1 live/ema, LR, Ph, κ, swa, ckpt)`), because
+   per-epoch full-row rendering — especially the hardest-class table, printed on every
+   improving checkpoint, which early in a run means every epoch — is expensive relative to
+   updating one line. `mode="rows"` (or a non-TTY destination, e.g. `training.log`) falls back
+   to the append-only stream instead: the first row of each `tag` emits a header, freezes column
+   widths from it (minimum 5 characters), and every later row pads to match — a redrawn bar's
+   ANSI cursor moves would otherwise turn a piped log file into control characters. `mode="off"`
+   suppresses per-epoch rendering entirely. Every number not promoted into the bar's suffix
+   remains available in `training.log` and as a curve in any structured backend.
 3. **Scalars are quiet by default** — the epoch summary arrives via `log_row`; per-branch
    diagnostics arrive via `log_scalars` and are meant to be read as curves. Rendering both
    would print every epoch twice. `tracking.show_diagnostics=true` echoes them.
 
 `banner` renders a `rich.Panel`; `watch` has no console equivalent of gradient histograms, so
-it prints the trainable parameter count instead (`Params : 7.88M`).
+it prints the trainable parameter count instead (`Params : 5.19M`).
 
 ### Scalar key catalogue
 
@@ -306,8 +340,15 @@ sidecars, three prediction arrays and a baseline console log.
 | 3 | 120 / 120 | 0.8745 | 0.8748 | `swa_n_snapshots=15`, `swa_n_rejected=0`, `note` |
 
 Checkpoint selection ranks Stage 1 highest, so the reported test numbers come from
-`best_stage1.pth` — a linear-head, pre-ArcFace model. Stage 3's own sidecar records the
-outcome: *"val_f1 did not beat Stage 2; Stage 2 ckpt preferred for eval."*
+`best_stage1.pth`. Stage 3's own sidecar records the outcome: *"val_f1 did not beat Stage 2;
+Stage 2 ckpt preferred for eval."*
+
+> **Schema provenance.** This run predates both Tier 2's unified head (HD-1/T2-10) and Tier 3's
+> branch redesign — its checkpoints carry a `linear_head` this model no longer has, and
+> `load_ckpt` refuses to load any of them today (`SchemaTooOldError`, §3.8), since Tier 3 changed
+> what three of the four branches *consume*, not merely their parameter counts. The metrics
+> table above is preserved as the historical record of the pre-Tier-3 pipeline; it is not
+> reproducible against the current model, and cannot be until a fresh three-stage run completes.
 
 ### Auto-resume semantics
 
@@ -324,14 +365,26 @@ python train.py output_dir=outputs/output_v12_spa40
 
 $$
 \texttt{bundle} = \{\texttt{epoch}, \texttt{stage}, \texttt{model}, \texttt{ema},
-\texttt{val\_f1}, \texttt{val\_acc}, \texttt{use\_arcface}\} \cup \texttt{metadata}
+\texttt{val\_f1}, \texttt{val\_acc}, \texttt{use\_arcface}, \texttt{schema\_version}\} \cup \texttt{metadata}
 $$
+
+`schema_version` is currently **3** (§3.8) — bundles missing the key (every checkpoint written
+before Tier 2) are read as version 1. `use_arcface` is written as a constant `True` in every
+fresh bundle, kept only for legacy readers (`scripts/phase0_*.py`, the resume banner); nothing
+internal branches on it since HD-1 left exactly one head to select. `metadata` includes
+`best_source ∈ {"live","ema","swa"}`, recording which weight set actually produced the recorded
+`val_f1` — bundles predating this field (pre-Tier-1) default to `"ema"`, matching their actual
+production behaviour.
 
 The JSON sidecar is the bundle minus `model`/`ema`, filtered to JSON-serialisable values.
 `load_stage_meta` re-integerises string keys, because JSON stringifies them and
 `class_f1`/`cdws_weights` must come back as `{int: float}` for the samplers and CDWS to index.
 `_pick_best_checkpoint` ranks by sidecar `val_f1`, falling back to `val_acc`, then to the
-`.pth` bundle, then to $0.0$.
+`.pth` bundle, then to $0.0$; if no checkpoint exists on disk at all it falls back to the last
+path argument (Stage 3's).
+
+Full execution-engine detail — `train.py`'s orchestration, runtime performance knobs, and
+distributed (DDP) training — is in `06_EXECUTION_AND_HARDWARE.md`.
 
 ---
 
@@ -345,22 +398,35 @@ has been executed in this repository; the table documents the *lever*, not a res
 | Curriculum length | `stage1.epochs=…` `stage2.epochs=…` `stage3.epochs=…` | shorten or skip a stage |
 | Phase split | `stage1.phase1_frac=…` `stage1.phase2_frac=…` | move the augmentation boundaries |
 | Deep supervision off | `stage1.aux_loss_weight_init=0 stage1.aux_loss_weight_final=0` | zeroes $w_{\text{aux}}$ (the heads still run) |
+| GradNorm aux weighting off | `aux_gradnorm_alpha=0` | root-level; freezes the per-branch weights at the fixed $A/B{=}2\times$ vector, all three stages |
 | Contrastive off | `stage1.p3_supcon_weight=0 stage1.p3_proto_weight=0` / `stage2.{supcon,proto}_weight=0` | zero-weights the terms; the modules are still *passed* (the choice is gated on phase, not weight), so both losses are still computed and AMP stays disabled — the classification term's weight rises to 1.0 |
 | Sub-centre count | `model.subcenter_K=1` | reduces ArcFace to the single-prototype form |
-| Adaptive margin off | `stage2.arcface_m_delta=0` | collapses $M(y_i)$ to the constant $m_{\text{base}}$ |
+| Sub-centre balance off | `model.subcenter_balance_weight=0` | drops $\mathcal{L}_{\text{balance}}$; sub-centres can die again under hard assignment |
+| Signed margin rule off | `stage2.arcface_m_delta=0` | collapses $M(c)$ to the constant $m_{\text{base}}$ for every class |
+| Pairwise confusion margin off | `stage2.pairwise_margin_delta=0` | removes the $\Omega$-scaled non-target penalty; the target-column margin is unaffected |
 | CDWS off | `stage2.cdws_max_weight=1.0` | flat class-selection probabilities |
 | Hard-class oversampling off | `stage1.p3_oversample=false` | Phase 3 falls back to a plain shuffled loader |
 | SAM strength | `stage3.sam_rho=…` | $\rho = 0$ degenerates to plain AdamW with an extra forward/backward |
-| Greedy SWA off | `stage3.greedy=false` | every cycle-end snapshot is accepted |
+| ASAM off | `stage3.sam_adaptive=false` | raw SAM — perturbation not rescaled by $\lvert\theta\rvert$ |
+| Margin annealing off | `stage3.margin_kappa_final=1.0` | freezes Stage 2's calibrated margin vector for the whole of Stage 3 |
+| SWA transient rejection off | `stage3.swa_warmup_cycles=0` | the first post-Adam-warmup cycle becomes a candidate immediately |
+| Greedy SWA off | `stage3.greedy=false` | every cycle-end candidate is accepted unconditionally |
+| Split protocol | `data=spa40_90class_pfix` | scan-disjoint (`grouped`) split + calibration split, instead of the leaky `stratified` reference protocol (§2.8) |
 | TTA views | `tta_spatial=…` `tta_spectral=…` | 1–8 dihedral views, 0–$n$ spectral gains |
+| Multi-GPU | `runtime.multi_gpu=ddp` (with `torchrun`) | see `06_EXECUTION_AND_HARDWARE.md` |
 | Sweeps | `python train.py -m stage1.max_lr=1e-4,5e-4,1e-3` | Hydra multirun into `outputs/multirun/` |
 
-Two caveats for anyone running these:
+Three caveats for anyone running these:
 
 - **Branch ablation is not a config lever.** The `branch_mask` argument exists for the influence
-  diagnostic, and the drop probabilities $(0, 0, 0.30, 0.20)$ are hardcoded in the forward
-  pass; removing a branch entirely requires a code change (§3.8).
-- **Runs are not bit-reproducible** (§1.3): `cudnn.benchmark=True` and two unseeded sampler
-  RNGs. A single-seed ablation delta smaller than run-to-run variance is not evidence. What
-  *is* pinned is weight initialisation, every schedule value, and one fixed-seed
+  diagnostic, and the per-branch drop rates ($0.15, 0.15, 0, 0.15$ at the shipped
+  `branch_drop_prob = 0.20$) are a hardcoded profile in the forward pass (§3.3); removing a
+  branch entirely requires a code change.
+- **Same-class CutMix has no single on/off flag.** Its firing probability is baked into each
+  augmentation profile, not exposed as a config field; `data.cutmix_bands`/`cutmix_spatial`
+  control only the window/region size. Training with `train_aug="none"` skips it along with
+  every other augmentation (§2.6).
+- **Runs are not bit-reproducible** (§1.3): `cudnn.benchmark=True` and (on a single process)
+  unseeded sampler RNGs. A single-seed ablation delta smaller than run-to-run variance is not
+  evidence. What *is* pinned is weight initialisation, every schedule value, and one fixed-seed
   forward + backward step.

@@ -128,6 +128,7 @@ Maps every key of the pre-refactor `CONFIG` dict (`HSI_modality_training/hsi_tra
 - **`model.fusion_rank`** — T3-4 / FU-1(b) — rank of the bilinear projections U_m. The second-order term M-3 found missing, at 5*d*r rather than a full 10*d^2.
 - **`model.fusion_gate_hidden`** — T3-4 / FU-1(b)+FU-2 — hidden width of the sigmoid gate MLP, which reads the five normalised tokens and the five pre-normalisation log-norms.
 - **`tracking.*`** — §4.1 — experiment tracking is additive; the monolith used bare print().
+- **`runtime.*`** — Execution knobs — DataLoader workers, pinned staging, torch.compile, fused AdamW, DDP topology, allocator sweeps, console rendering. Excluded rather than mapped because the reference implementation had no counterpart to map to: it fed the model one sample at a time on the training device with num_workers=0 and no notion of a second GPU. The group carries the invariant that nothing in it may change a reported number, which is what keeps it out of the experiment's identity — the two fields that *would* change one (allow_tf32, channels_last) default to off.
 
 ## 🗑️ Deleted `CONFIG` keys (nothing left to configure)
 

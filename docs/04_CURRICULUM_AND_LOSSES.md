@@ -4,18 +4,34 @@ Three stages run in sequence, each writing `best_stage{n}.pth` + `stage{n}_meta.
 stage module (`engine/stages/`) is **orchestration only**: every unit of work is a call into
 `engine/`, `losses/` or `optim/`, which is what makes the schedules independently testable.
 
+**There is one classification head, not two.** HD-1 (T2-10) removed the pre-Tier-2 second
+(`linear_head`) design entirely — all three stages train and evaluate through the same
+`arcface_head` (§3.5), differing only in the margin passed at each call. `stage1.arcface_m =
+0.0` makes Stage 1 a plain cosine (NormFace) classifier, which is nearly what a linear head
+already was, since `EmbedNet`'s terminal LayerNorm pins $\|\mathbf{e}\|\approx16$ regardless.
+The six-way discontinuity a two-head design would create at the Stage 1→2 boundary (head, loss,
+sampler, optimiser, augmentation and margin all changing at once) no longer exists; only the
+margin regime changes, and `tests/unit/test_unified_head.py` confirms the last Stage-1 forward
+and the first Stage-2 forward agree on every non-target logit to $10^{-5}$.
+
 | | Stage 1 | Stage 2 | Stage 3 |
 |---|---|---|---|
 | Module | `stage1_progressive.py` | `stage2_arcface.py` | `stage3_sam_swa.py` |
 | Epochs (max) | 600 | 150 | 120 (no early stop) |
-| Head | `linear_head` | `arcface_head` | `arcface_head` |
-| Optimiser | AdamW | AdamW (2 LRs) | SAM(AdamW) |
+| Head | `arcface_head` @ $m{=}0$ | `arcface_head` @ warmed/per-class $m$ | `arcface_head` @ annealed per-class $m$ |
+| Optimiser | AdamW, per-group clip | AdamW (2 LRs), per-group clip | SAM/ASAM(AdamW), per-group clip |
 | LR schedule | phase-aware (3 phases) | warmup + SGDR | cyclic cosine, 8-epoch |
-| Batch | 128 (shuffled / oversampled) | $16\times8 = 128$ balanced | $16\times8 = 128$ balanced |
+| Batch | 128 (shuffled / oversampled) | $16\times8=128$ balanced | $16\times8=128$ balanced |
 | Patience (macro-F1) | 160 | 80 | — |
-| Mixup | Phases 1–2 only | ✗ (raises if combined with ArcFace) | ✗ |
-| AMP | Phases 1–2 | ✗ | ✗ (SAM is fp32) |
+| Mixup | Phases 1–2 only | ✗ | ✗ |
+| Same-class CutMix | all profiles except `none` | `very_light` profile | `light` profile |
+| AMP | Phases 1–2 | ✗ (SupCon forces fp32) | ✗ (SAM is fp32 by construction) |
 | Recorded best val F1 | 0.8877 (ep 488) | 0.8867 (ep 50) | 0.8745 (SWA) |
+
+> The recorded numbers above are from `outputs/output_v12_spa40/`, produced under the
+> **pre-Tier-3** architecture. Tier 3 changed what three of the four branches consume, so those
+> checkpoints do not load into the current model (§3.8) and this table's F1 column cannot be
+> regenerated from them; a fresh number arrives with the first full Tier-3 training run.
 
 ---
 
@@ -24,66 +40,73 @@ stage module (`engine/stages/`) is **orchestration only**: every unit of work is
 ### Phase boundaries
 
 $$
-p_1 = \lfloor E \cdot 0.30 \rfloor = 180,
-\qquad
-p_2 = \lfloor E \cdot (0.30 + 0.38) \rfloor = 408,
-\qquad E = 600
+p_1 = \lfloor E\cdot0.30\rfloor = 180, \qquad p_2 = \lfloor E\cdot(0.30+0.38)\rfloor = 408, \qquad E=600
 $$
 
 | Phase | Epochs | Augmentation | Loss | Mixup | Sampler |
 |---|---|---|---|---|---|
-| 1 · explore | 1 – 180 | `heavy` | CE + label smoothing | ✓ ($\alpha = 0.35$) | shuffled |
-| 2 · consolidate | 181 – 408 | `medium` | CE + label smoothing | ✓ | shuffled |
-| 3 · discriminate | 409 – 600 | `very_light` | Focal + SupCon + ProtoNCE | ✗ | hard-class oversampled |
+| 1 · explore | 1–180 | `heavy` | CE + label smoothing | ✓ ($\alpha{=}0.35$) | shuffled |
+| 2 · consolidate | 181–408 | `medium` | CE + label smoothing | ✓ | shuffled |
+| 3 · discriminate | 409–600 | `very_light` | Focal + SupCon + ProtoNCE | ✗ | hard-class oversampled |
 
-At each boundary the EMA shadow is hard-reset (`ema_reinit_phases = true`) because the loss
-landscape shifts enough that continuing the old average would anchor to a stale optimum.
-Entering Phase 3, dropout is additionally raised $0.15 \to 0.25$ (`p3_dropout`) to counter
-memorisation under lighter augmentation and repeated hard samples.
+At each boundary the EMA shadow is hard-reset (`ema_reinit_phases = true`) and, entering Phase 3,
+dropout is raised $0.15\to0.25$ (`p3_dropout`). The sub-centre pooling temperature $\tau$
+(§3.5) anneals continuously across the **whole stage**, independent of phase, via
+`subcentre_tau` — `subcenter_tau_init = 0.20 \to subcenter_tau_final = 0.02` — and is pushed to
+both the live model and the EMA shadow every epoch.
 
-The Phase 2 → 3 transition is where the curriculum becomes *data-adaptive*: per-class $F_1$ is
-measured on the EMA shadow (`compute_class_difficulty`) and drives the
-`HardClassOversampledSampler` for the remainder of the stage (§2.7).
+The Phase 2 → 3 transition is where the curriculum becomes data-adaptive: per-class $F_1$ is
+measured on the EMA shadow (`compute_class_difficulty`, using the calibration split when carved,
+else `val`) and drives the `HardClassOversampledSampler` for the remainder of the stage (§2.7).
+
+### The unified head at Stage 1
+
+Every call into `train_one_epoch` passes `arc_m = cfg.stage1.arcface_m = 0.0`. The head's
+`forward` takes an explicit fast path at `global_m == 0.0` that skips the margin algebra
+entirely (§3.5) — bit-identical to running the full computation at a vanishing margin, verified
+directly. Because $\arg m=0$, Stage 1 is compatible with mixup (`train_one_epoch` raises
+`ValueError` only when `use_mixup and (arc_m is None or arc_m > 0.0)`), which is what keeps
+mixup available through Phases 1–2.
 
 ### Phase-aware learning rate
 
-`phase_aware_lr` returns a **multiplier** on `stage1.max_lr` $= 5\times10^{-4}$; the callable
-takes a 0-based index and converts internally to the 1-based epoch $e$.
+`phase_aware_lr` returns a **multiplier** on `stage1.max_lr` $=5\times10^{-4}$, built as a
+standalone factory (not an inline closure) specifically so its whole 600-epoch trajectory can be
+pinned bit-exact against a reference implementation:
 
 $$
 \eta(e)/\eta_{\max} =
 \begin{cases}
-\dfrac{e}{5}, & e \le 5 \quad\text{(linear warm-up)}\\[10pt]
-0.6 + 0.2\Big(1 + \cos\big(\pi \tfrac{e-5}{p_1-5}\big)\Big), & 5 < e \le p_1 \quad (1.0 \to 0.6)\\[10pt]
-0.2 + 0.2\Big(1 + \cos\big(\pi \tfrac{e-p_1}{p_2-p_1}\big)\Big), & p_1 < e \le p_2 \quad (0.6 \to 0.2)\\[10pt]
-\rho_{\min} + (\rho_{\text{mid}} - \rho_{\min})\cdot\tfrac{1}{2}\Big(1+\cos\big(\pi\tfrac{(e - p_2 - 1) \bmod 30}{30}\big)\Big), & e > p_2
+\dfrac{e}{5}, & e\le5 \quad\text{(linear warm-up)}\\[8pt]
+0.6+0.2\Big(1+\cos\big(\pi\tfrac{e-5}{p_1-5}\big)\Big), & 5<e\le p_1 \quad(1.0\to0.6)\\[8pt]
+0.2+0.2\Big(1+\cos\big(\pi\tfrac{e-p_1}{p_2-p_1}\big)\Big), & p_1<e\le p_2 \quad(0.6\to0.2)\\[8pt]
+\rho_{\min}+(\rho_{\text{mid}}-\rho_{\min})\cdot\tfrac12\Big(1+\cos\big(\pi\tfrac{(e-p_2-1)\bmod30}{30}\big)\Big), & e>p_2
 \end{cases}
 $$
 
-with $\rho_{\min} = \eta_{\min}/\eta_{\max} = 0.01$ and
-$\rho_{\text{mid}} = \eta_{\text{mid}}/\eta_{\max} = 0.5$. In absolute terms: warm-up to
-$5\times10^{-4}$, decay to $3\times10^{-4}$ by epoch 180, to $1\times10^{-4}$ by epoch 408,
-then 30-epoch cosine restarts oscillating between $5\times10^{-6}$ and $2.5\times10^{-4}$.
-The periodic Phase-3 peak exists to escape the overfit basin that light augmentation alone
-cannot prevent late in training. `tests/unit/test_schedulers.py` checks all 600 values.
+with $\rho_{\min}=\eta_{\min}/\eta_{\max}=0.01$, $\rho_{\text{mid}}=\eta_{\text{mid}}/\eta_{\max}=0.5$.
+In absolute terms: warm-up to $5\times10^{-4}$, decay to $3\times10^{-4}$ by epoch 180, to
+$1\times10^{-4}$ by epoch 408, then 30-epoch cosine restarts oscillating between $5\times10^{-6}$
+and $2.5\times10^{-4}$. `tests/unit/test_schedulers.py` checks all 600 values against a baseline
+reference across three phase-length configurations.
 
 ### Label-smoothing decay
 
-Linear across the whole stage, independent of phase:
+Linear across the **whole stage**, independent of phase:
 
 $$
-\varepsilon(e) = \varepsilon_{\text{hi}}(1 - t) + \varepsilon_{\text{lo}}\,t,
-\qquad t = \frac{e-1}{E-1},
-\qquad \varepsilon_{\text{hi}} = 0.10 \to \varepsilon_{\text{lo}} = 0.04
+\varepsilon(e) = \varepsilon_{\text{hi}}(1-t) + \varepsilon_{\text{lo}}\,t,
+\qquad t=\frac{e-1}{E-1}, \qquad \varepsilon_{\text{hi}}=0.10\to\varepsilon_{\text{lo}}=0.04
 $$
 
 ### Checkpointing
 
 Every epoch scores both the live model and the EMA shadow; on
-$\max(F_1^{\text{live}}, F_1^{\text{ema}}) > F_1^{\text{best}}$ the stage recomputes class
-difficulty and saves a bundle carrying `class_f1`, `cdws_weights`, `arcface_init_done=False`
-and `phase3_class_f1`. Patience is 160 epochs without improvement; the recorded run's best
-landed at epoch 488.
+$\max(F_1^{\text{live}},F_1^{\text{ema}})>F_1^{\text{best}}$ the stage records `best_source ∈
+{"live","ema"}`, recomputes class difficulty, and saves a bundle carrying `class_f1`,
+`cdws_weights` and `phase3_class_f1`. `arcface_init_done=False` is still written into the
+metadata for legacy-reader compatibility but is vestigial — with one head there is nothing left
+to bootstrap. Patience is 160 epochs without improvement.
 
 ---
 
@@ -91,161 +114,229 @@ landed at epoch 488.
 
 ### Entry transitions
 
-1. `set_dropout(0.10)`, `use_arcface(True)`, freeze `linear_head`, unfreeze `arcface_head`.
-2. EMA hard-reset from the live model, shadow also switched to ArcFace.
-3. If Stage 1's sidecar has `arcface_init_done = False`, `train.py` bootstraps
-   $\mathbf{W}_{c,k}$ from the trained linear head (§3.5) — on both the model and the shadow.
-4. Per-class margins initialised from Stage 1's `class_f1` via `update_margins_from_f1`.
-5. Batch composition switches to `ClassBalancedBatchSampler` with Stage 1's CDWS weights.
+There is no linear→ArcFace bootstrap — the head is the same object Stage 1 trained. Entry does:
 
-### Angular-margin warm-up $m(t)$
+1. `model.set_dropout(cfg.stage2.dropout)` ($0.10$).
+2. EMA hard-reset (`ema.reinit_from(model)`).
+3. **Margin calibration** (HD-3, below) — computed once from precision/recall on the fit split
+   and written into `arcface_head.margins`/`.confusion` on both the live model and the EMA
+   shadow.
+4. Batch composition switches to `ClassBalancedBatchSampler` with Stage 1's CDWS weights.
 
-A cosine ramp from $m_0 = 0.18$ to $m = 0.35$ over the first `margin_warmup_ep` $= 20$ epochs:
+### Angular-margin warm-up, then per-class hand-over
+
+A cosine ramp from $m_0=0.18$ to $m_{\text{base}}=0.35$ over the first `margin_warmup_ep` $=20$
+epochs, passed as a **global scalar** override:
 
 $$
-m(t) = m_0 + (m - m_0)\cdot\tfrac{1}{2}\Big(1 - \cos\big(\pi \tfrac{t}{t_{\text{warm}}}\big)\Big),
-\qquad t = e - 1 < 20
+m(t) = m_0+(m_{\text{base}}-m_0)\cdot\tfrac12\Big(1-\cos\big(\pi\tfrac{t}{t_{\text{warm}}}\big)\Big), \qquad t=e-1<20
 $$
 
-with $m(t) = m$ for $t \ge t_{\text{warm}}$. **The handover matters:** while warming up, the
-scalar $m(t)$ is passed as `global_m` and overrides the margins buffer for every sample; once
-$e - 1 \ge 20$ the call site passes `arc_m=None`, and the head switches to its **per-class
-adaptive margins** $M(y_i) \in [0.35, 0.45]$. So the schedule is: one global margin, ramped;
-then per-class margins, recalibrated from validation $F_1$ at each checkpoint improvement.
+**The hand-over matters**: while $t<20$, $m(t)$ is passed as `global_m` and overrides the
+`margins` buffer for every sample; once $t\ge20$ the call site passes `arc_m=None`, and the head
+switches to its per-class adaptive vector $M(c)$. So the schedule is: one global margin, ramped;
+then per-class margins, calibrated once at stage entry and annealed multiplicatively for the rest
+of Stage 3 (§4.3) — not recalibrated epoch to epoch.
+
+### The signed precision/recall margin rule (HD-3, T2-8)
+
+$$
+\boxed{\, M(c) = \operatorname{clip}\big(m_{\text{base}} + m_\Delta\,(R_c - P_c),\; m_{\min},\; m_{\max}\big) \,}
+$$
+
+$m_{\text{base}}=$ `arcface_m` $=0.35$, $m_\Delta=$ `arcface_m_delta` $=0.20$, $m_{\min}=0.20$,
+$m_{\max}=0.50$. $P_c,R_c$ come from `evaluate_pr_and_confusion` on the fit loader, evaluated
+once at Stage-2 entry, not re-fitted per epoch. This **replaces** the pre-Tier-2 rule
+$M(c)=m_{\text{base}}+m_\Delta(1-F_1^{(c)})$, and the sign is deliberately reversed from it: an
+additive angular margin *shrinks* the margined class's decision region, so an over-claiming class
+($R_c>P_c$) needs a **larger** margin and an under-claiming one ($R_c<P_c$) needs a **smaller**
+one — the F1-driven rule moved every low-$F_1$ class the same direction regardless of which kind
+of error it was making, which is backwards for exactly half of them. Two classes tied on $F_1$
+can land on opposite sides of $m_{\text{base}}$ under this rule; `tests/unit/test_margin_rule.py`
+demonstrates this directly and confirms the old rule's sign is the opposite of the new one.
+
+**Pairwise confusion term.** Alongside the margin, `set_confusion` stores a row-normalised,
+zero-diagonal confusion matrix $\Omega$ from the same calibration pass. Every non-target logit
+for sample $i$ (true class $y_i$) is additionally penalised by
+`pairwise_margin_delta` $=0.10$ scaled by how often $y_i$ is actually confused with that column:
+$\mathrm{logit}_{i,c}\mathrel{-}=s\,\delta_{\text{pw}}\,\Omega_{y_i,c}$ — aiming the margin at
+the classes a class is actually confused with, not uniformly at all 89 others (§3.5).
 
 ### SGDR
 
-`sgdr_scheduler` returns a multiplier with linear warm-up then cosine restarts whose lengths
-grow geometrically. With $T_0 = 25$, $T_{\text{mult}} = 2$, $t_{\text{warm}} = 3$ and
-$\eta_{\min}^{\text{frac}} = \eta_{\min}/\eta_{\text{head}} = 4\times10^{-3}$:
+`sgdr_scheduler` — linear warm-up then cosine restarts of geometrically growing length:
 
 $$
 \eta(e)/\eta_0 =
 \begin{cases}
-\max\!\big(e / t_{\text{warm}},\; 10^{-6}\big), & e < t_{\text{warm}}\\[6pt]
-\eta_{\min}^{\text{frac}} + \tfrac{1}{2}\big(1 - \eta_{\min}^{\text{frac}}\big)\big(1 + \cos(\pi\, r)\big), & e \ge t_{\text{warm}}
+\max(e/t_{\text{warm}},\,10^{-6}), & e<t_{\text{warm}}\\[6pt]
+\eta_{\min}^{\text{frac}} + \tfrac12(1-\eta_{\min}^{\text{frac}})(1+\cos(\pi r)), & e\ge t_{\text{warm}}
 \end{cases}
 $$
 
-where $r = (t - T_{\text{elapsed}})/T_{\text{cur}}$ is the position within the current cycle,
-found by walking $T_{\text{cur}} \leftarrow T_0, 2T_0, 4T_0, \dots$ Restarts therefore land at
-epochs $\mathbf{28}$ and $\mathbf{78}$, which the stage prints as `↻R1` / `↻R2`.
-
-Both parameter groups share the multiplier but not the base LR:
-head $2.5\times10^{-4}$, backbone $7\times10^{-5}$ (§4.5).
+$r=(t-T_{\text{elapsed}})/T_{\text{cur}}$, $T_{\text{cur}}$ walking $T_0,2T_0,4T_0,\dots$ Shipped:
+$T_0=25$, $T_{\text{mult}}=2$, $t_{\text{warm}}=3$,
+$\eta_{\min}^{\text{frac}}=\eta_{\min}/\eta_{\text{head}}=4\times10^{-3}$ — restarts land at
+epochs **28** and **78** (printed `↻R1`/`↻R2`). Two LRs share the multiplier but not the base:
+head $2.5\times10^{-4}$ (`param_groups[0]`), backbone $7\times10^{-5}$ (`param_groups[2]`) — the
+group order (head-wd, head-no-wd, backbone-wd, backbone-no-wd, split on the `arcface_head` name
+prefix) is load-bearing since the stage reads those indices back for logging.
 
 ### Contrastive ramp
 
-SupCon and ProtoNCE weights are linearly ramped in over the first 10 epochs so the margin
-loss establishes itself first:
+$$
+\lambda_{\text{sc}}(e) = 0.40\cdot\min(1,e/10), \qquad \lambda_{\text{pt}}(e) = 0.18\cdot\min(1,e/10)
+$$
 
-$$
-\lambda_{\text{sc}}(e) = 0.40 \cdot \min(1,\, e/10),
-\qquad
-\lambda_{\text{pt}}(e) = 0.18 \cdot \min(1,\, e/10)
-$$
+so the margin loss establishes itself over the first 10 epochs before SupCon/ProtoNCE reach full
+weight (temperatures $0.10$ each).
 
 ### Class-Difficulty-Weighted Sampling (CDWS)
 
-`losses/cdws.py::build_cdws_weights` converts per-class validation $F_1$ into inverse-difficulty
-sampling weights, mean-normalised so no class dominates:
-
 $$
-\tilde{w}_c = \min\!\Big(\frac{1}{F_1^{(c)} + \epsilon},\; W_{\max}\Big),
-\qquad
-w_c = \frac{\tilde{w}_c}{\frac{1}{C}\sum_{c'} \tilde{w}_{c'}}
+w_c = \frac{\tilde w_c}{\frac1C\sum_{c'}\tilde w_{c'}}, \qquad \tilde w_c = \min\!\Big(\frac{1}{F_1^{(c)}+\epsilon},\,W_{\max}\Big)
 $$
 
-with $\epsilon = 0.05$ (`cdws_eps`), $W_{\max} = 3.0$ (`cdws_max_weight`), and $F_1^{(c)} = 0$
-for any class missing from the dict. A class at $F_1 = 1.0$ gets $\tilde{w} \approx 0.95$; a
-class at $F_1 = 0.3$ gets $\approx 2.86$; anything below $F_1 \approx 0.283$ saturates at
-$W_{\max}$. Compared with the Phase-3 oversampler (§2.7) this is *gentler* — no exponent, a
-$3\times$ rather than $7\times$ cap — because it composes with class-balanced batches rather
-than replacing them. The weights are recomputed at every checkpoint improvement and persisted
-in each sidecar under `cdws_weights`, so Stage 3 inherits Stage 2's measurement.
+$\epsilon=$ `cdws_eps` $=0.05$, $W_{\max}=$ `cdws_max_weight` $=3.0$, missing class $\Rightarrow
+F_1{=}0$. Compared with the Phase-3 oversampler (§2.7) this is gentler — no exponent, a $3\times$
+rather than $7\times$ cap — because it composes with class-balanced batches rather than
+replacing them. Recomputed at every checkpoint improvement and persisted in the sidecar, so
+Stage 3 inherits Stage 2's measurement.
+
+### Checkpointing
+
+Same $\max(F_1^{\text{live}},F_1^{\text{ema}})$ scheme as Stage 1; margin summary
+(`margin/{mean,min,max}`) logged every epoch from one stacked device→host transfer.
 
 ---
 
-## 4.3 Stage 3 — SAM + greedy SWA fine-tuning
+## 4.3 Stage 3 — SAM/ASAM + greedy SWA fine-tuning
 
-### Sharpness-Aware Minimisation
+### Sharpness-Aware Minimisation, and its adaptive variant
 
-SAM seeks minima that are *flat*, not merely low, by minimising the worst-case loss in a
-$\rho$-ball around the weights:
-
-$$
-\min_{\theta}\; \max_{\|\varepsilon\|_2 \le \rho}\; \mathcal{L}(\theta + \varepsilon)
-$$
-
-Each batch takes two steps ($\rho = 0.015$):
-
-**Ascent** (`first_step`) — cache $\theta$, move to the locally worst-case point along the
-gradient direction, using the *global* gradient norm across all parameter groups:
+SAM seeks flat minima by minimising the worst-case loss in a $\rho$-ball:
 
 $$
-\hat{\varepsilon} = \rho\,\frac{\mathbf{g}}{\|\mathbf{g}\|_2 + 10^{-12}},
+\min_\theta\;\max_{\|\varepsilon\|_2\le\rho}\;\mathcal{L}(\theta+\varepsilon)
+$$
+
+Each batch takes two steps, evaluating the **identical compound objective** at both the ascent
+and descent points (Focal + SupCon + ProtoNCE-weight×0 + auxiliary + balance — §4.4's Stage-3
+row):
+
+**Ascent** (`first_step`) — cache $\theta$, move along the (optionally element-wise-rescaled)
+gradient direction:
+
+$$
+\hat\varepsilon = \rho\,\frac{\mathbf{g}}{\|\mathbf{g}\|_2+10^{-12}} \;\;\text{(SAM)}
+\qquad\text{or}\qquad
+\hat\varepsilon = \rho\,\theta^2\odot\frac{\mathbf{g}}{\|\theta\odot\mathbf{g}\|_2}\;\;\text{(ASAM)}
+$$
+
+$$
+\theta \leftarrow \theta+\hat\varepsilon
+$$
+
+**Descent** (`second_step`) — restore $\theta$ from the cache, then let AdamW step with the
+gradient computed **at the ascended point**:
+
+$$
+\theta \leftarrow \theta_{\text{old}}, \qquad \theta\leftarrow\mathrm{AdamW}(\theta,\,\nabla\mathcal{L}(\theta+\hat\varepsilon))
+$$
+
+`sam_adaptive = true` (shipped) selects ASAM: the perturbation is rescaled elementwise by
+$|\theta|$, so it is invariant to a per-parameter rescaling of the weights — measured to put
+$\ge10\times$ less of the perturbation budget on the ArcFace head than raw SAM would, on real
+Tier-3 weights. `SAM.step()` raises `NotImplementedError` so a caller cannot accidentally take a
+single non-SAM step; if the descent-point loss is non-finite, `restore()` puts the weights back
+without stepping rather than baking in a permanent perturbation. Gradients are clipped
+**per parameter group** (§4.5) before both steps.
+
+### Margin — a per-class vector, frozen within a cycle (T2-1)
+
+Stage 2's calibrated margin vector is captured once at Stage-3 entry
+(`base_margins = arcface_head.margins.clone()`) and scaled multiplicatively, **stepping only at
+cycle boundaries**:
+
+$$
+\kappa(e) = 1.0+(\kappa_{\text{final}}-1.0)\cdot\frac{\lfloor(e-1)/L\rfloor}{N_{\text{cycles}}-1},
 \qquad
-\|\mathbf{g}\|_2 = \max\Big(\big\|\,\|\nabla_p\mathcal{L}\|_2\,\big\|_2,\; 10^{-6}\Big),
-\qquad \theta \leftarrow \theta + \hat{\varepsilon}
+\text{margins}(e) = \kappa(e)\cdot\text{base\_margins}
 $$
 
-**Descent** (`second_step`) — restore $\theta$ from the cache and let AdamW step with the
-gradient computed *at the perturbed point*:
+$L=$ `cycle_len` $=8$, $N_{\text{cycles}}=\lceil120/8\rceil=15$, $\kappa_{\text{final}}=$
+`margin_kappa_final` $=0.85$ — **constant within a cycle**, so every step between two SWA
+snapshots optimises one fixed objective, which is what SWA's averaging assumes. `arc_m=None` is
+passed throughout Stage 3: the per-class vector, not a scalar override, is what's optimised
+against. This replaces a pre-Tier-2 scalar $m(e)=0.25+0.05\cos(\pi e/120)$ that changed every
+epoch and discarded Stage 2's per-class calibration entirely.
+
+### Cyclic LR
 
 $$
-\theta \leftarrow \theta_{\text{old}}, \qquad \theta \leftarrow \mathrm{AdamW}\big(\theta,\; \nabla\mathcal{L}(\theta + \hat{\varepsilon})\big)
+\eta(e) = \eta_{\text{swa}}\Big(0.3+0.7\cdot\tfrac12\big(1+\cos\big(\pi\tfrac{(e-1)\bmod8}{8}\big)\big)\Big) \in [0.3\,\eta_{\text{swa}},\,\eta_{\text{swa}}], \qquad \eta_{\text{swa}}=4\times10^{-5}
 $$
 
-`SAM.step()` deliberately raises `NotImplementedError`, so a caller cannot accidentally take a
-single non-SAM step. Gradients are clipped to `grad_clip = 1.0` before *both* steps. The
-ascent loss/accuracy are what the epoch reports; the descent loss is computed only for its
-gradient.
+### Greedy SWA snapshotting — a real accept/reject test (T2-2, T2-3)
 
-### Cyclic LR and margin
+At every cycle boundary ($e\bmod8=0$), a **candidate** running-average blend is scored
+*before* it becomes the accepted average:
 
 $$
-\eta(e) = \eta_{\text{swa}}\Big(0.3 + 0.35\big(1 + \cos\big(\pi\,\tfrac{(e-1) \bmod 8}{8}\big)\big)\Big)
-\in \big[0.33\,\eta_{\text{swa}},\; \eta_{\text{swa}}\big],
-\qquad \eta_{\text{swa}} = 4\times10^{-5}
-$$
-
-$$
-m_{\text{S3}}(e) = 0.25 + 0.05\cos\!\Big(\frac{\pi e}{120}\Big) \;:\; 0.30 \to 0.20
-$$
-
-The Stage-3 margin is always passed explicitly as `global_m`, so the per-class adaptive
-margins are bypassed for the whole stage — a deliberate late-training relaxation
-($m$ *decreases*, unlike Stage 2's ramp).
-
-### Greedy SWA snapshotting
-
-At the end of every 8-epoch cycle (15 cycles over 120 epochs), the live weights are averaged
-into a running SWA state only if they are within 2 % of the best validation $F_1$ seen so far
-(the running best is updated *before* the test, so it includes the current epoch):
-
-$$
-\text{accept} \iff F_1^{\text{live}}(e) \;\ge\; 0.98 \cdot \max_{e' \le e} F_1^{\text{live}}(e')
+\theta^{\text{cand}} = (1-\beta)\,\theta^{\text{SWA}} + \beta\,\theta^{(n)}, \qquad \beta=\frac1n
 $$
 
 $$
-\theta^{\text{SWA}} \leftarrow (1 - \beta)\,\theta^{\text{SWA}} + \beta\,\theta^{(n)},
-\qquad \beta = \frac{1}{n}, \quad n = \text{accepted count}
+\text{accept} \iff \neg\,\texttt{greedy} \;\lor\; F_1^{\text{cand}} > F_1^{\text{SWA}}_{\text{running}}
 $$
 
-which is exactly the running mean of accepted snapshots. Non-floating-point entries (integer
-buffers such as `num_batches_tracked`) are copied rather than averaged. If nothing is
-accepted, the final live model is used.
+evaluated by loading the candidate into a scratch probe model and running it against `val`.
+`swa_warmup_cycles = 3` cycles are discarded **before any candidate is even considered** — no
+snapshot, no rejection counted — keeping Adam's second-moment warm-up transient
+($1/(1-\beta_2)\approx1000$ steps, $\approx3$ cycles at the shipped batch/loader size) out of the
+average. This replaces a pre-Tier-2 filter that tested $F_1^{\text{live}}(e)\ge0.98\cdot
+\max_{e'\le e}F_1^{\text{live}}(e')$ *after* updating the running max with the current epoch's
+own score — a test that can essentially never fail, which is why `swa_n_rejected` was
+structurally $0$ under the old rule. `greedy=false` disables the filter and accepts every
+candidate unconditionally (the "average everything" control mode).
 
-**BatchNorm re-estimation is mandatory.** `update_bn_stats` resets every BN layer's running
-statistics and momentum to `None` (cumulative-average mode) and runs one pass over the
-training loader in `train()` mode — without it the averaged weights carry BN buffers that
-correspond to no model that ever existed. On Metal this pass keeps grad *enabled*, because
-MPS routes attention through a fused inference kernel with no dropout support when grad is
-off; forward values, and therefore the estimated statistics, are identical either way.
+### BatchNorm re-estimation
 
-Finally the SWA weights are copied into the EMA shadow and the stage **always saves**, adding
-a `note` when it failed to beat Stage 2 — the selection decision belongs to
-`_pick_best_checkpoint`, not to the stage. Recorded run: **15 accepted, 0 rejected**.
+Mandatory after Stage 3's training loop, and run against a **shuffled, unweighted** rebuild of
+the training loader — not the CDWS-weighted one training used — since BN statistics estimated
+under a re-weighted class prior would be biased against the natural test-time prior. Every
+`BatchNorm{1,2}d`'s running stats are reset and `momentum` set to `None` (cumulative-average
+mode); every stochastic module (`nn.Dropout*` **and** `nn.MultiheadAttention`, the layer
+`set_dropout` cannot reach) is forced to `.eval()`; the whole pass then runs under plain
+`torch.no_grad()`, identically on every accelerator. (An earlier version of this routine kept
+gradient mode enabled specifically on Metal to route around a fused-attention/dropout kernel
+limitation; the current code sidesteps the limitation by disabling dropout everywhere instead, so
+no accelerator-conditional path remains.)
+
+### EMA and SWA — two averaging schemes, scored and the winner kept
+
+The EMA shadow keeps updating throughout Stage 3 exactly as in Stages 1–2. At the end, **both**
+the SWA average and the EMA shadow are evaluated on `val`, and whichever wins is what actually
+gets saved as the shadow:
+
+$$
+\text{best\_source} = \begin{cases}\text{"swa"}, & F_1^{\text{SWA}}\ge F_1^{\text{EMA}}\\ \text{"ema"}, & \text{otherwise}\end{cases}
+$$
+
+if `"swa"` wins, the SWA weights are copied into the EMA shadow before saving, so the bundle's
+`ema` slot always holds whichever averaging scheme actually produced the recorded `val_f1`.
+Stage 3 **always saves**, whether or not it beats Stage 2 — a `note` field records the comparison
+verbatim; `_pick_best_checkpoint`, not the stage, decides which checkpoint final evaluation uses.
+Recorded reference run: 15 accepted, 0 rejected (pre-Tier-2 filter, not reproducible under the
+current one).
+
+Stage-3-specific loss weights are **hardcoded constants**, not config fields:
+$\gamma_{\text{focal}}=1.0$, SupCon weight $0.02$, ProtoNCE weight $0.01$ — but see §4.4: the
+Stage-3 training loop does not actually apply a ProtoNCE term despite the constant being defined,
+so ProtoNCE is inactive in Stage 3 in practice. `aux_loss_weight` ($0.10$, `cfg.stage3`) is fixed,
+with no decay schedule. `branch_drop_prob` is set to $0$ at Stage-3 entry (branch masking off);
+`torch.compile` graphs are dropped at the Stage 2→3 boundary (`reset_compilation()`), since SAM's
+double backward and the per-cycle margin vector would otherwise trigger continual recompilation.
 
 ---
 
@@ -253,147 +344,174 @@ a `note` when it failed to beat Stage 2 — the selection decision belongs to
 
 ### Focal loss (`losses/focal.py`)
 
-With $\log p = \log\mathrm{softmax}(z)$ and smoothing $\varepsilon$, the smoothed target is
-$q_c = 1-\varepsilon$ for $c = y$ and $\varepsilon/(C-1)$ otherwise:
+With $\log p=\log\mathrm{softmax}(z)$ and label smoothing $\varepsilon$, the cross-entropy term
+uses the **smoothed** target, but the focal modulator reads the **unsmoothed** $p_{y}$ so it can
+still reach $0$ (with smoothing on, $\exp(-\text{smoothed CE})$ is bounded below by
+$\exp(-H(q))>0$, which a smoothed modulator could never fully close):
 
 $$
-\ell_i = -\sum_c q_{i,c}\log p_{i,c}
-\quad(\text{or } -\log p_{i,y_i} \text{ when } \varepsilon = 0),
+\ell_i = -\sum_c q_{i,c}\log p_{i,c} \quad (q\text{ smoothed}),
 \qquad
-\mathcal{L}_{\text{focal}} = \frac{1}{B}\sum_i \big(1 - e^{-\ell_i}\big)^{\gamma}\,\ell_i
+\mathcal{L}_{\text{focal}} = \frac1B\sum_i\big(1-p_{i,y_i}\big)^\gamma\,\ell_i
 $$
 
-The modulation uses $p_t = e^{-\ell}$, so smoothing is applied *first* and the focal term
-sharpens on top of it. Used with $\gamma = 1.5$ (Stage 1 Phase 3 and Stage 2) and
-$\gamma = 1.0$ (Stage 3).
+$\gamma=1.5$ (Stage 1 Phase 3, Stage 2), $\gamma=1.0$ (Stage 3).
 
-### ArcFace objective
+### ArcFace-via-head
 
-There is no separate "ArcFace loss" module: the head produces margin-penalised logits
-(§3.5) and those are fed to the Focal criterion. For clarity, with $s = 48$ and per-sample
-margin $m_i$:
+No separate "ArcFace loss" module: the head produces margin- and confusion-penalised logits
+(§3.5), fed to Focal. With $s=48$, $M_i=$ the per-sample margin in force (§4.1–4.3), and the
+pairwise term folded in:
 
 $$
-\mathcal{L}_{\text{arc}} = -\frac{1}{B}\sum_i \big(1-p_{i,y_i}\big)^{\gamma}
-\log \frac{e^{\,s\cos(\theta_{i,y_i} + m_i)}}
-          {e^{\,s\cos(\theta_{i,y_i} + m_i)} + \sum_{c \ne y_i} e^{\,s\cos\theta_{i,c}}}
+\mathcal{L}_{\text{arc}} = -\frac1B\sum_i(1-p_{i,y_i})^\gamma
+\log\frac{e^{s\cos(\theta_{i,y_i}+M_i)}}
+{e^{s\cos(\theta_{i,y_i}+M_i)}+\sum_{c\ne y_i}e^{s(\cos\theta_{i,c}-\delta_{\text{pw}}\Omega_{y_i,c})}}
 $$
 
-with $\cos\theta_{i,c} = \max_k \hat{\mathbf{e}}_i^{\top}\hat{\mathbf{W}}_{c,k}$ (sub-centre max)
-and $m_i = m(t)$ during warm-up, $M(y_i)$ afterwards.
-
-### Supervised contrastive (`SupConLoss`, $\tau = 0.10$)
-
-Over $\ell_2$-normalised embeddings, with $P(i) = \{j \ne i : y_j = y_i\}$:
+### Sub-centre load-balancing (HD-2(ii))
 
 $$
-\mathcal{L}_{\text{supcon}} = \frac{1}{|A|}\sum_{i \in A}
-\frac{-1}{|P(i)|}\sum_{p\in P(i)}
-\log\frac{\exp(\hat{\mathbf{e}}_i^{\top}\hat{\mathbf{e}}_p/\tau)}
-         {\sum_{a \ne i}\exp(\hat{\mathbf{e}}_i^{\top}\hat{\mathbf{e}}_a/\tau)}
+\mathcal{L}_{\text{balance}} = \sum_{c\in\text{batch}}\mathrm{KL}(\boldsymbol\pi_c\,\|\,\mathrm{Uniform}_K)
 $$
 
-where $A = \{i : |P(i)| > 0\}$ — anchors with no in-batch positive are excluded from the mean
-rather than contributing zero. If *no* anchor has a positive, the loss is a grad-carrying zero.
-Treating every same-class member as a positive is what makes the $16\times8$ balanced batch
-(8 positives per anchor) the right batch shape for this stage.
+weighted by `subcenter_balance_weight = 0.01`, added whenever the head returns a `"balance"` key
+(training mode with labels). A uniform assignment costs $0$; full collapse costs
+$|\mathcal{C}|\log K$ (§3.5).
 
-### Prototype contrastive (`ProtoNCELoss`, $\tau = 0.10$)
-
-Batch-local class prototypes, then plain cross-entropy against them:
+### Supervised contrastive (`SupConLoss`, $\tau=0.10$)
 
 $$
-\boldsymbol{\mu}_c = \frac{\bar{\mathbf{e}}_c}{\|\bar{\mathbf{e}}_c\|_2},\quad
-\bar{\mathbf{e}}_c = \frac{1}{|\{i: y_i = c\}|}\sum_{i: y_i = c}\hat{\mathbf{e}}_i
+\mathcal{L}_{\text{supcon}} = \frac{1}{|A|}\sum_{i\in A}\frac{-1}{|P(i)|}\sum_{p\in P(i)}
+\log\frac{\exp(\hat{\mathbf{e}}_i^\top\hat{\mathbf{e}}_p/\tau)}{\sum_{a\ne i}\exp(\hat{\mathbf{e}}_i^\top\hat{\mathbf{e}}_a/\tau)}
 $$
 
-$$
-\mathcal{L}_{\text{proto}} = -\frac{1}{B}\sum_i
-\log\frac{\exp(\hat{\mathbf{e}}_i^{\top}\boldsymbol{\mu}_{y_i}/\tau)}
-         {\sum_{c \in \mathcal{C}_{\text{batch}}}\exp(\hat{\mathbf{e}}_i^{\top}\boldsymbol{\mu}_{c}/\tau)}
-$$
+$A=\{i:|P(i)|>0\}$ — anchors with no in-batch positive are excluded from the mean, not
+zero-contributed. The $16\times8$ balanced batch (8 positives/anchor) is the batch shape this
+loss is designed around.
 
-Only classes present in the batch form prototypes; with fewer than 2 present the loss returns
-zero. It is $O(B|\mathcal{C}_{\text{batch}}|)$ rather than SupCon's $O(B^2)$, at the cost of
-discarding intra-class structure below the mean.
-
-### Auxiliary deep-supervision loss (`losses/auxiliary.py`)
+### Prototype contrastive (`ProtoNCELoss`, $\tau=0.10$)
 
 $$
-\mathcal{L}_{\text{aux}} = \sum_{b \in \{A,B,C,D\}} \omega_b\,\mathcal{L}_{\text{crit}}\big(z^{\text{aux}}_b,\, y\big),
-\qquad
-\omega_A = \omega_B = 2.0,\quad \omega_C = \omega_D = 1.0
+\boldsymbol\mu_c = \frac{\bar{\mathbf{e}}_c}{\|\bar{\mathbf{e}}_c\|_2}, \qquad
+\mathcal{L}_{\text{proto}} = -\frac1B\sum_i\log\frac{\exp(\hat{\mathbf{e}}_i^\top\boldsymbol\mu_{y_i}/\tau)}{\sum_{c\in\mathcal{C}_{\text{batch}}}\exp(\hat{\mathbf{e}}_i^\top\boldsymbol\mu_c/\tau)}
 $$
 
-The $2\times$ bias on the spectral branches is load-bearing: without it the spatial branches
-dominate and A/B produce near-zero gradients (`tests/unit/test_diagnostics.py` pins the
-weighting). A missing `aux_*` key contributes nothing. Under mixup each term uses the
-interpolated loss below.
+Zero with fewer than 2 classes present. $O(B|\mathcal{C}_{\text{batch}}|)$ against SupCon's
+$O(B^2)$. **Passed into Stage 3's training loop as a module with `proto_weight=0.01`, but that
+loop applies no ProtoNCE term** — ProtoNCE is inactive in Stage 3 despite the weight being
+defined.
 
-Its weight decays linearly with training progress, but never to zero — branches must keep
-receiving gradient:
+### Auxiliary deep-supervision loss and its GradNorm reweighting (T2-6)
 
 $$
-w_{\text{aux}}(e) = \max\!\Big(w_{\text{final}},\; w_{\text{init}}\big(1 - 0.7\,\tfrac{e}{E}\big)\Big),
-\qquad w_{\text{init}} = 0.65,\; w_{\text{final}} = 0.25
+\mathcal{L}_{\text{aux}} = \sum_{b\in\{A,B,C,D\}}\omega_b\,\mathcal{L}_{\text{crit}}(z^{\text{aux}}_b,y)
 $$
 
-which decays $0.65 \to 0.25$ and reaches the floor at $e \approx 528$ of 600. Stage 3 ignores
-this schedule entirely and uses a fixed $w_{\text{aux}} = 0.10$.
+$\omega$ defaults to the fixed vector $\omega_A=\omega_B=2.0,\;\omega_C=\omega_D=1.0$
+(load-bearing — without the $2\times$ bias on the spectral branches, A/B produce near-zero
+gradients), but is now **updated once per epoch** by a GradNorm rule reading the epoch-mean
+per-branch gradient norms the loop already computes:
+
+$$
+\omega_b^{(t+1)} = \operatorname{clip}\Big(\omega_b^{(t)}\cdot\big(\bar g/g_b\big)^\alpha,\; 0.25,\; 4.0\Big),
+\qquad \bar g = \frac14\sum_b g_b
+$$
+
+$\alpha=$ `aux_gradnorm_alpha` $=0.5$ (a **root-level** config field, read identically by all
+three stages, not Stage-1-only). At $\alpha=0$ the update is a no-op and the fixed
+pre-Tier-2 vector stands exactly. A branch absent or with non-positive norm keeps its current
+weight.
+
+Its **base** weight (before GradNorm scaling) decays linearly with Stage-1 progress, floored
+above zero:
+
+$$
+w_{\text{aux}}(e) = \max\big(w_{\text{final}},\,w_{\text{init}}(1-0.7\,e/E)\big), \qquad w_{\text{init}}=0.65,\; w_{\text{final}}=0.25
+$$
+
+reaching the floor at $e\approx528$ of 600. Stage 2 uses no such decay (aux loss enters at a
+fixed relative weight within the classification/contrastive convex combination); Stage 3 uses a
+fixed $w_{\text{aux}}=0.10$, no schedule.
 
 ### Mixup (`losses/mixup.py`)
 
 $$
-\lambda \sim \mathrm{Beta}(\alpha, \alpha),\quad \alpha = 0.35,
-\qquad
-\tilde{x} = \lambda x + (1-\lambda)x_{\pi},
-\qquad
-\mathcal{L} = \lambda\,\mathcal{L}_{\text{crit}}(z, y) + (1-\lambda)\,\mathcal{L}_{\text{crit}}(z, y_{\pi})
+\lambda\sim\mathrm{Beta}(\alpha,\alpha),\;\alpha=0.35, \qquad
+\tilde x=\lambda x+(1-\lambda)x_\pi, \qquad
+\mathcal{L}=\lambda\mathcal{L}_{\text{crit}}(z,y)+(1-\lambda)\mathcal{L}_{\text{crit}}(z,y_\pi)
 $$
 
-with $\pi$ a random permutation of the batch. Mixup is **mutually exclusive with ArcFace** —
-soft-interpolated targets are incompatible with an angular margin indexed by a single label,
-and `train_one_epoch` raises `ValueError` on the combination. Only batch-level mixup is
-implemented; there is no CutMix operator in this codebase (the analogous spatial/spectral
-occlusion is `_band_cutout`, applied per sample in the dataset, §2.6).
+Side inputs (mask, morphometrics) are mixed identically, with the same $\pi,\lambda$. Stage 1
+Phases 1–2 only. **Mutually exclusive with a non-zero ArcFace margin** — `train_one_epoch` raises
+`ValueError` if `use_mixup and (arc_m is None or arc_m > 0.0)`; since Phase 1–2 run at
+`arc_m=0.0`, the guard passes.
+
+### Same-class CutMix (T2-7 / OP-6) — label-preserving, not a loss term
+
+Two data-level operators, applied inside `RiceSeedDataset.__getitem__` before the batch is ever
+formed — **not** a loss-function change. A same-class partner from the same split is drawn
+(uniform over the class's pool minus the anchor, one draw, no rejection sampling; classes with
+fewer than 2 members in the split are skipped):
+
+$$
+\text{spectral: } x_{[t:t+w]} \leftarrow x^{\text{partner}}_{[t:t+w]}, \quad w=\texttt{cutmix\_bands}=8
+$$
+$$
+\text{spatial: } x_{[:,\,r:r+s,\,c:c+s]} \leftarrow x^{\text{partner}}_{[:,\,r:r+s,\,c:c+s]}, \quad s=\texttt{cutmix\_spatial}=24
+$$
+
+with window/region start drawn uniformly at random each call. Because the partner is
+**same-class**, the label is untouched — no soft target is produced, so unlike mixup it composes
+freely with a non-zero ArcFace margin (the mixup/ArcFace exclusion guard does not fire for
+CutMix). Probability of firing is a per-augmentation-profile pair
+(`spec_cutmix`, `spat_cutmix`), present in every profile except `none`:
+
+| Profile | `spec_cutmix` | `spat_cutmix` |
+|---|---:|---:|
+| `heavy` | 0.10 | 0.10 |
+| `medium` | 0.08 | 0.08 |
+| `very_light` | 0.06 | 0.06 |
+| `light` | 0.06 | 0.06 |
+| `none` | — | — |
+
+Guards are appended **after** the five original augmentation draws (band drop, cutout, noise,
+warp, multiplicative) and short-circuit on their probability before drawing from the RNG, so a
+profile with CutMix off reproduces the exact pre-T2-7 RNG stream. This exists to give Stage 2/3
+— which otherwise run with no mixing regulariser at $\sim$67 samples/class — some intra-class
+variation without ever touching a label.
 
 ### Compound totals
 
-**Stage 1, Phases 1–2** (CE path, mixup on):
+**Stage 1, Phases 1–2** (mixup on, `arc_m=0`):
 
 $$
-\mathcal{L}_{\text{total}} = \underbrace{\lambda\mathcal{L}_{\text{CE}}(z, y) + (1{-}\lambda)\mathcal{L}_{\text{CE}}(z, y_\pi)}_{\text{main}}
-\;+\; w_{\text{aux}}(e)\sum_b \omega_b\Big[\lambda\mathcal{L}_{\text{CE}}(z_b, y) + (1{-}\lambda)\mathcal{L}_{\text{CE}}(z_b, y_\pi)\Big]
+\mathcal{L}_{\text{total}} = \big[\lambda\mathcal{L}_{\text{CE}}(z,y)+(1{-}\lambda)\mathcal{L}_{\text{CE}}(z,y_\pi)\big]
++ w_{\text{aux}}(e)\sum_b\omega_b\big[\lambda\mathcal{L}_{\text{CE}}(z_b,y)+(1{-}\lambda)\mathcal{L}_{\text{CE}}(z_b,y_\pi)\big]
 $$
 
-**Stage 1, Phase 3 and Stage 2** (contrastive path, mixup off) — note the classification term
-is *down-weighted* by the contrastive weights, so the three terms form a convex combination:
+**Stage 1 Phase 3 and Stage 2** (contrastive path, mixup off, non-zero margin from Phase-3
+onward / Stage 2):
 
 $$
 \boxed{\;
-\mathcal{L}_{\text{total}} =
-\big(1 - \lambda_{\text{sc}} - \lambda_{\text{pt}}\big)\,\mathcal{L}_{\text{cls}}
-\;+\; \lambda_{\text{sc}}\,\mathcal{L}_{\text{supcon}}
-\;+\; \lambda_{\text{pt}}\,\mathcal{L}_{\text{proto}}
-\;+\; w_{\text{aux}}(e)\,\mathcal{L}_{\text{aux}}
+\mathcal{L}_{\text{total}} = \big(1-\lambda_{\text{sc}}-\lambda_{\text{pt}}\big)\mathcal{L}_{\text{cls}}
++ \lambda_{\text{sc}}\mathcal{L}_{\text{supcon}} + \lambda_{\text{pt}}\mathcal{L}_{\text{proto}}
++ w_{\text{aux}}(e)\,\mathcal{L}_{\text{aux}} + w_{\text{bal}}\,\mathcal{L}_{\text{balance}}
 \;}
 $$
 
-| | $\mathcal{L}_{\text{cls}}$ | $\lambda_{\text{sc}}$ | $\lambda_{\text{pt}}$ | effective $\mathcal{L}_{\text{cls}}$ weight |
-|---|---|---:|---:|---:|
-| Stage 1 Phase 3 | Focal($\gamma{=}1.5$, $\varepsilon(e)$) on linear logits | 0.35 | 0.15 | 0.50 |
-| Stage 2 | Focal($\gamma{=}1.5$) on ArcFace logits | $0.40\min(1,e/10)$ | $0.18\min(1,e/10)$ | $\ge 0.42$ |
+| | $\mathcal{L}_{\text{cls}}$ | $\lambda_{\text{sc}}$ | $\lambda_{\text{pt}}$ |
+|---|---|---:|---:|
+| Stage 1 Phase 3 | Focal($\gamma{=}1.5$) on $m{=}0$ head logits | 0.35 | 0.15 |
+| Stage 2 | Focal($\gamma{=}1.5$) on warmed/per-class-margin logits | $0.40\min(1,e/10)$ | $0.18\min(1,e/10)$ |
 
-**Stage 3** (SAM ascent step):
+**Stage 3** (SAM ascent and descent steps both evaluate this identical objective; ProtoNCE weight
+is defined but the term is not actually applied, per above):
 
 $$
-\mathcal{L}_{\text{total}} = \mathcal{L}_{\text{focal}}(\gamma{=}1) + 0.02\,\mathcal{L}_{\text{supcon}} + 0.10\,\mathcal{L}_{\text{aux}}
+\mathcal{L}_{\text{total}} = \mathcal{L}_{\text{focal}}(\gamma{=}1) + 0.02\,\mathcal{L}_{\text{supcon}} + 0.10\,\mathcal{L}_{\text{aux}} + w_{\text{bal}}\,\mathcal{L}_{\text{balance}}
 $$
-
-The SAM **descent** step recomputes only $\mathcal{L}_{\text{focal}}(\gamma{=}1)$ at the
-perturbed point — the contrastive and auxiliary terms do not enter the worst-case gradient.
-A `proto` module and `proto_weight = 0.01` are passed into `train_one_epoch_sam`, but that
-loop applies no ProtoNCE term, so **ProtoNCE is inactive in Stage 3**.
 
 ---
 
@@ -401,66 +519,69 @@ loop applies no ProtoNCE term, so **ProtoNCE is inactive in Stage 3**.
 
 ### Weight-decay parameter groups
 
-`optim/param_groups.py::_wd_groups` splits parameters by a single rule:
+`optim/param_groups.py::_wd_groups` splits by a single rule:
 
 $$
-p \in \text{no-decay} \iff \operatorname{ndim}(p) = 1 \;\;\vee\;\; \text{name ends with } \texttt{.bias}
+p\in\text{no-decay} \iff \operatorname{ndim}(p)=1 \;\lor\; \text{name ends } \texttt{.bias}
 $$
 
-This places **every normalisation affine parameter** (`GroupNorm`, `LayerNorm`, `BatchNorm1d/2d`
-weights and biases are all 1-D) and **every bias** in a group with `weight_decay = 0.0`; all
-2-D+ weights get `weight_decay = 2\times10^{-4}`. The physical wavelength encoding is excluded
-by construction rather than by rule — `PhysicalWavelengthPE.pe` is a registered *buffer*, so it
-receives neither gradient nor decay. Frozen parameters (`requires_grad = False`) are skipped
-entirely, which is how head freezing removes a head from the optimiser.
+placing every normalisation affine parameter and every bias at `weight_decay = 0.0`; all 2-D+
+weights get $2\times10^{-4}$. Buffers (e.g. `PhysicalWavelengthPE.pe`) receive neither gradient
+nor decay by construction. `build_optimizer_s1`/`s3`: 2 groups, single LR. `build_optimizer_s2`:
+4 groups, split on the `arcface_head` name prefix into head/backbone $\times$ wd/no-wd — **group
+order is load-bearing**, `stage2_arcface.py` reads `param_groups[0]`/`[2]` back for logging.
 
-| Builder | Groups | Used by |
-|---|---|---|
-| `build_optimizer_s1` | `[wd, no_wd]` at `stage1.max_lr` | Stage 1 |
-| `build_optimizer_s2` | `[head-wd, head-no-wd, backbone-wd, backbone-no-wd]` | Stage 2 |
-| `_wd_groups(...)` wrapped in `SAM` | `[wd, no_wd]` at `stage3.swa_lr` | Stage 3 |
+### Per-group gradient clipping (T2-5)
 
-Stage 2 splits on the `arcface_head` name prefix, giving the head
-$2.5\times10^{-4}$ and the backbone $7\times10^{-5}$. **The group order is load-bearing**:
-`stage2_arcface.py` reads `param_groups[0]` and `param_groups[2]` back as the head and
-backbone learning rates for logging.
+Clipping is **no longer a single global norm** over the whole model — it is applied
+independently within each of three named groups, so the ArcFace head's $s{=}48$-amplified
+gradient cannot dominate the total norm and divide the effective learning rate of everything
+else:
 
-### Gradient handling
+$$
+\texttt{CLIP\_GROUPS} = \big\{\text{head}: \{\texttt{arcface\_head.}\},\;\; \text{fusion}: \{\texttt{cross\_interaction.},\,\texttt{embed\_net.}\},\;\; \text{backbone}: \text{everything else}\big\}
+$$
 
-| Rule | Detail |
-|---|---|
-| Clipping | `clip_grad_norm_(model.parameters(), 1.0)` — a single global norm over the whole model, applied on the accumulation boundary (Stages 1–2) and before both SAM steps (Stage 3) |
-| Accumulation | `stage1.accum = 1`; the optimiser steps, and the EMA updates, only on the boundary — so the EMA advances once per *optimiser* step, not per batch |
-| Non-finite loss | zero the gradients and skip the batch, never raise — an unstable ArcFace epoch degrades a metric rather than killing a multi-hour run |
-| Gradient norms | sampled after `scaler.unscale_` and **before** the clip, so the diagnostic reports true pre-clip norms (§5.2) |
+Each group is clipped independently to `grad_clip = 1.0` via `nn.utils.clip_grad_norm_`, applied
+at the accumulation boundary (Stages 1–2) or before both SAM steps (Stage 3); pre-clip per-group
+norms are what the diagnostic channel reports (§5.2).
 
 ### Mixed precision
 
 $$
-\texttt{use\_amp} \;=\; (\texttt{supcon is None}) \;\wedge\; (\texttt{scaler is not None})
+\texttt{use\_amp} = (\texttt{supcon is None}) \land (\texttt{scaler is not None})
 $$
 
-Stage 1 Phases 1–2 therefore train under `autocast` with a `GradScaler` **bound to the active
-device** (`GradScaler(device=device.type)` — a bare `GradScaler()` binds to CUDA and silently
-no-ops on Metal). Stage 1 Phase 3 and all of Stage 2 pass a SupCon module and so run fp32;
-Stage 3 passes no scaler and is fp32 by construction. Evaluation is always fp32.
+AMP is silently disabled whenever a SupCon module is passed — Stage 1 Phase 3 and all of Stage 2
+always pass one, so both run in full fp32; only Stage 1 Phases 1–2 (no SupCon) train under
+`autocast` with a `GradScaler` **explicitly bound to the active device**
+(`GradScaler(device=device.type)` — a bare `GradScaler()` binds to CUDA and silently becomes a
+no-op pass-through on any other accelerator, disabling loss scaling without an error). Stage 3
+passes no scaler at all and is fp32 by construction (SAM's two-pass ascent/descent contract is
+fundamentally incompatible with per-step loss rescaling). `engine/evaluate.py` and `engine/tta.py`
+both force `autocast(enabled=False)` unconditionally, so a reported metric never depends on the
+caller's AMP state.
 
 ### EMA
 
 $$
-d_n = \min\Big(d_{\max},\; \frac{1+n}{10+n}\Big),
-\qquad
-\theta^{\text{EMA}} \leftarrow d_n\,\theta^{\text{EMA}} + (1 - d_n)\,\theta
+d_n = \min\Big(d_{\max},\,\frac{1+n}{10+n}\Big), \qquad \theta^{\text{EMA}}\leftarrow d_n\theta^{\text{EMA}}+(1-d_n)\theta
 $$
 
-with $d_{\max} = 0.999$ and $n$ the update count. The warm-up lets the shadow track fast early
-movement instead of lagging it. **Floating-point buffers are copied outright, not averaged**
-(integer buffers such as `num_batches_tracked` are left untouched) — an EMA of BatchNorm
-running statistics is not itself a running statistic. `reinit_from` hard-resets the shadow and
-restarts the warm-up; it is called at both Stage-1 phase boundaries and on entry to Stage 2.
+$d_{\max}=$ `ema_decay` $=0.999$, $n$ the update count (advanced once per *optimiser* step, not
+per micro-batch — `accum=1` shipped, so these coincide). Floating-point buffers are copied
+outright, not averaged; the update is implemented with multi-tensor `torch._foreach_*` ops (2
+kernel launches for the whole model rather than one per tensor), spelled out as an explicit
+`mul_` then `add_` of a materialised `(1-d)\theta` rather than a fused `add_(alpha=)`, to keep
+bit-identical rounding to a naive per-parameter loop. `reinit_from` hard-resets the shadow and
+restarts the decay warm-up; called at both Stage-1 phase boundaries and unconditionally on entry
+to Stage 2 and Stage 3. **`ModelEMA.update` requires the unwrapped module** — handing it a
+DDP- or `torch.compile`-wrapped model raises `RuntimeError` (its parameter matching is by name),
+rather than silently failing to track.
 
 ### Device selection
 
 `cfg.device = "auto"` resolves **Metal (MPS) → CUDA → CPU**; an explicit `cuda`/`cpu`/`mps` is
-never overridden. Autocast dtype is left at torch's per-device default (fp16 on both Metal and
-CUDA) rather than promoted to bf16, to keep numerics consistent across accelerators.
+never overridden. Execution-performance knobs (worker counts, `torch.compile`, TF32,
+DDP topology) live entirely under `cfg.runtime` and are covered in
+`06_EXECUTION_AND_HARDWARE.md` — none of them are permitted to change a reported metric.
