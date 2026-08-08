@@ -38,7 +38,7 @@ from torch.utils.data import DataLoader
 
 from spectralquadnet.data.loaders import build_phase3_loader
 from spectralquadnet.engine.checkpoint import save_ckpt
-from spectralquadnet.engine.diagnostics import compute_class_difficulty
+from spectralquadnet.engine.diagnostics import compute_class_difficulty, should_render_details
 from spectralquadnet.engine.evaluate import evaluate
 from spectralquadnet.engine.train_epoch import train_one_epoch
 from spectralquadnet.losses.auxiliary import GradNormAuxWeights, _aux_loss_weight
@@ -48,6 +48,8 @@ from spectralquadnet.models.ema import ModelEMA
 from spectralquadnet.optim.param_groups import build_optimizer_s1
 from spectralquadnet.optim.schedulers import phase_aware_lr, subcentre_tau
 from spectralquadnet.tracking.base import ExperimentTracker, NullTracker
+from spectralquadnet.utils.device import RuntimePlan, empty_cache
+from spectralquadnet.utils.distributed import DistContext
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from spectralquadnet.config.schema import ExperimentConfig
@@ -66,6 +68,9 @@ def run_stage1(
     best_ckpt: str,
     tracker: ExperimentTracker | None = None,
     calib_ldr: DataLoader[Any] | None = None,
+    plan: RuntimePlan | None = None,
+    dist: DistContext | None = None,
+    train_module: nn.Module | None = None,
 ) -> float:
     """Run Stage 1's full three-phase curriculum and return the best validation F1.
 
@@ -99,15 +104,25 @@ def run_stage1(
         seen during the run.
     """
     trk = tracker if tracker is not None else NullTracker()
+    dist = dist or DistContext()
+    # `model` is always the eager `SpectralQuadNet`: it owns the attributes
+    # (`arcface_head`, `set_dropout`) and the unprefixed parameter names the
+    # optimiser split and the checkpoint schema are built on. `train_module` is
+    # what the forward/backward actually goes through — the same module under a
+    # DDP and/or `torch.compile` wrapper, or `model` itself single-process.
+    fwd = train_module if train_module is not None else model
     # One name, one meaning: `val_ldr` selects, `fit_ldr` fits.
     fit_ldr = calib_ldr if calib_ldr is not None else val_ldr
     fit_split = "calib" if calib_ldr is not None else "val"
+    detail_every = plan.diagnostics_interval if plan is not None else 1
 
     ep_total = cfg.stage1.epochs
     p1_end = int(ep_total * cfg.stage1.phase1_frac)
     p2_end = int(ep_total * (cfg.stage1.phase1_frac + cfg.stage1.phase2_frac))
 
-    optimizer = build_optimizer_s1(cfg, model, cfg.stage1.max_lr)
+    optimizer = build_optimizer_s1(
+        cfg, model, cfg.stage1.max_lr, fused=plan.fused_optimizer if plan else False
+    )
 
     # Custom Phase-Aware Scheduler — see optim/schedulers.py::phase_aware_lr
     with warnings.catch_warnings():
@@ -157,7 +172,9 @@ def run_stage1(
         ],
     )
 
+    trk.progress_start("stage1", ep_total, "Stage 1")
     for ep in range(1, ep_total + 1):
+        detail = should_render_details(ep, detail_every)
         # ── Phase assignment ──────────────────────────────────────────
         if ep <= p1_end:
             phase = 1
@@ -195,6 +212,8 @@ def run_stage1(
                 store,
                 train_ds=loaders_by_phase[3].dataset,
                 class_f1=class_f1_phase2,
+                plan=plan,
+                dist=dist,
             )
 
         # ── Select active loader ──────────────────────────────────────
@@ -232,7 +251,7 @@ def run_stage1(
 
         tl, ta = train_one_epoch(
             cfg,
-            model,
+            fwd,
             cur_ldr,
             optimizer,
             crit,
@@ -256,8 +275,8 @@ def run_stage1(
         scheduler.step()
 
         # ── Evaluate both live model and EMA ──────────────────────────
-        f1_live, acc_live = evaluate(model, val_ldr, device)
-        f1_ema, acc_ema = evaluate(ema.shadow, val_ldr, device)
+        f1_live, acc_live = evaluate(model, val_ldr, device, dist)
+        f1_ema, acc_ema = evaluate(ema.shadow, val_ldr, device, dist)
         best_ep_f1 = max(f1_live, f1_ema)
         best_ep_acc = max(acc_live, acc_ema)
         # Which of the two `best_ep_f1` came from. `final_eval` evaluates that
@@ -273,7 +292,7 @@ def run_stage1(
         if best_ep_f1 > best_f1:
             best_f1, no_improve = best_ep_f1, 0
             _cf1, _cdws = compute_class_difficulty(
-                cfg, ema.shadow, fit_ldr, device, "S1", tracker=trk, step=ep
+                cfg, ema.shadow, fit_ldr, device, "S1", tracker=trk, step=ep, detail=detail
             )
             save_ckpt(
                 cfg,
@@ -284,6 +303,7 @@ def run_stage1(
                 ema,
                 val_f1=best_ep_f1,
                 val_acc=best_ep_acc,
+                dist=dist,
                 best_source=best_ep_source,
                 class_f1=_cf1,
                 cdws_weights=_cdws,
@@ -328,8 +348,16 @@ def run_stage1(
             step=ep,
         )
 
-        if no_improve >= cfg.stage1.patience:
+        # Periodic sweep of the caching allocator's free blocks. Off by
+        # default; the stage boundary in `train.py` always sweeps.
+        if plan is not None and plan.empty_cache_interval and ep % plan.empty_cache_interval == 0:
+            empty_cache(device)
+
+        # Under DDP every rank must reach the same verdict, or the ones that
+        # kept going would block forever in the next epoch's all-reduce.
+        if dist.broadcast_object(no_improve >= cfg.stage1.patience):
             trk.log_message(f"Early stopping at epoch {ep}.", level="warn")
             break
 
+    trk.progress_stop("stage1")
     return best_f1

@@ -358,6 +358,114 @@ class TrackingConfig:
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  RUNTIME — execution knobs that must not change a single number
+# ══════════════════════════════════════════════════════════════════════
+
+
+@dataclass
+class RuntimeConfig:
+    """How the run *executes*: worker counts, kernel selection, device topology.
+
+    Every field here is a **throughput** knob, and the invariant that separates
+    this group from every other one is that changing it must not change a
+    reported metric. That is why it carries real defaults instead of
+    :data:`omegaconf.MISSING` (the same exemption :class:`TrackingConfig` has):
+    the values do not belong to the experiment, so a config that never mentions
+    them is not under-specified.
+
+    Two fields deliberately default to the *slower* setting, because the fast
+    one trades arithmetic for time and this pipeline's contract is that it does
+    not: :attr:`allow_tf32` drops matmul mantissas from 24 bits to 11, and
+    :attr:`channels_last` re-selects convolution algorithms whose reduction
+    order differs. Both are one flag away for anyone who wants them.
+
+    ``-1`` means "decide from the hardware" wherever a count is expected;
+    :func:`~spectralquadnet.utils.device.resolve_runtime` is the one place that
+    resolution happens.
+    """
+
+    # ── Data pipeline ─────────────────────────────────────────────────
+    #: DataLoader worker processes. ``-1`` auto-selects: half the physical
+    #: cores (capped at 8) on CUDA, where the host feed has to keep up with a
+    #: T4/A100/H100; ``2`` on Metal and CPU, where the accelerator is the
+    #: bottleneck and worker start-up under ``spawn`` is not free.
+    num_workers: int = -1
+    #: Page-locked staging buffers, so the H2D copy is a DMA that overlaps
+    #: compute. ``-1`` auto-enables on CUDA only — there is no pinned-memory
+    #: path on Metal, and asking for one raises.
+    pin_memory: int = -1
+    #: Keep workers alive between epochs. Under ``spawn`` (macOS default) a
+    #: worker costs seconds to start, and Stage 1 restarts its loader 600
+    #: times. ``-1`` follows ``num_workers > 0``.
+    persistent_workers: int = -1
+    #: Batches each worker runs ahead. 4 covers a stalled page-in from the
+    #: 5.6 GB mmap without materially growing resident memory.
+    prefetch_factor: int = 4
+    #: Worker count for the evaluation loaders, which are built and discarded
+    #: far more often than the training ones. ``-1`` follows ``num_workers``
+    #: capped at 4.
+    eval_num_workers: int = -1
+
+    # ── Kernel and graph selection ────────────────────────────────────
+    #: ``auto`` compiles on CUDA and leaves Metal in eager mode — measured on
+    #: this model, ``torch.compile`` on the MPS backend is **2.2× slower** than
+    #: eager (983 ms vs 437 ms per forward at batch 32), because the Metal
+    #: inductor backend cannot yet fuse the 3-D stem. ``on``/``off`` force it.
+    compile: str = "auto"
+    #: Passed to ``torch.compile(backend=...)``.
+    compile_backend: str = "inductor"
+    #: Passed to ``torch.compile(mode=...)``.
+    compile_mode: str = "default"
+    #: NHWC/NDHWC tensors. cuDNN's Tensor Core convolution kernels want them,
+    #: but they reduce in a different order, so this is opt-in.
+    channels_last: bool = False
+    #: TF32 matmuls on Ampere and later. **Off by default**: it is a precision
+    #: change, and Turing (sm_75, the T4) has no TF32 path at all.
+    allow_tf32: bool = False
+    #: cuDNN convolution autotuning. Already what ``set_seed`` leaves set; here
+    #: so it is visible and overridable.
+    cudnn_benchmark: bool = True
+    #: ``auto`` uses AdamW's fused multi-tensor kernel on CUDA and its foreach
+    #: path elsewhere. The fused kernel folds the whole step into one launch;
+    #: it accumulates in the same precision but not in the same order, so it is
+    #: the one default here that is not bit-exact against eager AdamW.
+    fused_optimizer: str = "auto"
+
+    # ── Device topology ───────────────────────────────────────────────
+    #: ``auto`` uses every visible CUDA device when the process was launched by
+    #: ``torchrun``; ``ddp`` demands it and raises otherwise; ``off`` pins the
+    #: run to one device. There is no DataParallel option — see
+    #: :mod:`spectralquadnet.utils.distributed` for why single-process
+    #: replication cannot hold the BatchNorm statistics invariant.
+    multi_gpu: str = "auto"
+    #: Convert every BatchNorm to SyncBatchNorm under DDP. This is what makes
+    #: multi-GPU training *numerically* the same run as single-GPU: without it
+    #: each replica normalises by its own shard and the fusion's five
+    #: ``BatchNorm1d`` layers see a different mean than they would have.
+    #: Turning it off is faster and no longer invariant.
+    sync_batchnorm: bool = True
+    #: NCCL/gloo rendezvous timeout, seconds.
+    dist_timeout_s: int = 1800
+
+    # ── Memory ────────────────────────────────────────────────────────
+    #: Release the caching allocator's free blocks every N epochs. 0 disables
+    #: the periodic sweep; the stage boundaries always sweep regardless, since
+    #: that is where Stage 3's two extra model copies are freed.
+    empty_cache_interval: int = 0
+
+    # ── Console ───────────────────────────────────────────────────────
+    #: ``auto`` renders a progress bar on a TTY and falls back to the
+    #: append-only row stream when stdout is a pipe (a bar redrawn into a log
+    #: file is unreadable). ``bar``/``rows``/``off`` force it.
+    progress: str = "auto"
+    #: Epoch stride for the expensive console diagnostics — the hardest-class
+    #: table and the per-class classification report. The *numbers* behind them
+    #: (per-class F1, the CDWS weights) are still computed on the schedule
+    #: training needs; only the rendering is throttled.
+    diagnostics_interval: int = 50
+
+
+# ══════════════════════════════════════════════════════════════════════
 #  EXPERIMENT — composition root
 # ══════════════════════════════════════════════════════════════════════
 
@@ -385,6 +493,10 @@ class ExperimentConfig:
     stage2: Stage2Config = MISSING
     stage3: Stage3Config = MISSING
     tracking: TrackingConfig = MISSING
+    #: Execution knobs. Defaulted rather than MISSING so a config written
+    #: before this group existed still composes — and still runs the same
+    #: numbers, since nothing here is allowed to change one.
+    runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
 
     # ── Run identity & output location ────────────────────────────────
     run_name: str = MISSING
@@ -430,4 +542,5 @@ def register_configs() -> None:
     cs.store(group="stage2", name="base_stage2", node=Stage2Config)
     cs.store(group="stage3", name="base_stage3", node=Stage3Config)
     cs.store(group="tracking", name="base_tracking", node=TrackingConfig)
+    cs.store(group="runtime", name="base_runtime", node=RuntimeConfig)
     cs.store(name="base_experiment", node=ExperimentConfig)

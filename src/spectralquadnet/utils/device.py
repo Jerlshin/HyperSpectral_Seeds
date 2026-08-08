@@ -1,4 +1,4 @@
-"""Device resolution and accelerator-specific AMP settings.
+"""Device resolution, accelerator-specific backend tuning and graph compilation.
 
 ``cfg.device`` is a *strategy string* (``"auto"``/``"cuda"``/``"cpu"``/``"mps"``)
 rather than a live ``torch.device``, since YAML cannot carry the latter;
@@ -6,11 +6,32 @@ rather than a live ``torch.device``, since YAML cannot carry the latter;
 
 ``"auto"`` prefers **Metal (MPS) → CUDA → CPU**, so a default run on Apple
 Silicon uses the GPU rather than falling through to CPU. An explicit
-``device=cuda`` / ``device=cpu`` / ``device=mps`` is never overridden.
+``device=cuda`` / ``device=cpu`` / ``device=mps`` is never overridden. Under
+``torchrun`` the local rank pins the device (``cuda:${LOCAL_RANK}``) before this
+precedence is consulted at all — see :mod:`spectralquadnet.utils.distributed`.
 
 The autocast **dtype** is deliberately left at torch's per-device default
 (fp16 on both Metal and CUDA) rather than promoted to bf16 on capable CUDA
 hardware, to keep training numerics consistent across accelerators.
+
+What is tuned here, and what is refused
+───────────────────────────────────────
+:func:`configure_backend` sets the accelerator knobs that are *free* — cuDNN
+autotuning, the SDPA kernel preference, the Metal allocator's high-water mark —
+and leaves alone the two that are not:
+
+* **TF32** truncates a matmul's mantissa from 24 bits to 11. It is roughly 3×
+  on Ampere and later, it is a precision change, and Turing (sm_75 — the T4)
+  has no TF32 path to begin with. ``runtime.allow_tf32`` exists and defaults to
+  off.
+* **channels_last** re-selects convolution kernels whose reduction order
+  differs from the contiguous ones'. ``runtime.channels_last`` likewise.
+
+:func:`maybe_compile` wraps ``torch.compile``. It is on by default for CUDA and
+**off for Metal**, which is a measurement rather than a preference: on this
+model at batch 32 the Metal inductor backend produced 983 ms per forward
+against eager's 437 ms, because it cannot fuse the Branch-C 3-D stem and pays
+the guard overhead for nothing.
 
 This module used to carry a ``no_grad_is_safe_for_dropout`` predicate, because
 Metal's fused attention kernel rejects dropout under ``no_grad`` and
@@ -24,7 +45,30 @@ limitation that motivated it.
 
 from __future__ import annotations
 
+import contextlib
+import logging
+import os
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, cast
+
 import torch
+import torch.nn as nn
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from spectralquadnet.config.schema import RuntimeConfig
+
+_log = logging.getLogger(__name__)
+
+#: Upper bound on auto-selected DataLoader workers. Past this the mmap page-in
+#: is bound by the page cache rather than by CPU, and each extra worker is
+#: another process holding another mapping of the 5.6 GB cube.
+MAX_AUTO_WORKERS: int = 8
+
+#: Auto worker count off CUDA. Metal and CPU runs are accelerator-bound (the
+#: forward is ~340 ms at batch 32 against ~16 ms of host-side augmentation), so
+#: two workers already hide the feed, and macOS starts workers with ``spawn``,
+#: which re-imports torch in every one of them.
+NON_CUDA_AUTO_WORKERS: int = 2
 
 
 def resolve_device(strategy: str | torch.device = "auto") -> torch.device:
@@ -34,6 +78,10 @@ def resolve_device(strategy: str | torch.device = "auto") -> torch.device:
     Apple's Metal backend, then CUDA, then CPU. Any other value (``"cuda"``,
     ``"cuda:1"``, ``"cpu"``, ``"mps"``) is passed straight to
     :class:`torch.device`, so an explicit choice is never silently overridden.
+
+    Under ``torchrun`` this is not the function that chooses: every rank must
+    own exactly one device, so :func:`~spectralquadnet.utils.distributed.init_distributed`
+    resolves ``cuda:${LOCAL_RANK}`` itself and hands the result down.
     """
     if isinstance(strategy, torch.device):
         return strategy
@@ -44,3 +92,349 @@ def resolve_device(strategy: str | torch.device = "auto") -> torch.device:
             return torch.device("cuda")
         return torch.device("cpu")
     return torch.device(strategy)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  The resolved runtime plan
+# ══════════════════════════════════════════════════════════════════════
+
+
+@dataclass(frozen=True)
+class RuntimePlan:
+    """Every ``-1``/``"auto"`` in :class:`~spectralquadnet.config.schema.RuntimeConfig`, decided.
+
+    Resolved once, at startup, and threaded through the loader builders and the
+    stage loops — so "how many workers does the val loader get" has one answer
+    per run rather than one answer per call site.
+    """
+
+    device: torch.device
+    num_workers: int
+    eval_num_workers: int
+    pin_memory: bool
+    persistent_workers: bool
+    prefetch_factor: int | None
+    compile_enabled: bool
+    compile_backend: str
+    compile_mode: str
+    channels_last: bool
+    fused_optimizer: bool
+    empty_cache_interval: int
+    diagnostics_interval: int
+    progress: str
+
+    @property
+    def loader_kwargs(self) -> dict[str, Any]:
+        """The ``DataLoader`` performance keywords for a **training** loader.
+
+        ``prefetch_factor`` and ``persistent_workers`` are illegal at
+        ``num_workers=0`` — torch raises rather than ignoring them — so they are
+        omitted entirely rather than passed as ``None``.
+        """
+        return _loader_kwargs(
+            self.num_workers, self.pin_memory, self.persistent_workers, self.prefetch_factor
+        )
+
+    @property
+    def eval_loader_kwargs(self) -> dict[str, Any]:
+        """The same, for an evaluation loader.
+
+        Evaluation loaders are built and dropped repeatedly (``build_loaders``
+        is called once per stage, ``build_natural_prior_loader`` once more), so
+        they never keep workers resident: a persistent worker pool that outlives
+        its loader is a process leak, and under ``spawn`` re-creating one costs
+        seconds.
+        """
+        return _loader_kwargs(self.eval_num_workers, self.pin_memory, False, self.prefetch_factor)
+
+
+def _loader_kwargs(
+    workers: int, pin: bool, persistent: bool, prefetch: int | None
+) -> dict[str, Any]:
+    kw: dict[str, Any] = {"num_workers": int(workers), "pin_memory": bool(pin)}
+    if workers > 0:
+        kw["persistent_workers"] = bool(persistent)
+        if prefetch is not None:
+            kw["prefetch_factor"] = int(prefetch)
+    return kw
+
+
+def _auto_workers(device: torch.device) -> int:
+    """Half the available cores on CUDA, a fixed small number elsewhere.
+
+    ``os.process_cpu_count`` (3.13) and ``len(os.sched_getaffinity(0))`` report
+    the cores this process may actually use, which is what a container-limited
+    T4 box needs; ``os.cpu_count()`` reports the machine's.
+    """
+    cores = getattr(os, "process_cpu_count", None)
+    n = cores() if cores is not None else None
+    if n is None:
+        try:
+            n = len(os.sched_getaffinity(0))  # type: ignore[attr-defined]
+        except AttributeError:
+            n = os.cpu_count() or 4
+    if device.type != "cuda":
+        return min(NON_CUDA_AUTO_WORKERS, max(0, n - 1))
+    return max(1, min(MAX_AUTO_WORKERS, n // 2))
+
+
+def _tri_state(value: int, default: bool) -> bool:
+    """``-1`` means "use ``default``"; anything else is a plain truth value."""
+    return default if int(value) < 0 else bool(value)
+
+
+def resolve_runtime(
+    cfg: RuntimeConfig | Any, device: torch.device, world_size: int = 1
+) -> RuntimePlan:
+    """Decide every auto-valued runtime knob for this device and topology.
+
+    Args:
+        cfg: The ``runtime`` config group.
+        device: The device this rank owns.
+        world_size: Number of DDP ranks. Workers are budgeted **per rank**, so
+            a two-GPU box does not launch ``2 × num_workers`` processes against
+            the same page cache.
+
+    Returns:
+        A frozen :class:`RuntimePlan`; nothing downstream re-derives any of it.
+    """
+    workers = int(getattr(cfg, "num_workers", -1))
+    if workers < 0:
+        workers = _auto_workers(device)
+    if world_size > 1:
+        workers = max(0, workers // world_size)
+
+    eval_workers = int(getattr(cfg, "eval_num_workers", -1))
+    if eval_workers < 0:
+        eval_workers = min(workers, 4)
+
+    pin = _tri_state(getattr(cfg, "pin_memory", -1), device.type == "cuda")
+    if pin and device.type != "cuda":
+        # `pin_memory=True` allocates through the CUDA host allocator. There is
+        # no Metal equivalent, and DataLoader's pinning thread raises rather
+        # than degrading, so an explicit request off CUDA is refused here where
+        # the message can say why.
+        _log.warning("runtime.pin_memory ignored: page-locked staging needs CUDA, got %s", device)
+        pin = False
+
+    persistent = _tri_state(getattr(cfg, "persistent_workers", -1), workers > 0) and workers > 0
+
+    compile_mode_str = str(getattr(cfg, "compile", "auto")).lower()
+    compile_enabled = (
+        device.type == "cuda"
+        if compile_mode_str == "auto"
+        else compile_mode_str in ("on", "true", "1", "yes")
+    )
+
+    fused_str = str(getattr(cfg, "fused_optimizer", "auto")).lower()
+    fused = (
+        device.type == "cuda" if fused_str == "auto" else fused_str in ("on", "true", "1", "yes")
+    )
+
+    return RuntimePlan(
+        device=device,
+        num_workers=workers,
+        eval_num_workers=eval_workers,
+        pin_memory=pin,
+        persistent_workers=persistent,
+        prefetch_factor=int(getattr(cfg, "prefetch_factor", 4)),
+        compile_enabled=compile_enabled,
+        compile_backend=str(getattr(cfg, "compile_backend", "inductor")),
+        compile_mode=str(getattr(cfg, "compile_mode", "default")),
+        channels_last=bool(getattr(cfg, "channels_last", False)),
+        fused_optimizer=fused,
+        empty_cache_interval=int(getattr(cfg, "empty_cache_interval", 0)),
+        diagnostics_interval=max(1, int(getattr(cfg, "diagnostics_interval", 50))),
+        progress=str(getattr(cfg, "progress", "auto")),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Backend tuning
+# ══════════════════════════════════════════════════════════════════════
+
+
+def configure_backend(device: torch.device, cfg: RuntimeConfig | Any) -> list[str]:
+    """Apply the accelerator's free performance settings; return what was set.
+
+    "Free" is the operative word — see the module docstring for the two knobs
+    that are not applied unless asked for.
+
+    Returns:
+        Human-readable lines for the startup banner, so a run's log records the
+        kernel selection it actually ran under.
+    """
+    notes: list[str] = []
+
+    if device.type == "cuda":
+        benchmark = bool(getattr(cfg, "cudnn_benchmark", True))
+        torch.backends.cudnn.benchmark = benchmark
+        notes.append(f"cudnn.benchmark={benchmark}")
+
+        tf32 = bool(getattr(cfg, "allow_tf32", False))
+        torch.backends.cuda.matmul.allow_tf32 = tf32
+        torch.backends.cudnn.allow_tf32 = tf32
+        # torch >= 2.9 routes matmul precision through this setting; keeping the
+        # two consistent stops a later torch from re-enabling TF32 behind the
+        # `allow_tf32` flag's back.
+        with contextlib.suppress(AttributeError, ValueError):  # pragma: no cover - old torch
+            torch.set_float32_matmul_precision("high" if tf32 else "highest")
+        notes.append(f"TF32={tf32}")
+
+        major = torch.cuda.get_device_capability(device)[0]
+        notes.append(f"sm_{''.join(str(v) for v in torch.cuda.get_device_capability(device))}")
+        if major >= 8:
+            # Flash/mem-efficient SDPA exist from Ampere on; Turing (the T4)
+            # keeps the math path, which is the correct kernel there and not a
+            # fallback.
+            _enable_sdp_kernels(flash=True, mem_efficient=True, math=True)
+        else:
+            _enable_sdp_kernels(flash=False, mem_efficient=True, math=True)
+
+    elif device.type == "mps":
+        # The Metal allocator refuses an allocation that would push the process
+        # past a fraction of recommended working-set size. Branch A runs
+        # `batch * grid_size_a ** 2` spectra through three towers, so at
+        # stage1.batch = 128 that is 8,192 sequences and the default 1.0 ratio
+        # is reached mid-backward. Raising the *high* watermark while leaving
+        # the low one alone lets the allocator keep going and still garbage
+        # collect, rather than aborting the run.
+        os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.0")
+        os.environ.setdefault("PYTORCH_MPS_LOW_WATERMARK_RATIO", "0.8")
+        notes.append("MPS watermark=unbounded/0.8")
+
+    return notes
+
+
+def _enable_sdp_kernels(*, flash: bool, mem_efficient: bool, math: bool) -> None:
+    """Select the scaled-dot-product-attention backends, across torch versions.
+
+    Branch D's four ``nn.MultiheadAttention`` blocks dispatch through SDPA, and
+    the enable/disable API moved namespaces in torch 2.2.
+    """
+    setters = (
+        ("enable_flash_sdp", flash),
+        ("enable_mem_efficient_sdp", mem_efficient),
+        ("enable_math_sdp", math),
+    )
+    for name, value in setters:
+        fn = getattr(torch.backends.cuda, name, None)
+        if callable(fn):
+            # The enable/disable API moved namespaces in torch 2.2 and the
+            # backends available differ by architecture, so a refusal here is a
+            # version/hardware fact rather than an error.
+            with contextlib.suppress(RuntimeError, TypeError):  # pragma: no cover
+                fn(value)
+
+
+def describe_hardware(device: torch.device) -> list[str]:
+    """Banner lines naming the accelerator, its memory and its arch."""
+    if device.type == "cuda":
+        lines = []
+        for i in range(torch.cuda.device_count()):
+            props = torch.cuda.get_device_properties(i)
+            lines.append(
+                f"[GPU{i}] {props.name}  |  {props.total_memory // 1024**3} GB  |  "
+                f"sm_{props.major}{props.minor}  |  {props.multi_processor_count} SMs"
+            )
+        return lines
+    if device.type == "mps":
+        return ["[GPU] Apple Silicon (Metal / MPS)"]
+    return ["[CPU] no accelerator"]
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Graph compilation
+# ══════════════════════════════════════════════════════════════════════
+
+
+def maybe_compile(model: nn.Module, plan: RuntimePlan) -> nn.Module:
+    """``torch.compile`` the model when the plan asks for it, else return it unchanged.
+
+    Failure to compile is **not** fatal: a graph break, a missing Triton, or an
+    inductor version that dislikes the 3-D stem all fall back to eager with a
+    warning, because a slower run is a better outcome than no run.
+
+    Returns the compiled wrapper, which forwards attribute access to the
+    original module — so ``model.arcface_head`` and ``model.state_dict()`` keep
+    working and the checkpoint schema is untouched.
+    """
+    if not plan.compile_enabled:
+        return model
+    if not hasattr(torch, "compile"):  # pragma: no cover - torch < 2.0
+        return model
+    try:
+        compiled = torch.compile(
+            model, backend=plan.compile_backend, mode=plan.compile_mode, dynamic=False
+        )
+    except Exception as exc:  # pragma: no cover - environment-dependent
+        _log.warning("torch.compile unavailable (%s) — continuing in eager mode", exc)
+        return model
+    # `torch.compile` is typed as returning a callable wrapper rather than a
+    # Module; it forwards attribute access to the original, which is the whole
+    # reason `state_dict()` and `arcface_head` keep working through it.
+    return cast(nn.Module, compiled)
+
+
+def reset_compilation() -> None:
+    """Drop every compiled graph and its guards.
+
+    Called at the Stage 2 → 3 boundary: Stage 3 changes the margin vector every
+    cycle and runs SAM's double backward, which re-triggers recompilation for
+    no benefit.
+    """
+    dynamo = getattr(torch, "_dynamo", None)
+    if dynamo is not None:
+        dynamo.reset()
+
+
+def unwrap_model(model: nn.Module) -> nn.Module:
+    """The eager module underneath ``torch.compile`` and/or DDP wrappers.
+
+    Checkpointing, EMA and the per-branch gradient split all address parameters
+    by their **unprefixed** names, and both wrappers rename them
+    (``_orig_mod.``, ``module.``). One accessor, used everywhere, so a
+    state_dict never grows a wrapper prefix.
+    """
+    seen = 0
+    while seen < 4:
+        inner = getattr(model, "_orig_mod", None) or getattr(model, "module", None)
+        if inner is None or not isinstance(inner, nn.Module):
+            return model
+        model = inner
+        seen += 1
+    return model
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Memory
+# ══════════════════════════════════════════════════════════════════════
+
+
+def empty_cache(device: torch.device | str | None = None) -> None:
+    """Return the caching allocator's free blocks to the driver.
+
+    Both allocators keep freed blocks in a per-size pool, which is the right
+    default — but Stage 3 holds two whole extra models (the SWA probe and the
+    averaged copy) and the stage boundaries free them all at once. Sweeping
+    there stops the next stage from starting against a fragmented pool.
+
+    A no-op on CPU, and on any accelerator that is not the live one.
+    """
+    dev = torch.device(device) if device is not None else None
+    if (dev is None or dev.type == "cuda") and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    if (dev is None or dev.type == "mps") and torch.backends.mps.is_available():
+        mps = getattr(torch, "mps", None)
+        if mps is not None and hasattr(mps, "empty_cache"):
+            mps.empty_cache()
+
+
+def synchronize(device: torch.device) -> None:
+    """Block until the device's queued work is done. Used only by benchmarks and teardown."""
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    elif device.type == "mps":
+        mps = getattr(torch, "mps", None)
+        if mps is not None and hasattr(mps, "synchronize"):
+            mps.synchronize()

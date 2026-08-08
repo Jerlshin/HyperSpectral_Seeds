@@ -8,6 +8,23 @@ Usage
     python train.py -m stage1.max_lr=1e-4,5e-4,1e-3  # sweep
     python train.py tracking.backend=multi tracking.backends=[console,wandb]
 
+Multi-GPU (NVIDIA, e.g. T4 x2 / A100 / H100)::
+
+    torchrun --standalone --nproc_per_node=2 train.py
+
+DDP with ``SyncBatchNorm``, so the two-GPU run computes the **same** function as
+the one-GPU run: the batch is split, but the normalisation statistics are
+all-reduced back to the global batch's, and the gradient average over equal
+shards is the global-batch gradient. See
+:mod:`spectralquadnet.utils.distributed`. Nothing about it engages under a
+plain ``python train.py``.
+
+Execution knobs — worker counts, ``torch.compile``, fused AdamW, progress
+rendering, the diagnostics stride — live under ``cfg.runtime`` and are resolved
+once here into a :class:`~spectralquadnet.utils.device.RuntimePlan`. None of
+them may change a reported number; the two that would (TF32, channels_last) are
+off by default.
+
 Auto-resume: ``latest_completed_stage()`` probes stages 3 → 2 → 1, each
 completed stage is loaded rather than retrained, and
 ``_pick_best_checkpoint`` — not the stage order — decides which checkpoint
@@ -43,9 +60,12 @@ from torch.utils.data import DataLoader
 from spectralquadnet.config.schema import register_configs
 from spectralquadnet.data.datasets import RiceSeedDataset
 from spectralquadnet.data.loaders import (
+    EVAL_BATCH,
     build_calib_loader,
+    build_eval_loader,
     build_loaders,
     build_split_bundle,
+    build_train_loader,
     standardised_morphometrics,
 )
 from spectralquadnet.data.mmap_store import DataStore
@@ -65,8 +85,22 @@ from spectralquadnet.engine.stages.stage3_sam_swa import run_stage3_swa
 from spectralquadnet.models.ema import ModelEMA
 from spectralquadnet.models.spectral_quadnet import SpectralQuadNet
 from spectralquadnet.tracking import build_tracker
-from spectralquadnet.tracking.base import ExperimentTracker
-from spectralquadnet.utils.device import resolve_device
+from spectralquadnet.tracking.base import ExperimentTracker, NullTracker
+from spectralquadnet.utils.device import (
+    configure_backend,
+    describe_hardware,
+    empty_cache,
+    maybe_compile,
+    reset_compilation,
+    resolve_device,
+    resolve_runtime,
+)
+from spectralquadnet.utils.distributed import (
+    DistContext,
+    init_distributed,
+    shutdown,
+    wrap_for_training,
+)
 from spectralquadnet.utils.seed import set_seed
 
 # Makes the dataclass schemas available to Hydra's composition, so a typo in a
@@ -77,7 +111,7 @@ register_configs()
 _RESUME_LABELS = {0: "starting fresh", 1: "Stage 1 done", 2: "Stages 1–2 done", 3: "all done"}
 
 
-def _run(cfg: DictConfig, tracker: ExperimentTracker) -> None:
+def _run(cfg: DictConfig, tracker: ExperimentTracker, dist: DistContext) -> None:
     """Run the full auto-resuming training pipeline: Stages 1-3 plus final evaluation."""
     # ══════════════════════════════════════════════════════════════════
     #  RNG ORDERING. DO NOT MOVE THIS CALL.
@@ -100,7 +134,12 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker) -> None:
     # ══════════════════════════════════════════════════════════════════
     set_seed(cfg.seed)
 
-    device = resolve_device(cfg.device)
+    # The device is the rank's under `torchrun` and `cfg.device`'s otherwise;
+    # `init_distributed` has already made that choice, in `main`, because a rank
+    # must own its device before the process group is joined.
+    device = dist.device
+    plan = resolve_runtime(cfg.runtime, device, dist.world_size)
+    backend_notes = configure_backend(device, cfg.runtime)
     ckpt_s1 = stage_ckpt_path(cfg, 1)
     ckpt_s2 = stage_ckpt_path(cfg, 2)
     ckpt_s3 = stage_ckpt_path(cfg, 3)
@@ -121,7 +160,9 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker) -> None:
         else ""
     )
     tracker.log_message(
-        f"[DATA] ✓ Dataset (mmap): {gb_on_disk:.1f} GB on disk {vram} | num_workers=0",
+        f"[DATA] ✓ Dataset (mmap): {gb_on_disk:.1f} GB on disk {vram} | "
+        f"num_workers={plan.num_workers} (eval {plan.eval_num_workers}) | "
+        f"pin_memory={plan.pin_memory} | persistent={plan.persistent_workers}",
         level="plain",
     )
 
@@ -156,25 +197,55 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker) -> None:
     # additionally attach gradient histograms.
     tracker.watch(model)
     tracker.log_message(f"Device : {device}", level="plain")
-
-    if device.type == "cuda":
-        props = torch.cuda.get_device_properties(device)
+    for line in describe_hardware(device):
+        tracker.log_message(line, level="plain")
+    if backend_notes:
+        tracker.log_message("Kernels: " + "  ".join(backend_notes), level="plain")
+    if dist.enabled:
         tracker.log_message(
-            f"[GPU]  {props.name}  |  VRAM {props.total_memory // 1024**3} GB  |  "
-            f"TF32={torch.backends.cuda.matmul.allow_tf32}",
+            f"[DDP]  world_size={dist.world_size}  rank={dist.rank}  "
+            f"SyncBatchNorm={bool(cfg.runtime.sync_batchnorm)}  "
+            f"per-rank batch = global // {dist.world_size}",
             level="plain",
         )
+    tracker.log_message(
+        f"Graph  : torch.compile={'on' if plan.compile_enabled else 'off'}"
+        f" ({plan.compile_backend}/{plan.compile_mode})  |  "
+        f"fused AdamW={plan.fused_optimizer}  |  channels_last={plan.channels_last}",
+        level="plain",
+    )
+
+    # ── Hardware dispatch ─────────────────────────────────────────────
+    # Order matters: SyncBatchNorm conversion and the DDP wrap must happen
+    # before `torch.compile` sees the module, or the compiled graph captures
+    # the un-converted BatchNorm. The EMA shadow is *not* wrapped — it takes no
+    # gradient, so it needs neither replication nor a compiled graph, and
+    # keeping it plain is what lets `save_ckpt` write one schema.
+    if plan.channels_last and device.type == "cuda":
+        # `Module.to`'s stubs do not carry the memory-format overload, though
+        # the runtime accepts it; NHWC is opt-in precisely because it changes
+        # which convolution kernels cuDNN selects.
+        model = model.to(memory_format=torch.channels_last)  # type: ignore[call-overload]
+    train_model: torch.nn.Module = wrap_for_training(
+        model, dist, sync_batchnorm=bool(cfg.runtime.sync_batchnorm)
+    )
+    train_model = maybe_compile(train_model, plan)
 
     # ── Calibration loader (P-5 / T4-5) ────────────────────────────────
     # `None` when no calib split was carved, which puts the margins, the CDWS
     # weights and the Phase-3 oversampling weights back on `val` — the
     # pre-Tier-4 behaviour, and the one every archived checkpoint was made
     # under.
-    calib_ldr = build_calib_loader(cfg, store, device, splits.calib, train_idx=train_idx)
+    calib_ldr = build_calib_loader(
+        cfg, store, device, splits.calib, train_idx=train_idx, plan=plan, dist=dist
+    )
 
     # ── Morphometrics, standardised on train alone (P-4 / T4-4, FU-4) ──
     # `None` unless `data.morphology_path` names an array that exists, in which
     # case the model substitutes zeros — the mean of the standardised feature.
+    # Fitted **once** and handed to every `build_loaders` call below: the fit is
+    # a function of `train_idx` alone, and each of the four calls used to redo
+    # it over all 8,624 rows.
     morph = standardised_morphometrics(store, train_idx)
 
     # ── Stage 1 phase loaders (per-phase aug profiles) ─────────────────
@@ -187,9 +258,7 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker) -> None:
             device=device,
             morph=morph,
         )
-        return DataLoader(
-            ds, batch_size=cfg.stage1.batch, shuffle=True, drop_last=True, num_workers=0
-        )
+        return build_train_loader(ds, cfg.stage1.batch, seed=int(cfg.seed), plan=plan, dist=dist)
 
     # ══════════════════════════════════════════════════════════════════
     #  STAGE 1
@@ -206,6 +275,9 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker) -> None:
             test_idx,
             cfg.stage1.batch,
             train_aug="none",
+            plan=plan,
+            dist=dist,
+            morph=morph,
         )
         run_stage1(
             cfg,
@@ -218,6 +290,9 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker) -> None:
             ckpt_s1,
             tracker,
             calib_ldr=calib_ldr,
+            plan=plan,
+            dist=dist,
+            train_module=train_model,
         )
         tracker.log_message("Reloading best Stage 1 checkpoint ...")
         load_ckpt(ckpt_s1, model, ema, device)
@@ -249,13 +324,17 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker) -> None:
             # Un-augmented, un-shuffled and nothing dropped: the clusters must
             # describe the data, not the augmentation profile, and `build_loaders`'
             # train loader would drop the last partial batch.
-            seed_ldr = DataLoader(
+            seed_ldr = build_eval_loader(
                 RiceSeedDataset(
-                    train_idx, aug_strength="none", store=store, data_cfg=cfg.data, device=device
+                    train_idx,
+                    aug_strength="none",
+                    store=store,
+                    data_cfg=cfg.data,
+                    device=device,
+                    morph=morph,
                 ),
+                plan=plan,
                 batch_size=256,
-                shuffle=False,
-                num_workers=0,
             )
             emb, emb_y = collect_embeddings(ema.shadow, seed_ldr, device)
             stats = {"classes_seeded": 0.0, "min_separation": -1.0}
@@ -268,7 +347,18 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker) -> None:
 
         if not class_f1_s1:
             tracker.log_message("No class_f1 in Stage 1 meta — recomputing", level="warn")
-            _, val_cd, _ = build_loaders(cfg, store, device, train_idx, val_idx, test_idx, 128)
+            _, val_cd, _ = build_loaders(
+                cfg,
+                store,
+                device,
+                train_idx,
+                val_idx,
+                test_idx,
+                128,
+                plan=plan,
+                dist=dist,
+                morph=morph,
+            )
             class_f1_s1, cdws_wts_s1 = compute_class_difficulty(
                 cfg,
                 ema.shadow,
@@ -293,8 +383,24 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker) -> None:
             # the train set's exact spectral signatures.
             train_aug="very_light",
             class_weights=cdws_wts_s1,
+            plan=plan,
+            dist=dist,
+            morph=morph,
         )
-        run_stage2(cfg, model, ema, tr2, va2, device, ckpt_s2, tracker, calib_ldr=calib_ldr)
+        run_stage2(
+            cfg,
+            model,
+            ema,
+            tr2,
+            va2,
+            device,
+            ckpt_s2,
+            tracker,
+            calib_ldr=calib_ldr,
+            plan=plan,
+            dist=dist,
+            train_module=train_model,
+        )
         tracker.log_message("Reloading best Stage 2 checkpoint ...")
         load_ckpt(ckpt_s2, model, ema, device)
     else:
@@ -308,9 +414,12 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker) -> None:
     s2_best_f1 = meta_s2.get("val_f1", meta_s2.get("s2_val_f1", meta_s2.get("val_acc", 0.0)))
     tracker.log_message(f"Stage 2 → F1={s2_best_f1:.3f}")
 
-    if hasattr(torch, "_dynamo"):
-        tracker.log_message("Disabling torch.compile for Stage 3 stability")
-        torch._dynamo.reset()
+    # Stage 3's double backward and per-cycle margin vector invalidate a
+    # compiled graph's guards on every cycle; the graphs are dropped rather than
+    # left to recompile. `run_stage3_swa` disables compilation for its own run.
+    if plan.compile_enabled:
+        tracker.log_message("Dropping compiled graphs before Stage 3")
+    reset_compilation()
 
     # ══════════════════════════════════════════════════════════════════
     #  STAGE 3
@@ -335,9 +444,23 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker) -> None:
             all_labels=all_labels,
             train_aug="light",
             class_weights=cdws_wts_s2,
+            plan=plan,
+            dist=dist,
+            morph=morph,
         )
         run_stage3_swa(
-            cfg, model, ema, tr3, va3, device, ckpt_s3, prev_best_f1=s2_best_f1, tracker=tracker
+            cfg,
+            model,
+            ema,
+            tr3,
+            va3,
+            device,
+            ckpt_s3,
+            prev_best_f1=s2_best_f1,
+            tracker=tracker,
+            plan=plan,
+            dist=dist,
+            train_module=train_model,
         )
     else:
         tracker.log_message("[SKIP] Stage 3 → loading checkpoint", level="plain")
@@ -355,8 +478,23 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker) -> None:
     best_final_ckpt = _pick_best_checkpoint(cfg, ckpt_s1, ckpt_s2, ckpt_s3)
     tracker.log_message(f"Best checkpoint (by val_f1): {best_final_ckpt}")
 
-    _, _, test_ldr = build_loaders(cfg, store, device, train_idx, val_idx, test_idx, 256)
-    final_evaluation(cfg, model, ema, test_ldr, device, best_final_ckpt, tracker)
+    # Stage 3 leaves two extra model copies behind; the allocator gets them back
+    # before the twelve-view TTA pass allocates its own activations.
+    empty_cache(device)
+
+    _, _, test_ldr = build_loaders(
+        cfg,
+        store,
+        device,
+        train_idx,
+        val_idx,
+        test_idx,
+        EVAL_BATCH,
+        plan=plan,
+        dist=dist,
+        morph=morph,
+    )
+    final_evaluation(cfg, model, ema, test_ldr, device, best_final_ckpt, tracker, dist=dist)
 
 
 @hydra.main(config_path="configs", config_name="experiment/output_v12_spa40", version_base=None)
@@ -367,28 +505,46 @@ def main(cfg: DictConfig) -> None:
     Any exception escaping :func:`_run` is logged at ``critical`` and exits
     with status 1, so a crashed run is visible in both the log file and the
     process exit code.
+
+    Under ``torchrun`` the process group is joined **first** — before the model,
+    the store or the tracker exist — because every rank has to own its CUDA
+    device before anything allocates on it. Only rank 0 gets a tracker; the
+    others get a :class:`~spectralquadnet.tracking.base.NullTracker`, so two
+    GPUs do not write two interleaved copies of the same progress bar into one
+    terminal, and rank 0's ``training.log`` stays the record of the run.
     """
+    # `cfg.device` is the fallback, not a suggestion: without a launcher this is
+    # the only thing that chooses, and `device=cpu` has to keep meaning CPU.
+    # Under `torchrun` the local rank wins, because a rank must own exactly one
+    # device and nothing else can be true.
+    dist = init_distributed(cfg.runtime, fallback=resolve_device(cfg.device))
+
     Path(cfg.output_dir).mkdir(parents=True, exist_ok=True)
 
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+    if dist.is_main:
+        handlers.insert(0, logging.FileHandler(os.path.join(cfg.output_dir, "training.log")))
     logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s | %(levelname)s | %(message)s",
-        handlers=[
-            logging.FileHandler(os.path.join(cfg.output_dir, "training.log")),
-            logging.StreamHandler(sys.stdout),
-        ],
+        level=logging.INFO if dist.is_main else logging.WARNING,
+        format=("%(asctime)s | %(levelname)s | %(message)s")
+        if not dist.enabled
+        else (f"%(asctime)s | rank{dist.rank} | %(levelname)s | %(message)s"),
+        handlers=handlers,
         force=True,  # @hydra.main installs its own handlers first
     )
 
-    tracker = build_tracker(cfg)
-    tracker.log_hyperparams(OmegaConf.to_container(cfg, resolve=True))  # type: ignore[arg-type]
+    tracker: ExperimentTracker = build_tracker(cfg) if dist.is_main else NullTracker()
+    if dist.is_main:
+        tracker.log_hyperparams(OmegaConf.to_container(cfg, resolve=True))  # type: ignore[arg-type]
     try:
-        _run(cfg, tracker)
+        _run(cfg, tracker, dist)
     except Exception:
         logging.critical("FATAL:\n" + traceback.format_exc())
         sys.exit(1)
     finally:
         tracker.close()
+        empty_cache()
+        shutdown(dist)
 
 
 if __name__ == "__main__":

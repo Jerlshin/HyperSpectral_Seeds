@@ -173,6 +173,18 @@ class MultiScaleSpectralTokenizer(nn.Module):
         return self.act(self.norm(tokens))  # type: ignore[no-any-return]  # `nn.Module.__call__` -> Any
 
 
+def expand_attn_bias(bias: torch.Tensor, n_batch: int) -> torch.Tensor:
+    """``(H, L, L) -> (n_batch * H, L, L)``, the shape ``MultiheadAttention`` demands.
+
+    The bias depends only on the token grid, so every batch element gets the
+    same ``(H, L, L)`` block; ``expand`` is a view but ``reshape`` across the
+    expanded stride has to copy, which is why this is worth doing once per
+    branch forward rather than once per encoder block.
+    """
+    n_heads, seq, _ = bias.shape
+    return bias.unsqueeze(0).expand(n_batch, -1, -1, -1).reshape(n_batch * n_heads, seq, seq)
+
+
 class _PreLNBlock(nn.Module):
     """Standard pre-norm Transformer encoder block (MHSA + GELU feed-forward)."""
 
@@ -187,15 +199,21 @@ class _PreLNBlock(nn.Module):
         self.drop = nn.Dropout(drop)
 
     def forward(self, x: torch.Tensor, attn_bias: torch.Tensor | None = None) -> torch.Tensor:
+        """``attn_bias`` is either the per-head ``(H, L, L)`` bias or the batched form.
+
+        ``nn.MultiheadAttention`` takes a float ``attn_mask`` as an additive
+        term on the logits, shaped ``(N * n_heads, L, S)`` — it does **not**
+        broadcast a per-head bias over the batch, so the bias has to be
+        materialised at that shape. Doing it here meant materialising it once
+        per block over an identical input; :meth:`SpecFormerBranch.forward` now
+        expands it once for the whole stack and passes the batched form
+        straight through. A 3-D argument is taken as already batched, so the
+        ``(H, L, L)`` form is still accepted for a caller holding one.
+        """
         lx = self.ln1(x)
-        mask = None
-        if attn_bias is not None:
-            # `nn.MultiheadAttention` takes a float attn_mask as an additive term
-            # on the logits, shaped (N * n_heads, L, S). The bias is the same for
-            # every sample, so it is expanded rather than materialised per-batch.
-            n_heads, seq, _ = attn_bias.shape
-            mask = attn_bias.unsqueeze(0).expand(x.shape[0], -1, -1, -1)
-            mask = mask.reshape(x.shape[0] * n_heads, seq, seq)
+        mask = attn_bias
+        if mask is not None and mask.shape[0] != x.shape[0] * self.attn.num_heads:
+            mask = expand_attn_bias(mask, x.shape[0])
         h, _ = self.attn(lx, lx, lx, need_weights=False, attn_mask=mask)
         x = x + self.drop(h)
         return x + self.drop(self.ff(self.ln2(x)))  # type: ignore[no-any-return]  # `nn.Module.__call__` -> Any
@@ -288,9 +306,12 @@ class SpecFormerBranch(nn.Module):
         cls_tokens = self.spec_cls.expand(B * N, -1, -1)
         tokens = torch.cat([cls_tokens, tokens], dim=1)
 
+        # Generated once per forward from the token grid, then expanded once
+        # for the whole spectral stack rather than inside each block.
         bias = self.lambda_bias(n_prefix=1)[:, : seq_len + 1, : seq_len + 1]
+        batched_bias = expand_attn_bias(bias.contiguous(), tokens.shape[0])
         for blk in self.spectral_blocks:
-            tokens = blk(tokens, bias)
+            tokens = blk(tokens, batched_bias)
 
         # Extract the spectral CLS token to represent the entire grid cell's spectrum
         grid_features = tokens[:, 0, :]  # [B*N, d_model]

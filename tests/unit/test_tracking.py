@@ -85,6 +85,12 @@ class _Recorder:
     def log_row(self, tag: str, cells: dict[str, str], step: int) -> None:
         self.calls.append(("log_row", (tag, dict(cells), step)))
 
+    def progress_start(self, tag: str, total: int, description: str = "") -> None:
+        self.calls.append(("progress_start", (tag, total, description)))
+
+    def progress_stop(self, tag: str) -> None:
+        self.calls.append(("progress_stop", tag))
+
 
 # ══════════════════════════════════════════════════════════════════════
 #  Protocol conformance

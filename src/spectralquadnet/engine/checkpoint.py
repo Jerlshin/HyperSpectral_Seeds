@@ -27,6 +27,13 @@ The following conventions are load-bearing and must not drift:
   crash between the two writes resumes rather than skipping.
 * **Selection rule** — :func:`_pick_best_checkpoint` ranks by ``val_f1`` from the
   sidecar, falling back to the bundle, then to 0.0.
+* **Wrapper transparency** — every ``state_dict()`` taken here goes through
+  :func:`~spectralquadnet.utils.device.unwrap_model` first. ``torch.compile``
+  prefixes every key with ``_orig_mod.`` and DDP with ``module.``, so a
+  compiled or two-GPU run would otherwise write a bundle that no single-device
+  run could load, and ``SCHEMA_VERSION`` would be describing the wrong thing.
+  Only rank 0 writes: every rank holds identical weights, so a second writer
+  would only race the first.
 
 :func:`load_stage_meta` re-integerises dict keys because JSON stringifies them:
 ``class_f1``/``cdws_weights`` are ``{int: float}`` in memory and must come back
@@ -49,6 +56,8 @@ from torch.utils.data import DataLoader
 
 from spectralquadnet.engine.batch import side_inputs, unpack_batch
 from spectralquadnet.models.ema import ModelEMA
+from spectralquadnet.utils.device import unwrap_model
+from spectralquadnet.utils.distributed import DistContext
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from spectralquadnet.config.schema import ExperimentConfig
@@ -185,6 +194,7 @@ def save_ckpt(
     ema: ModelEMA,
     val_f1: float,
     val_acc: float,
+    dist: DistContext | None = None,
     **metadata: Any,
 ) -> None:
     """Persist the full checkpoint bundle plus a JSON-only meta sidecar.
@@ -193,6 +203,8 @@ def save_ckpt(
     and ``ema`` (their tensors are only in the ``.pth``), so downstream code
     can inspect ``val_f1``/``val_acc``/metadata without deserialising torch
     state.
+
+    A no-op on every rank but rank 0 — see the module docstring.
 
     Args:
         cfg: Composed experiment config, read for ``cfg.output_dir``.
@@ -204,13 +216,18 @@ def save_ckpt(
         ema: EMA shadow whose ``state_dict()`` is saved under ``"ema"``.
         val_f1: Validation macro-F1 to record.
         val_acc: Validation accuracy to record.
+        dist: DDP context; only the main rank writes.
         **metadata: Extra JSON-serialisable fields merged into the bundle
             (and, where serialisable, into the sidecar).
     """
+    if dist is not None and not dist.is_main:
+        return
     bundle = {
         "epoch": epoch,
         "stage": stage,
-        "model": model.state_dict(),
+        # Unwrapped, so a compiled or DDP-wrapped run writes the same key names
+        # a plain one does and the bundle stays loadable anywhere.
+        "model": unwrap_model(model).state_dict(),
         "ema": ema.state_dict(),
         "val_f1": val_f1,
         "val_acc": val_acc,
@@ -278,8 +295,11 @@ def load_ckpt(path: str, model: nn.Module, ema: ModelEMA, device: torch.device) 
     """
     ckpt = torch.load(path, map_location=device, weights_only=False)
     version = int(ckpt.get("schema_version", 1))
-    reference = model.state_dict()
-    model.load_state_dict(remap_state_dict(ckpt["model"], reference, version))
+    # The eager module, for the same reason `save_ckpt` unwraps: bundles are
+    # written without a wrapper prefix, so they must be loaded without one.
+    target = unwrap_model(model)
+    reference = target.state_dict()
+    target.load_state_dict(remap_state_dict(ckpt["model"], reference, version))
     ema.load_state_dict(remap_state_dict(ckpt["ema"], reference, version))
     return ckpt  # type: ignore[no-any-return]
 

@@ -83,20 +83,25 @@ def traced(monkeypatch):
 
     Returns a dict mapping each fitted quantity to the ``split_name`` of the
     loader it was handed.
+
+    The doubles mirror the real signatures positionally on purpose — that is
+    what lets them assert *which loader argument* each fitted quantity was
+    handed. So they have to track those signatures: ``dist`` and ``detail``
+    are the optional parameters the throughput refactor added.
     """
     seen: dict[str, str] = {}
 
-    def fake_difficulty(cfg, shadow, loader, device, label="", tracker=None, step=0):
+    def fake_difficulty(cfg, shadow, loader, device, label="", tracker=None, step=0, detail=True):
         seen[f"cdws_{label}"] = loader.split_name
         return {c: 0.5 for c in range(NUM_CLASSES)}, {c: 1.0 for c in range(NUM_CLASSES)}
 
-    def fake_pr(model, loader, device, num_classes):
+    def fake_pr(model, loader, device, num_classes, dist=None):
         seen["margins"] = loader.split_name
         precision = {c: 0.5 for c in range(num_classes)}
         recall = {c: 0.4 for c in range(num_classes)}
         return precision, recall, torch.zeros(num_classes, num_classes)
 
-    def fake_evaluate(model, loader, device):
+    def fake_evaluate(model, loader, device, dist=None):
         seen.setdefault("selection", loader.split_name)
         return 0.5, 0.5
 

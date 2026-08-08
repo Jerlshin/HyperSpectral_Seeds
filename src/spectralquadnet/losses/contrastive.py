@@ -83,8 +83,12 @@ class ProtoNCELoss(nn.Module):
             return (features * 0).sum()
         protos = F.normalize(torch.stack([features[labels == c].mean(0) for c in classes]), dim=1)
         sim = torch.mm(features, protos.T) / self.temperature
-        c2l = {c.item(): i for i, c in enumerate(classes)}
-        local = torch.tensor(
-            [c2l[y.item()] for y in labels], dtype=torch.long, device=features.device
-        )
+        # Global class id -> its position in `classes`. This was a Python dict
+        # built from `c.item()` and then applied with one `y.item()` **per
+        # sample** — 128 separate device-to-host synchronisations on every step
+        # of Stage 1 Phase 3, all of Stage 2 and all of Stage 3, to compute a
+        # permutation the device can find itself. `Tensor.unique` returns its
+        # values sorted ascending, which is exactly the precondition
+        # `searchsorted` needs, so the lookup is the same map.
+        local = torch.searchsorted(classes, labels)
         return F.cross_entropy(sim, local)

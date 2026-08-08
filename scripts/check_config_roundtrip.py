@@ -269,8 +269,7 @@ INTENDED_ADDITIONS: dict[str, str] = {
         "gain-invariant replacement for the rank-2 moment tensor of §2.2.5."
     ),
     "model.continuum_depths": (
-        "T3-1 / BR-1(ii) — how many of the deepest hull-removed absorption "
-        "features Branch B reads."
+        "T3-1 / BR-1(ii) — how many of the deepest hull-removed absorption features Branch B reads."
     ),
     "model.n_morphometrics": (
         "T3-1/T3-4 / P-4 — width of the morphometric vector; the eight columns "
@@ -294,6 +293,16 @@ INTENDED_ADDITIONS: dict[str, str] = {
 #: Config subtrees that are net-new capabilities rather than relocated CONFIG keys.
 EXCLUDED_SUBTREES: dict[str, str] = {
     "tracking": "§4.1 — experiment tracking is additive; the monolith used bare print().",
+    "runtime": (
+        "Execution knobs — DataLoader workers, pinned staging, torch.compile, fused "
+        "AdamW, DDP topology, allocator sweeps, console rendering. Excluded rather "
+        "than mapped because the reference implementation had no counterpart to map "
+        "to: it fed the model one sample at a time on the training device with "
+        "num_workers=0 and no notion of a second GPU. The group carries the "
+        "invariant that nothing in it may change a reported number, which is what "
+        "keeps it out of the experiment's identity — the two fields that *would* "
+        "change one (allow_tf32, channels_last) default to off."
+    ),
 }
 
 #: Keys whose *value* intentionally differs from the pre-refactor CONFIG.

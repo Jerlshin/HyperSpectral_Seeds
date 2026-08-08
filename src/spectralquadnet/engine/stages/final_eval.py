@@ -32,6 +32,7 @@ from spectralquadnet.engine.diagnostics import hardest_classes_report
 from spectralquadnet.engine.tta import tta_predict
 from spectralquadnet.models.ema import ModelEMA
 from spectralquadnet.tracking.base import ExperimentTracker, NullTracker
+from spectralquadnet.utils.distributed import DistContext, gather_concat
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from spectralquadnet.config.schema import ExperimentConfig
@@ -55,6 +56,7 @@ def final_evaluation(
     device: torch.device,
     best_ckpt: str,
     tracker: ExperimentTracker | None = None,
+    dist: DistContext | None = None,
 ) -> None:
     """Load the best checkpoint's selected weights and report test-set metrics with/without TTA.
 
@@ -72,6 +74,7 @@ def final_evaluation(
             logs nowhere.
     """
     trk = tracker if tracker is not None else NullTracker()
+    dist = dist or DistContext()
     ckpt = load_ckpt(best_ckpt, model, ema, device)
 
     recorded = ckpt.get("best_source")
@@ -102,17 +105,22 @@ def final_evaluation(
     results = {}
     for tag, use_tta in [("No TTA", False), ("TTA   ", True)]:
         preds, targets = [], []
-        for batch in test_ldr:
-            x, y, mask, morph = unpack_batch(batch, device)
-            side = side_inputs(mask, morph)
-            logits = (
-                tta_predict(eval_model, x, cfg.tta_spatial, cfg.tta_spectral, **side)
-                if use_tta
-                else eval_model(x, **side)
-            )
-            preds.append(logits.argmax(1).cpu())
-            targets.append(y.cpu())
-        p, t = torch.cat(preds).numpy(), torch.cat(targets).numpy()
+        # `inference_mode` and on-device accumulation, for the same reason as
+        # `engine/evaluate.py::_run_eval`: a `.cpu()` per batch is a queue drain
+        # per batch, and the TTA pass runs twelve forwards for each of them.
+        with torch.inference_mode():
+            for batch in test_ldr:
+                x, y, mask, morph = unpack_batch(batch, device)
+                side = side_inputs(mask, morph)
+                logits = (
+                    tta_predict(eval_model, x, cfg.tta_spatial, cfg.tta_spectral, **side)
+                    if use_tta
+                    else eval_model(x, **side)
+                )
+                preds.append(logits.argmax(1))
+                targets.append(y)
+        p = gather_concat(dist, torch.cat(preds)).cpu().numpy()
+        t = gather_concat(dist, torch.cat(targets)).cpu().numpy()
         results[tag] = (p, t)
         f1_macro = f1_score(t, p, average="macro", zero_division=0)
         f1_weighted = f1_score(t, p, average="weighted", zero_division=0)
@@ -145,6 +153,9 @@ def final_evaluation(
         hardest_classes_report({i: float(v) for i, v in enumerate(per_class)}),
         step=int(ckpt["epoch"]),
     )
+
+    if not dist.is_main:
+        return
 
     out = cfg.output_dir
     np.save(f"{out}/test_preds_noTTA.npy", results["No TTA"][0])

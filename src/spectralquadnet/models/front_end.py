@@ -54,8 +54,16 @@ def band_spacing_scale(wavelengths: torch.Tensor) -> float:
     The median rather than the mean because the selected subset is irregular by
     construction and a handful of wide gaps would otherwise set the scale for
     the other 35 bands.
+
+    Computed on the **host** in float64. The precision is wanted — the scale is
+    a constant baked into two persistent operator buffers, so an error in it
+    rides in every checkpoint — and Metal implements no float64 at all, so a
+    wavelength vector that happens to live on an MPS device would raise here
+    rather than at any point that explains why. This is a 40-element reduction
+    run once at construction; there is nothing to gain by leaving it on an
+    accelerator.
     """
-    lam, _ = torch.sort(wavelengths.detach().flatten().to(torch.float64))
+    lam, _ = torch.sort(wavelengths.detach().flatten().to(device="cpu", dtype=torch.float64))
     if lam.numel() < 2:
         return 1.0
     return float(torch.median(lam[1:] - lam[:-1]).clamp(min=1e-12))
@@ -95,7 +103,7 @@ def savitzky_golay_operators(
         ValueError: ``poly`` resolves below 2, so no second derivative exists.
     """
     lam = wavelengths.detach().cpu().to(torch.float64).flatten()
-    
+
     n_bands = int(lam.numel())
     k = max(3, min(int(window), n_bands))
     degree = min(int(poly), k - 1)
@@ -125,8 +133,9 @@ def savitzky_golay_operators(
         d1 = d1 * scale
         d2 = d2 * (scale**2)
 
-    return d1.to(device=wavelengths.device, dtype=torch.float32), d2.to(device=wavelengths.device, dtype=torch.float32)
-
+    return d1.to(device=wavelengths.device, dtype=torch.float32), d2.to(
+        device=wavelengths.device, dtype=torch.float32
+    )
 
 
 class SpectralDerivatives(nn.Module):

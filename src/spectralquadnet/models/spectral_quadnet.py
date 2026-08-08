@@ -68,7 +68,7 @@ from spectralquadnet.models.branches.spectral_stats import SpectralStatsBranch
 from spectralquadnet.models.fusion import CrossModalInteraction, EmbedNet, MorphologyEmbed
 from spectralquadnet.models.heads import AdaptiveSubcenterArcFaceHead, AuxiliaryHead
 from spectralquadnet.models.stats_ops import (
-    extract_grid_spectra,
+    extract_grid_spectra_multi,
     foreground_mask,
     masked_mean_spectrum,
 )
@@ -266,6 +266,40 @@ class SpectralQuadNet(nn.Module):
 
     # ── Forward ───────────────────────────────────────────────────────
 
+    def _parametric_branch_inputs(
+        self,
+        x: torch.Tensor,
+        m: torch.Tensor,
+        morph: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
+        """Branch A's, B's and D's inputs — everything :meth:`forward` actually consumes.
+
+        Branch C's input is deliberately absent. It is ``x * m``, a full
+        ``(B, C, H, W)`` product, and :meth:`forward` never used the copy this
+        built: it passes ``(x, m)`` straight to ``self.branch_c``, whose stem
+        applies the mask itself at each of its three resolutions. Materialising
+        it here allocated and wrote 80 MB per forward at batch 128 for a tensor
+        that was immediately dropped — which, on a 20 GB Metal budget, is
+        allocation the backward pass needed.
+
+        :meth:`branch_inputs` still returns it, because the distinctness gate is
+        a claim about what Branch C *sees* and has to be able to look.
+        """
+        n_batch, n_bands = x.shape[0], x.shape[1]
+        # One masked cube shared by both grids; see `extract_grid_spectra_multi`.
+        (grid_a, mass_a), (grid_d, _) = extract_grid_spectra_multi(
+            x, (self.grid_a, self.grid_d), mask=m
+        )
+        return {
+            "a": self.branch_a.shape_channels(grid_a.reshape(-1, n_bands)),
+            "a_mass": mass_a,
+            "b": self.branch_b.features(
+                masked_mean_spectrum(x, m),
+                morph if morph is not None else x.new_zeros(n_batch, self.n_morph),
+            ),
+            "d": grid_d,
+        }
+
     def branch_inputs(
         self,
         x: torch.Tensor,
@@ -277,22 +311,14 @@ class SpectralQuadNet(nn.Module):
         The §4.3 test ``test_branch_inputs_are_distinct`` hashes these pairwise;
         before BR-1…BR-4 two of them were byte-identical (§2.2.2). Exposed as a
         method rather than reconstructed in the test so the two cannot drift —
-        :meth:`forward` calls it.
+        :meth:`forward` computes the same tensors through
+        :meth:`_parametric_branch_inputs`, and only ``"c"`` is added here, since
+        the forward reaches Branch C's input through the branch itself.
         """
         m = foreground_mask(x, mask)
-        grid_a, mass_a = extract_grid_spectra(x, grid_size=self.grid_a, mask=m)
-        grid_d, _ = extract_grid_spectra(x, grid_size=self.grid_d, mask=m)
-        n_batch = x.shape[0]
-        return {
-            "a": self.branch_a.shape_channels(grid_a.reshape(-1, x.shape[1])),
-            "a_mass": mass_a,
-            "b": self.branch_b.features(
-                masked_mean_spectrum(x, m),
-                morph if morph is not None else x.new_zeros(n_batch, self.n_morph),
-            ),
-            "c": x * m,
-            "d": grid_d,
-        }
+        inputs = self._parametric_branch_inputs(x, m, morph)
+        inputs["c"] = x * m
+        return inputs
 
     def forward(
         self,
@@ -329,7 +355,7 @@ class SpectralQuadNet(nn.Module):
         # survive whatever the attention does to the background (FE-2).
         x = self.se(x, m)
 
-        inputs = self.branch_inputs(x, m, morph)
+        inputs = self._parametric_branch_inputs(x, m, morph)
         n_batch = x.shape[0]
 
         # --- BRANCH A (Spectral Profile) ---
