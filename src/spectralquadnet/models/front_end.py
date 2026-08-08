@@ -94,7 +94,8 @@ def savitzky_golay_operators(
     Raises:
         ValueError: ``poly`` resolves below 2, so no second derivative exists.
     """
-    lam = wavelengths.detach().to(torch.float64).flatten()
+    lam = wavelengths.detach().cpu().to(torch.float64).flatten()
+    
     n_bands = int(lam.numel())
     k = max(3, min(int(window), n_bands))
     degree = min(int(poly), k - 1)
@@ -124,7 +125,8 @@ def savitzky_golay_operators(
         d1 = d1 * scale
         d2 = d2 * (scale**2)
 
-    return d1.to(torch.float32), d2.to(torch.float32)
+    return d1.to(device=wavelengths.device, dtype=torch.float32), d2.to(device=wavelengths.device, dtype=torch.float32)
+
 
 
 class SpectralDerivatives(nn.Module):
