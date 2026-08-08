@@ -32,10 +32,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from spectralquadnet.engine.checkpoint import save_ckpt
-from spectralquadnet.engine.diagnostics import compute_class_difficulty
+from spectralquadnet.engine.diagnostics import compute_class_difficulty, should_render_details
 from spectralquadnet.engine.evaluate import evaluate, evaluate_pr_and_confusion
 from spectralquadnet.engine.train_epoch import train_one_epoch
 from spectralquadnet.losses.auxiliary import GradNormAuxWeights
@@ -45,6 +46,8 @@ from spectralquadnet.models.ema import ModelEMA
 from spectralquadnet.optim.param_groups import build_optimizer_s2
 from spectralquadnet.optim.schedulers import arcface_margin, sgdr_scheduler, subcentre_tau
 from spectralquadnet.tracking.base import ExperimentTracker, NullTracker
+from spectralquadnet.utils.device import RuntimePlan, empty_cache
+from spectralquadnet.utils.distributed import DistContext
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from spectralquadnet.config.schema import ExperimentConfig
@@ -61,6 +64,9 @@ def run_stage2(
     best_ckpt: str,
     tracker: ExperimentTracker | None = None,
     calib_ldr: DataLoader[Any] | None = None,
+    plan: RuntimePlan | None = None,
+    dist: DistContext | None = None,
+    train_module: nn.Module | None = None,
 ) -> float:
     """Run Stage 2's ArcFace fine-tuning and return the best validation F1.
 
@@ -90,6 +96,11 @@ def run_stage2(
         seen during the run.
     """
     trk = tracker if tracker is not None else NullTracker()
+    dist = dist or DistContext()
+    # See `run_stage1`: eager module for attributes and grouping, wrapped
+    # module for the forward.
+    fwd = train_module if train_module is not None else model
+    detail_every = plan.diagnostics_interval if plan is not None else 1
     model.set_dropout(cfg.stage2.dropout)
 
     ema.reinit_from(model)
@@ -101,7 +112,7 @@ def run_stage2(
 
     # ── HD-3 calibration (T2-8), on the calibration split (T4-5) ──────
     precision, recall, confusion = evaluate_pr_and_confusion(
-        ema.shadow, fit_ldr, device, cfg.data.num_classes
+        ema.shadow, fit_ldr, device, cfg.data.num_classes, dist
     )
     for head in (model.arcface_head, ema.shadow.arcface_head):
         head.update_margins_from_pr(precision, recall)
@@ -119,7 +130,13 @@ def run_stage2(
     supcon = SupConLoss(temperature=cfg.stage2.supcon_temp)
     proto = ProtoNCELoss(temperature=cfg.stage2.proto_temp)
 
-    optimizer = build_optimizer_s2(cfg, model, cfg.stage2.head_lr, cfg.stage2.back_lr)
+    optimizer = build_optimizer_s2(
+        cfg,
+        model,
+        cfg.stage2.head_lr,
+        cfg.stage2.back_lr,
+        fused=plan.fused_optimizer if plan else False,
+    )
     scheduler = sgdr_scheduler(
         optimizer,
         warmup_ep=cfg.stage2.warmup_ep,
@@ -155,7 +172,9 @@ def run_stage2(
         ],
     )
 
+    trk.progress_start("stage2", ep_total, "Stage 2")
     for ep in range(1, ep_total + 1):
+        detail = should_render_details(ep, detail_every)
         warmup_done = (ep - 1) >= cfg.stage2.margin_warmup_ep
         m_now = (
             cfg.stage2.arcface_m
@@ -176,7 +195,7 @@ def run_stage2(
 
         tl, ta = train_one_epoch(
             cfg,
-            model,
+            fwd,
             train_ldr,
             optimizer,
             focal,
@@ -197,8 +216,8 @@ def run_stage2(
         )
         scheduler.step()
 
-        f1_live, acc_live = evaluate(model, val_ldr, device)
-        f1_ema, acc_ema = evaluate(ema.shadow, val_ldr, device)
+        f1_live, acc_live = evaluate(model, val_ldr, device, dist)
+        f1_ema, acc_ema = evaluate(ema.shadow, val_ldr, device, dist)
         best_ep_f1 = max(f1_live, f1_ema)
         best_ep_acc = max(acc_live, acc_ema)
         # See stage1_progressive.py — `final_eval` evaluates whichever of the
@@ -211,7 +230,7 @@ def run_stage2(
         if best_ep_f1 > best_f1:
             best_f1, no_improve = best_ep_f1, 0
             _cf1_s2, _cdws_s2 = compute_class_difficulty(
-                cfg, ema.shadow, fit_ldr, device, "S2", tracker=trk, step=ep
+                cfg, ema.shadow, fit_ldr, device, "S2", tracker=trk, step=ep, detail=detail
             )
             save_ckpt(
                 cfg,
@@ -222,6 +241,7 @@ def run_stage2(
                 ema,
                 val_f1=best_ep_f1,
                 val_acc=best_ep_acc,
+                dist=dist,
                 best_source=best_ep_source,
                 class_f1=_cf1_s2,
                 cdws_weights=_cdws_s2,
@@ -248,6 +268,20 @@ def run_stage2(
             },
             step=ep,
         )
+        # One transfer for the three margin summaries instead of three; the
+        # vector is constant within an epoch, so this is a per-epoch cost that
+        # used to be three separate queue drains.
+        m_mean, m_min, m_max = (
+            torch.stack(
+                [
+                    model.arcface_head.margins.mean(),
+                    model.arcface_head.margins.min(),
+                    model.arcface_head.margins.max(),
+                ]
+            )
+            .cpu()
+            .tolist()
+        )
         trk.log_scalars(
             {
                 "train/loss": tl,
@@ -263,15 +297,20 @@ def run_stage2(
                 "sched/supcon_weight": sc_now,
                 "sched/proto_weight": pt_now,
                 "sched/subcentre_tau": tau_now,
-                "margin/mean": float(model.arcface_head.margins.mean()),
-                "margin/min": float(model.arcface_head.margins.min()),
-                "margin/max": float(model.arcface_head.margins.max()),
+                "margin/mean": float(m_mean),
+                "margin/min": float(m_min),
+                "margin/max": float(m_max),
             },
             step=ep,
         )
 
-        if no_improve >= cfg.stage2.patience:
+        if plan is not None and plan.empty_cache_interval and ep % plan.empty_cache_interval == 0:
+            empty_cache(device)
+
+        # Broadcast so every rank stops on the same epoch — see stage 1.
+        if dist.broadcast_object(no_improve >= cfg.stage2.patience):
             trk.log_message(f"Early stopping at epoch {ep}.", level="warn")
             break
 
+    trk.progress_stop("stage2")
     return best_f1

@@ -60,7 +60,10 @@ def _build_one(name: str, cfg: ExperimentConfig | Any) -> ExperimentTracker:
         return NullTracker()
 
     if name == "console":
-        return ConsoleTracker(show_diagnostics=bool(getattr(tracking, "show_diagnostics", False)))
+        return ConsoleTracker(
+            show_diagnostics=bool(getattr(tracking, "show_diagnostics", False)),
+            progress=str(getattr(getattr(cfg, "runtime", None), "progress", "auto")),
+        )
 
     if name == "wandb":
         from spectralquadnet.tracking.wandb_tracker import WandbTracker

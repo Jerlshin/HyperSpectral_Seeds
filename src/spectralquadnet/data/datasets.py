@@ -23,6 +23,32 @@ the angular-margin objective, and the ``ArcFace + mixup`` exclusion in
 ``engine/train_epoch.py`` does not apply to it (§3.6 OP-6). It is the cheapest
 source of genuinely novel intra-class variation available at ~67 samples per
 class.
+
+Everything here stays on the **host**
+─────────────────────────────────────
+``__getitem__`` returns CPU tensors and never touches an accelerator. It used
+to build every one of them directly on ``device``, which cost one host-to-device
+copy *per sample per tensor* — at batch 128 with the fill map and the
+morphometrics that is 512 separate transfers where one batched copy would do,
+each one its own Metal command-buffer commit or CUDA ``cudaMemcpyAsync``. The
+batched transfer now happens once, in
+:func:`~spectralquadnet.engine.batch.unpack_batch`, out of page-locked memory on
+CUDA.
+
+The same change is what makes ``num_workers > 0`` possible at all: a worker
+process cannot hand a CUDA tensor back through the queue, and a Metal one would
+be built on the wrong process's command queue. ``device`` is still accepted so
+every call site and test keeps composing, and is now only a record of where the
+batch is *going*.
+
+**Reproducibility note.** Augmentation draws still come from the global torch
+RNG, in the same order, from the same profile probabilities — but at
+``num_workers > 0`` each worker seeds its own stream from the loader's base
+seed, and the noise tensors are drawn on the host rather than on the
+accelerator. The *distribution* of every augmentation is unchanged and a run is
+still reproducible at a fixed ``cfg.seed`` and a fixed worker count; the
+realised draws are not the ones a ``num_workers=0``, on-device run produced.
+Set ``runtime.num_workers=0`` to keep augmentation single-streamed.
 """
 
 from __future__ import annotations
@@ -111,7 +137,7 @@ class RiceSeedDataset(Dataset):  # type: ignore[type-arg]
         *,
         store: DataStore,
         data_cfg: DataConfig | Any,
-        device: torch.device | str,
+        device: torch.device | str = "cpu",
         morph: npt.NDArray[Any] | None = None,
     ) -> None:
         self.patches = store.require_patches()
@@ -124,12 +150,24 @@ class RiceSeedDataset(Dataset):  # type: ignore[type-arg]
         # demanded the side arrays exist would make Tier 3 a hard dependency of
         # every test that builds one.
         self.masks = getattr(store, "masks", None)
+        # Where the two mmaps came from, so `__setstate__` can re-open them in
+        # a worker rather than unpickle a materialised copy of a 5.6 GB array.
+        self._patches_path = getattr(store, "patches_path", None)
+        self._masks_path = getattr(store, "masks_path", None)
         self.morph = morph
         self.indices = indices
+        # The split's labels, resolved once. `__getitem__` needed this value
+        # twice per call and `_index_by_class` walked the whole split in a
+        # Python loop to rebuild it; one vectorised gather at construction
+        # replaces both.
+        self.split_labels = np.asarray(self.labels)[indices].astype(np.int64, copy=False)
         self.aug_strength = str(aug_strength)
         self.profile = self._PROFILES.get(self.aug_strength)
         self.intensity_scale = self._INTENSITY_SCALE.get(self.aug_strength, 0.0)
         self.warp_range = self._WARP_RANGE.get(self.aug_strength, 0.0)
+        #: Where the batch is *going*. Retained for the call sites and tests
+        #: that pass it, and no longer used to place a tensor — see the module
+        #: docstring on why every sample now stays on the host.
         self.device = device
         self.max_cutout_bands = data_cfg.max_cutout_bands
         self.noise_std = data_cfg.noise_std
@@ -145,6 +183,47 @@ class RiceSeedDataset(Dataset):  # type: ignore[type-arg]
     def __len__(self) -> int:
         return len(self.indices)
 
+    # ── Worker-process handover ───────────────────────────────────────
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Drop the mmapped arrays before this dataset is pickled into a worker.
+
+        ``np.memmap`` inherits ``ndarray``'s pickling, which **materialises**:
+        sending one to a worker would copy the whole cube into that process's
+        RAM, at which point the zero-RAM invariant is gone and four workers
+        need 22 GB between them. The paths travel instead, and
+        :meth:`__setstate__` re-opens the mapping on the other side — one page
+        table per worker, no resident bytes.
+
+        Only ``patches`` and ``masks`` are dropped. ``labels`` (69 kB) and the
+        standardised ``morph`` (276 kB) are ordinary in-RAM arrays that a worker
+        genuinely needs a copy of.
+
+        Raises:
+            RuntimeError: The store was built from arrays rather than files, so
+                there is no path to re-open. That configuration is valid — the
+                unit tests use it — but it cannot cross a process boundary, and
+                failing here names the reason instead of leaking gigabytes.
+        """
+        if self._patches_path is None:
+            raise RuntimeError(
+                "RiceSeedDataset was built from an in-memory store and cannot be sent to a "
+                "DataLoader worker: there is no path to re-open the patch array from. Construct "
+                "it from DataStore.from_config(), or set runtime.num_workers=0."
+            )
+        state = self.__dict__.copy()
+        state["patches"] = None
+        state["masks"] = None
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Re-open the mmaps in this worker process. The inverse of :meth:`__getstate__`."""
+        self.__dict__.update(state)
+        if self.patches is None and self._patches_path is not None:
+            self.patches = np.load(self._patches_path, mmap_mode="r")
+        if self.masks is None and self._masks_path is not None:
+            self.masks = np.load(self._masks_path, mmap_mode="r")
+
     # ── Same-class partner bookkeeping (OP-6 / T2-7) ──────────────────
 
     def _wants_cutmix(self) -> bool:
@@ -159,7 +238,7 @@ class RiceSeedDataset(Dataset):  # type: ignore[type-arg]
         Positions, not raw store rows: a partner must come from the *same
         split*, or CutMix would paste validation pixels into a training patch.
         """
-        labels = np.asarray([int(self.labels[r]) for r in self.indices])
+        labels = self.split_labels
         return {int(c): np.flatnonzero(labels == c) for c in np.unique(labels)}
 
     def _same_class_partner(
@@ -187,7 +266,7 @@ class RiceSeedDataset(Dataset):  # type: ignore[type-arg]
         pick = int(torch.randint(0, pool.size - 1, (1,)).item())
         pos = int(pool[pick + 1 if pick >= anchor else pick])
         row = self.indices[pos]
-        partner = torch.from_numpy(np.array(self.patches[row])).to(self.device, non_blocking=True)
+        partner = torch.from_numpy(np.array(self.patches[row]))
         if not with_mask:
             return partner
         return torch.cat([partner, self._load_mask(row)], dim=0)
@@ -195,12 +274,7 @@ class RiceSeedDataset(Dataset):  # type: ignore[type-arg]
     def _load_mask(self, row: int) -> torch.Tensor:
         """The ``(1, H, W)`` fill map for store row ``row``, as float32."""
         assert self.masks is not None  # guarded by every call site
-        return (
-            torch.from_numpy(np.array(self.masks[row]))
-            .float()
-            .unsqueeze(0)
-            .to(self.device, non_blocking=True)
-        )
+        return torch.from_numpy(np.array(self.masks[row])).float().unsqueeze(0)
 
     # ── Augmentation primitives ───────────────────────────────────────
 
@@ -316,12 +390,13 @@ class RiceSeedDataset(Dataset):  # type: ignore[type-arg]
             whichever of the two is missing.
         """
         ri = self.indices[idx]
+        row_label = int(self.split_labels[idx])
 
         # np.array(...) copies exactly one patch off the mmap. Do not replace
         # with a slice or a batched copy — that is what bounds RAM.
         patch_np = np.array(self.patches[ri])
-        patch = torch.from_numpy(patch_np).to(self.device, non_blocking=True)
-        label = torch.tensor(int(self.labels[ri]), dtype=torch.long, device=self.device)
+        patch = torch.from_numpy(patch_np)
+        label = torch.tensor(row_label, dtype=torch.long)
         n_bands = patch.shape[0]
         mask = self._load_mask(ri) if self.masks is not None else None
 
@@ -340,15 +415,13 @@ class RiceSeedDataset(Dataset):  # type: ignore[type-arg]
             # OP-6 / T2-7. Label-preserving: the partner is the same class, so
             # `label` below is untouched and no soft target is created.
             if p.get("spec_cutmix", 0.0) > 0.0 and torch.rand(1) < p["spec_cutmix"]:
-                partner = self._same_class_partner(idx, int(self.labels[ri]))
+                partner = self._same_class_partner(idx, row_label)
                 if partner is not None:
                     patch = self._spectral_cutmix(patch, partner)
             if mask is not None:
                 patch = torch.cat([patch, mask], dim=0)
             if p.get("spat_cutmix", 0.0) > 0.0 and torch.rand(1) < p["spat_cutmix"]:
-                partner = self._same_class_partner(
-                    idx, int(self.labels[ri]), with_mask=mask is not None
-                )
+                partner = self._same_class_partner(idx, row_label, with_mask=mask is not None)
                 if partner is not None:
                     patch = self._spatial_cutmix(patch, partner)
             patch = self._spatial(patch)
@@ -362,9 +435,5 @@ class RiceSeedDataset(Dataset):  # type: ignore[type-arg]
             patch,
             label,
             mask if mask is not None else ABSENT,
-            (
-                torch.from_numpy(self.morph[ri]).to(self.device, non_blocking=True)
-                if self.morph is not None
-                else ABSENT
-            ),
+            torch.from_numpy(self.morph[ri]) if self.morph is not None else ABSENT,
         )

@@ -94,3 +94,11 @@ class TensorBoardTracker:
 
     def log_row(self, tag: str, cells: dict[str, str], step: int) -> None:
         return None
+
+    def progress_start(self, tag: str, total: int, description: str = "") -> None:
+        # The human channel is inert here by design — progress belongs to a
+        # terminal, and this backend's audience reads curves.
+        return None
+
+    def progress_stop(self, tag: str) -> None:
+        return None

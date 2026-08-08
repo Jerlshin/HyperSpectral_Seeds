@@ -47,6 +47,7 @@ import math
 from typing import TYPE_CHECKING, Any
 
 import torch
+import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
@@ -58,10 +59,17 @@ from spectralquadnet.losses.auxiliary import GradNormAuxWeights
 from spectralquadnet.losses.contrastive import ProtoNCELoss, SupConLoss
 from spectralquadnet.losses.focal import FocalLoss
 from spectralquadnet.models.ema import ModelEMA
-from spectralquadnet.optim.param_groups import _wd_groups
+from spectralquadnet.optim.param_groups import _wd_groups, adamw_kwargs
 from spectralquadnet.optim.sam import SAM
 from spectralquadnet.optim.schedulers import stage3_margin_kappa
 from spectralquadnet.tracking.base import ExperimentTracker, NullTracker
+from spectralquadnet.utils.device import (
+    RuntimePlan,
+    empty_cache,
+    reset_compilation,
+    unwrap_model,
+)
+from spectralquadnet.utils.distributed import DistContext
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from spectralquadnet.config.schema import ExperimentConfig
@@ -98,6 +106,9 @@ def run_stage3_swa(
     best_ckpt: str,
     prev_best_f1: float,
     tracker: ExperimentTracker | None = None,
+    plan: RuntimePlan | None = None,
+    dist: DistContext | None = None,
+    train_module: nn.Module | None = None,
 ) -> float:
     """Run Stage 3's SAM training with greedy SWA snapshotting and return its best validation F1.
 
@@ -128,8 +139,14 @@ def run_stage3_swa(
         The better of the SWA and EMA validation macro-F1 scores.
     """
     trk = tracker if tracker is not None else NullTracker()
-    if hasattr(torch, "_dynamo"):
-        torch._dynamo.disable()  # type: ignore[no-untyped-call]
+    dist = dist or DistContext()
+    # See `run_stage1`: eager module for attributes and grouping, wrapped
+    # module for the forward.
+    fwd = train_module if train_module is not None else model
+    # SAM's double backward and the per-cycle margin vector both invalidate a
+    # compiled graph's guards, so a compiled Stage 3 spends its time
+    # recompiling. Dropped rather than left to thrash.
+    reset_compilation()
 
     model.set_dropout(cfg.stage2.dropout)
     # Now that `branch_drop_prob` reaches the forward pass (T1-6), this actually
@@ -158,6 +175,7 @@ def run_stage3_swa(
         adaptive=cfg.stage3.sam_adaptive,
         lr=cfg.stage3.swa_lr,
         weight_decay=cfg.weight_decay,
+        **adamw_kwargs(plan.fused_optimizer if plan else False, params),
     )
 
     focal_s3 = FocalLoss(gamma=1.0)
@@ -175,8 +193,10 @@ def run_stage3_swa(
     warmup_cycles = int(cfg.stage3.swa_warmup_cycles)
 
     # One scratch model for every candidate evaluation, rather than a deepcopy
-    # per cycle: candidates are only ever scored, never trained.
-    probe = copy.deepcopy(model)
+    # per cycle: candidates are only ever scored, never trained. Unwrapped, so
+    # its keys match the unprefixed `state_dict()` the candidates are blended
+    # from — and so it does not carry a second DDP process group.
+    probe = copy.deepcopy(unwrap_model(model))
 
     trk.banner(
         f"Stage 3 — {'A' if cfg.stage3.sam_adaptive else ''}SAM + Greedy SWA "
@@ -190,6 +210,7 @@ def run_stage3_swa(
         ],
     )
 
+    trk.progress_start("stage3", cfg.stage3.epochs, "Stage 3")
     for ep in range(1, cfg.stage3.epochs + 1):
         cycle_ep = (ep - 1) % cfg.stage3.cycle_len
         lr_now = cfg.stage3.swa_lr * (
@@ -210,7 +231,7 @@ def run_stage3_swa(
 
         tl, ta = train_one_epoch_sam(
             cfg,
-            model,
+            fwd,
             train_ldr,
             sam,
             focal_s3,
@@ -228,8 +249,8 @@ def run_stage3_swa(
             aux_weights=aux_weights,
         )
 
-        f1_live, acc_live = evaluate(model, val_ldr, device)
-        f1_ema, acc_ema = evaluate(ema.shadow, val_ldr, device)
+        f1_live, acc_live = evaluate(model, val_ldr, device, dist)
+        f1_ema, acc_ema = evaluate(ema.shadow, val_ldr, device, dist)
         best_live_f1 = max(best_live_f1, f1_live)
         snap_info = ""
 
@@ -239,14 +260,21 @@ def run_stage3_swa(
             if cycle <= warmup_cycles:
                 snap_info = f"· warm-up {cycle}/{warmup_cycles}"
             elif swa_state is None:
-                swa_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+                swa_state = {
+                    k: v.detach().clone() for k, v in unwrap_model(model).state_dict().items()
+                }
                 n_snap, f1_swa_running, first_accepted_cycle = 1, f1_live, cycle
                 snap_info = f"★ snap 1 (F1 {f1_swa_running:.3f})"
             else:
-                candidate = _blend(swa_state, model.state_dict(), n_snap + 1)
+                candidate = _blend(swa_state, unwrap_model(model).state_dict(), n_snap + 1)
                 probe.load_state_dict(candidate)
-                f1_cand, _ = evaluate(probe, val_ldr, device)
-                if not cfg.stage3.greedy or f1_cand > f1_swa_running:
+                f1_cand, _ = evaluate(probe, val_ldr, device, dist)
+                # Every rank scored the same candidate on the same (sharded and
+                # re-joined) split, so they agree — but the accept/reject is
+                # broadcast rather than assumed, because a float comparison two
+                # ranks disagree on would fork the SWA average.
+                accept = dist.broadcast_object(not cfg.stage3.greedy or f1_cand > f1_swa_running)
+                if accept:
                     swa_state, n_snap, f1_swa_running = candidate, n_snap + 1, f1_cand
                     snap_info = f"★ snap {n_snap} (F1 {f1_cand:.3f})"
                 else:
@@ -288,19 +316,25 @@ def run_stage3_swa(
             step=ep,
         )
 
+    trk.progress_stop("stage3")
     trk.log_message(f"Updating BN stats ({n_snap} accepted, {n_rejected} rejected) ...")
     if swa_state is None:
         trk.log_message("No snapshots accepted — using final live model.", level="warn")
-        swa_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+        swa_state = {k: v.detach().clone() for k, v in unwrap_model(model).state_dict().items()}
 
-    swa_model = copy.deepcopy(model)
+    # The scratch probe has done its job; a whole extra model is worth freeing
+    # before two more (`swa_model`, and `deepcopy`'s transient) are built.
+    del probe
+    empty_cache(device)
+
+    swa_model = copy.deepcopy(unwrap_model(model))
     swa_model.load_state_dict(swa_state)
-    update_bn_stats(build_natural_prior_loader(train_ldr), swa_model, device)
-    f1_swa, acc_swa = evaluate(swa_model, val_ldr, device)
+    update_bn_stats(build_natural_prior_loader(train_ldr, plan=plan), swa_model, device)
+    f1_swa, acc_swa = evaluate(swa_model, val_ldr, device, dist)
     trk.log_message(f"SWA val: F1={f1_swa:.3f}  Acc={acc_swa:.1%}", level="plain")
 
     # ── SWA vs EMA — score both, keep the better ──────────────────────
-    f1_ema, acc_ema = evaluate(ema.shadow, val_ldr, device)
+    f1_ema, acc_ema = evaluate(ema.shadow, val_ldr, device, dist)
     best_source = "swa" if f1_swa >= f1_ema else "ema"
     best_f1 = max(f1_swa, f1_ema)
     best_acc = acc_swa if best_source == "swa" else acc_ema
@@ -340,6 +374,7 @@ def run_stage3_swa(
         ema,
         val_f1=best_f1,
         val_acc=best_acc,
+        dist=dist,
         best_source=best_source,
         swa_val_f1=f1_swa,
         ema_val_f1=f1_ema,

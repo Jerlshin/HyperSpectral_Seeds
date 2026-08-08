@@ -21,6 +21,8 @@ them.
 
 from __future__ import annotations
 
+import inspect
+import weakref
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
@@ -72,13 +74,32 @@ def _wd_groups(
     ]
 
 
+#: ``model -> {group: parameters}``, so the name-prefix match runs once per
+#: model rather than once per optimiser step. Same rationale — and the same
+#: weak keys — as ``engine/diagnostics.py::_BRANCH_GROUP_CACHE``: the partition
+#: is a function of the parameter names, which do not change, but
+#: :func:`clip_grad_norm_by_group` is on the inner loop and was re-deriving it
+#: every step.
+_CLIP_GROUP_CACHE: weakref.WeakKeyDictionary[nn.Module, dict[str, list[torch.nn.Parameter]]] = (
+    weakref.WeakKeyDictionary()
+)
+
+
 def split_by_clip_group(model: nn.Module) -> dict[str, list[torch.nn.Parameter]]:
     """Partition a model's trainable parameters into the :data:`CLIP_GROUPS`.
 
     Every trainable parameter lands in exactly one group, so the three
     per-group clips together cover the same set the one global clip did.
     Groups that own no parameter are omitted rather than returned empty.
+
+    The result is memoised per model. ``requires_grad`` is read at partition
+    time, as it always was — nothing in the three stages toggles it after
+    construction since HD-1 removed the frozen-head phase, and a caller that
+    starts doing so must invalidate this cache.
     """
+    cached = _CLIP_GROUP_CACHE.get(model)
+    if cached is not None:
+        return cached
     groups: dict[str, list[torch.nn.Parameter]] = {}
     for name, param in model.named_parameters():
         if not param.requires_grad:
@@ -87,6 +108,7 @@ def split_by_clip_group(model: nn.Module) -> dict[str, list[torch.nn.Parameter]]
             if not prefixes or name.startswith(prefixes):
                 groups.setdefault(label, []).append(param)
                 break
+    _CLIP_GROUP_CACHE[model] = groups
     return groups
 
 
@@ -113,13 +135,52 @@ def clip_grad_norm_by_group(model: nn.Module, max_norm: float) -> dict[str, torc
     }
 
 
-def build_optimizer_s1(cfg: ExperimentConfig | Any, model: nn.Module, lr: float) -> optim.AdamW:
+def adamw_kwargs(fused: bool, params: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """``{"fused": True}`` when the fused AdamW kernel is usable here, else ``{}``.
+
+    The fused kernel folds the whole parameter update — the two moment
+    exponential averages, the bias correction, the decoupled decay and the step
+    — into one launch across every parameter, instead of the foreach path's
+    handful per group. At ~200 parameter tensors that is the difference between
+    a launch-bound and a bandwidth-bound step on a T4.
+
+    Three things disqualify it, and all three are checked rather than assumed:
+    it exists only for CUDA (and, in recent torch, XPU) tensors; it requires
+    every parameter to be a floating-point tensor on the same device type; and
+    it is not present at all in older torch. On any of those the foreach path
+    is used, which is what this pipeline has always run.
+
+    **This is the one performance default that is not bit-exact.** The fused
+    kernel computes the same update in the same precision but not in the same
+    order. Set ``runtime.fused_optimizer=off`` to reproduce an eager run
+    exactly.
+    """
+    if not fused:
+        return {}
+    if "fused" not in inspect.signature(optim.AdamW.__init__).parameters:
+        return {}  # pragma: no cover - torch < 1.13
+    if params is not None:
+        for group in params:
+            for p in group["params"]:
+                if p.device.type != "cuda" or not p.is_floating_point():
+                    return {}
+    return {"fused": True}
+
+
+def build_optimizer_s1(
+    cfg: ExperimentConfig | Any, model: nn.Module, lr: float, fused: bool = False
+) -> optim.AdamW:
     """AdamW over the whole model at a single learning rate, with weight-decay grouping."""
-    return optim.AdamW(_wd_groups(cfg, model.named_parameters(), lr))
+    groups = _wd_groups(cfg, model.named_parameters(), lr)
+    return optim.AdamW(groups, **adamw_kwargs(fused, groups))
 
 
 def build_optimizer_s2(
-    cfg: ExperimentConfig | Any, model: nn.Module, head_lr: float, back_lr: float
+    cfg: ExperimentConfig | Any,
+    model: nn.Module,
+    head_lr: float,
+    back_lr: float,
+    fused: bool = False,
 ) -> optim.AdamW:
     """AdamW with the ArcFace head and the backbone on separate learning rates.
 
@@ -131,9 +192,13 @@ def build_optimizer_s2(
         if not p.requires_grad:
             continue
         (hp if n.startswith("arcface_head") else bp).append((n, p))
-    return optim.AdamW(_wd_groups(cfg, hp, head_lr) + _wd_groups(cfg, bp, back_lr))
+    groups = _wd_groups(cfg, hp, head_lr) + _wd_groups(cfg, bp, back_lr)
+    return optim.AdamW(groups, **adamw_kwargs(fused, groups))
 
 
-def build_optimizer_s3(cfg: ExperimentConfig | Any, model: nn.Module, lr: float) -> optim.AdamW:
+def build_optimizer_s3(
+    cfg: ExperimentConfig | Any, model: nn.Module, lr: float, fused: bool = False
+) -> optim.AdamW:
     """AdamW over the whole model at a single learning rate; wrapped in :class:`SAM` by the caller."""
-    return optim.AdamW(_wd_groups(cfg, model.named_parameters(), lr))
+    groups = _wd_groups(cfg, model.named_parameters(), lr)
+    return optim.AdamW(groups, **adamw_kwargs(fused, groups))

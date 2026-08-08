@@ -18,6 +18,23 @@ already computes:
 All are accumulated as device tensors and resolved to floats **once per epoch**,
 so the per-step cost is a handful of adds rather than a host synchronisation.
 
+Host synchronisation, and the one that is left
+──────────────────────────────────────────────
+A ``.item()``, a ``.cpu()`` or a Python ``if`` on a device tensor all drain the
+accelerator's queue: the host stops until every kernel issued so far has
+retired, and nothing the loader has prefetched can overlap across that point.
+The AdamW loop used to do three per step — ``if not torch.isfinite(loss)``,
+``loss.item()``, and ``(logits.argmax(1) == ya).float().mean().item()`` — and
+the SAM loop four.
+
+There is now **one** per step (two under SAM, one per objective evaluation),
+and it is the finiteness test, which cannot be removed without changing
+behaviour: the loop's contract is that a non-finite batch is *skipped*, and
+that is a host-side control-flow decision. It is now the only one, because the
+loss and the batch accuracy ride along in the same stacked transfer — the same
+two floats, in the same order, resolved by the same rounding, so the epoch
+means are bit-for-bit what they were.
+
 Behaviour worth keeping in mind when reading these loops:
 
 * **AMP is silently disabled whenever a SupCon loss is passed** (``use_amp =
@@ -47,6 +64,7 @@ Behaviour worth keeping in mind when reading these loops:
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -63,9 +81,40 @@ from spectralquadnet.models.ema import ModelEMA
 from spectralquadnet.optim.param_groups import clip_grad_norm_by_group
 from spectralquadnet.optim.sam import SAM
 from spectralquadnet.tracking.base import ExperimentTracker
+from spectralquadnet.utils.device import unwrap_model
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from spectralquadnet.config.schema import ExperimentConfig
+
+#: How many steps per epoch contribute to ``sam/grad_cos``.
+#:
+#: :func:`~spectralquadnet.engine.diagnostics.flat_grad` copies every gradient
+#: into one contiguous vector — ~32 MB at 7.9 M fp32 parameters — and the cosine
+#: needs two of them, so measuring it on every SAM step adds ~64 MB of pure
+#: copying per step to a stage that already runs two backward passes. It is a
+#: diagnostic about the *stage*, not about any one batch, so it is sampled: the
+#: logged value is the mean over ~32 evenly spaced steps rather than over all of
+#: them. Nothing consumes it but the tracker.
+GRAD_COS_SAMPLES: int = 32
+
+
+def _resolve_step_scalars(loss: torch.Tensor, accuracy: torch.Tensor) -> tuple[float, float]:
+    """The step's loss and accuracy as host floats, in **one** synchronisation.
+
+    Stacking is not a numerical operation here: both are already 0-dim float32,
+    ``stack`` only lays them out contiguously, and ``.tolist()`` reads the same
+    two floats ``.item()`` would have read one at a time. What it buys is a
+    single queue drain per step instead of two — and, with the finiteness test
+    reading ``loss`` from this same transfer, one instead of three.
+    """
+    values = torch.stack([loss.detach().float(), accuracy.detach().float()]).cpu().tolist()
+    return float(values[0]), float(values[1])
+
+
+def _batch_accuracy(logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+    """Top-1 accuracy over the batch, left on the device as a 0-dim tensor."""
+    with torch.no_grad():
+        return (logits.detach().argmax(1) == targets).float().mean()
 
 
 def train_one_epoch(
@@ -109,6 +158,12 @@ def train_one_epoch(
         ``(mean_loss, mean_accuracy)`` over the epoch.
     """
     model.train()
+    # `model` may be a DDP and/or `torch.compile` wrapper; the gradient
+    # grouping helpers below match on **unprefixed** parameter names
+    # (`branch_a.`, `arcface_head.`, …), which a wrapper's `module.` /
+    # `_orig_mod.` prefix would defeat silently — every group would come back
+    # empty and the per-group clip would become no clip at all.
+    core = unwrap_model(model)
     total_loss = total_acc = 0.0
     optimizer.zero_grad(set_to_none=True)
 
@@ -209,7 +264,14 @@ def train_one_epoch(
             if isinstance(out, dict) and balance_w > 0.0 and "balance" in out:
                 loss = loss + balance_w * out["balance"]
 
-        if not torch.isfinite(loss):
+        # The step's two host-side numbers, fetched together. The accuracy is
+        # read here rather than after the optimiser step because `logits` is not
+        # modified by either — its value at this point is its value at the end
+        # of the step — and folding it into the finiteness test's transfer is
+        # what removes two of the three per-step synchronisations.
+        loss_value, acc_value = _resolve_step_scalars(loss, _batch_accuracy(logits, ya))
+
+        if not math.isfinite(loss_value):
             optimizer.zero_grad(set_to_none=True)
             continue
 
@@ -234,10 +296,10 @@ def train_one_epoch(
             if need_branch:
                 _accumulate(
                     diag_branch,
-                    {f"grad_norm/{k}": v for k, v in branch_grad_norm_tensors(model).items()},
+                    {f"grad_norm/{k}": v for k, v in branch_grad_norm_tensors(core).items()},
                 )
                 n_branch += 1
-            group_norms = clip_grad_norm_by_group(model, cfg.grad_clip)
+            group_norms = clip_grad_norm_by_group(core, cfg.grad_clip)
             if want_diag:
                 _accumulate(
                     diag_clip, {f"grad_norm/preclip_{k}": v for k, v in group_norms.items()}
@@ -250,11 +312,12 @@ def train_one_epoch(
                 optimizer.step()
             optimizer.zero_grad(set_to_none=True)
             if ema:
-                ema.update(model)
+                # `core`, not `model`: the shadow's parameters are named
+                # without a wrapper prefix, and `ModelEMA` pairs them by name.
+                ema.update(core)
 
-        total_loss += loss.item()
-        with torch.no_grad():
-            total_acc += (logits.argmax(1) == ya).float().mean().item()
+        total_loss += loss_value
+        total_acc += acc_value
 
     scalars = _diagnostic_scalars(
         (diag_aux, n_aux),
@@ -321,6 +384,7 @@ def train_one_epoch_sam(
     """
     torch.set_default_dtype(torch.float32)
     model.train()
+    core = unwrap_model(model)  # see `train_one_epoch` — grouping needs raw names
     total_loss = total_acc = 0.0
     balance_w = float(getattr(getattr(cfg, "model", None), "subcenter_balance_weight", 0.0))
     branch_w = aux_weights.weights if aux_weights is not None else None
@@ -367,12 +431,15 @@ def train_one_epoch_sam(
     def _clip(sample: bool) -> None:
         """Per-group clip, recording the pre-clip norms on the ascent step only."""
         nonlocal n_clip
-        group_norms = clip_grad_norm_by_group(model, cfg.grad_clip)
+        group_norms = clip_grad_norm_by_group(core, cfg.grad_clip)
         if sample and want_diag:
             _accumulate(diag_clip, {f"grad_norm/preclip_{k}": v for k, v in group_norms.items()})
             n_clip += 1
 
-    for batch in loader:
+    # Even sampling of the gradient-cosine diagnostic — see GRAD_COS_SAMPLES.
+    cos_stride = max(1, len(loader) // GRAD_COS_SAMPLES) if want_grad_norms else 0
+
+    for step, batch in enumerate(loader):
         x, y, mask, morph = unpack_batch(batch, device)
         side = side_inputs(mask, morph)
 
@@ -380,7 +447,12 @@ def train_one_epoch_sam(
         sam_opt.zero_grad()
         loss, logits, aux_parts = _objective(x, y, side)
 
-        if not torch.isfinite(loss):
+        # One synchronisation for the ascent step, carrying both the finiteness
+        # test and the epoch's loss/accuracy contribution — see the module
+        # docstring. The descent step needs a second for its own test.
+        loss_value, acc_value = _resolve_step_scalars(loss, _batch_accuracy(logits, y))
+
+        if not math.isfinite(loss_value):
             sam_opt.zero_grad()
             continue
 
@@ -399,13 +471,14 @@ def train_one_epoch_sam(
         if need_branch:
             _accumulate(
                 diag_branch,
-                {f"grad_norm/{k}": v for k, v in branch_grad_norm_tensors(model).items()},
+                {f"grad_norm/{k}": v for k, v in branch_grad_norm_tensors(core).items()},
             )
             n_branch += 1
         _clip(sample=True)
         # Captured after the clip, which rescales each group by a scalar and so
         # cannot change the direction the cosine below measures within a group.
-        g_ascent = flat_grad(model) if want_grad_norms else None
+        sample_cos = cos_stride > 0 and step % cos_stride == 0
+        g_ascent = flat_grad(core) if sample_cos else None
         sam_opt.first_step(zero_grad=True)
 
         # ── SAM second step (descent, same objective) ─────────────────
@@ -420,15 +493,14 @@ def train_one_epoch_sam(
         loss2.backward()  # type: ignore[no-untyped-call]
         _clip(sample=False)
         if g_ascent is not None:
-            _accumulate(diag_cos, {"sam/grad_cos": grad_cosine(g_ascent, flat_grad(model))})
+            _accumulate(diag_cos, {"sam/grad_cos": grad_cosine(g_ascent, flat_grad(core))})
             n_cos += 1
         sam_opt.second_step(zero_grad=True)
         if ema is not None:
-            ema.update(model)
+            ema.update(core)  # unprefixed names — see `train_one_epoch`
 
-        total_loss += loss.item()
-        with torch.no_grad():
-            total_acc += (logits.detach().argmax(1) == y).float().mean().item()
+        total_loss += loss_value
+        total_acc += acc_value
 
     scalars = _diagnostic_scalars(
         (diag_aux, n_aux),

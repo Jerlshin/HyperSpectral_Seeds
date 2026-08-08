@@ -10,6 +10,24 @@
 
 **Macro-F1 is the primary metric** for every checkpointing decision in all three
 stages; accuracy is reported alongside but never gates a save.
+
+Two host round-trips per batch, removed
+───────────────────────────────────────
+Stages 1 and 2 run this **twice per epoch** — once for the live model, once for
+the EMA shadow — over the whole validation split, and it is a large share of
+epoch wall time. It used to synchronise twice for every batch of that:
+
+* ``if not torch.isfinite(logits).all()`` is a Python branch on a device
+  tensor. The guard is now unconditional instead: ``nan_to_num`` on finite
+  logits is the identity function, so applying it always produces exactly the
+  values the branch produced, without asking the host what the answer was.
+* ``preds.append(logits.argmax(1).cpu())`` copied every batch back one at a
+  time. The per-batch results stay on the device and are concatenated in one
+  transfer at the end.
+
+Under DDP the split is sharded across ranks and re-joined by
+:func:`~spectralquadnet.utils.distributed.gather_concat` before any metric is
+computed, because a macro-F1 over half the classes is not half of the macro-F1.
 """
 
 from __future__ import annotations
@@ -30,17 +48,25 @@ from torch.amp import autocast
 from torch.utils.data import DataLoader
 
 from spectralquadnet.engine.batch import side_inputs, unpack_batch
+from spectralquadnet.utils.distributed import DistContext, gather_concat
 
 
-@torch.no_grad()
+@torch.inference_mode()
 def _run_eval(
-    model: nn.Module, loader: DataLoader[Any], device: torch.device
+    model: nn.Module,
+    loader: DataLoader[Any],
+    device: torch.device,
+    dist: DistContext | None = None,
 ) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
     """Run inference over the whole loader and collect predictions/targets.
 
+    ``inference_mode`` rather than ``no_grad``: it additionally skips
+    autograd's version-counter bookkeeping on every tensor produced, which is
+    pure overhead for a pass whose results never require a gradient.
+
     Returns:
         ``(preds, targets)`` as flat 1-D numpy arrays, concatenated across
-        every batch in ``loader``.
+        every batch in ``loader`` — and, under DDP, across every rank.
     """
     model.eval()
     preds, targets = [], []
@@ -48,37 +74,52 @@ def _run_eval(
         for batch in loader:
             x, y, mask, morph = unpack_batch(batch, device)
             logits = model(x, **side_inputs(mask, morph))
-            if not torch.isfinite(logits).all():
-                logits = torch.nan_to_num(logits, nan=0.0, posinf=1e4, neginf=-1e4)
-            preds.append(logits.argmax(1).cpu())
-            targets.append(y.cpu())
-    if device.type == "cuda":
-        torch.cuda.synchronize()
-    return torch.cat(preds).numpy(), torch.cat(targets).numpy()
+            # Unconditional, and therefore sync-free: on finite logits this is
+            # the identity, so it yields what the `isfinite` branch yielded.
+            logits = torch.nan_to_num(logits, nan=0.0, posinf=1e4, neginf=-1e4)
+            preds.append(logits.argmax(1))
+            targets.append(y)
+
+    dist = dist or DistContext()
+    all_preds = gather_concat(dist, torch.cat(preds))
+    all_targets = gather_concat(dist, torch.cat(targets))
+    # One device→host transfer for the whole split instead of one per batch.
+    return all_preds.cpu().numpy(), all_targets.cpu().numpy()
 
 
 def evaluate(
-    model: nn.Module, loader: DataLoader[Any], device: torch.device
+    model: nn.Module,
+    loader: DataLoader[Any],
+    device: torch.device,
+    dist: DistContext | None = None,
 ) -> tuple[float, float]:
     """Macro-F1 and accuracy over ``loader``. Macro-F1 is the primary metric —
     it drives every checkpointing decision across all three stages; accuracy
     is reported alongside but never gates a save.
     """
-    p, t = _run_eval(model, loader, device)
+    p, t = _run_eval(model, loader, device, dist)
     return f1_score(t, p, average="macro", zero_division=0), accuracy_score(t, p)
 
 
 def evaluate_per_class(
-    model: nn.Module, loader: DataLoader[Any], device: torch.device, num_classes: int
+    model: nn.Module,
+    loader: DataLoader[Any],
+    device: torch.device,
+    num_classes: int,
+    dist: DistContext | None = None,
 ) -> dict[int, float]:
     """Per-class F1 over ``loader``, keyed by class index 0..num_classes-1."""
-    p, t = _run_eval(model, loader, device)
+    p, t = _run_eval(model, loader, device, dist)
     f1_arr = f1_score(t, p, average=None, zero_division=0, labels=list(range(num_classes)))
     return {i: float(v) for i, v in enumerate(f1_arr)}
 
 
 def evaluate_pr_and_confusion(
-    model: nn.Module, loader: DataLoader[Any], device: torch.device, num_classes: int
+    model: nn.Module,
+    loader: DataLoader[Any],
+    device: torch.device,
+    num_classes: int,
+    dist: DistContext | None = None,
 ) -> tuple[dict[int, float], dict[int, float], torch.Tensor]:
     """Per-class **precision**, **recall** and the confusion matrix, in one pass.
 
@@ -93,7 +134,7 @@ def evaluate_pr_and_confusion(
         index, the third a raw ``(num_classes, num_classes)`` count matrix with
         rows indexed by the **true** class.
     """
-    p, t = _run_eval(model, loader, device)
+    p, t = _run_eval(model, loader, device, dist)
     labels = list(range(num_classes))
     prec = precision_score(t, p, average=None, zero_division=0, labels=labels)
     rec = recall_score(t, p, average=None, zero_division=0, labels=labels)
@@ -105,6 +146,12 @@ def evaluate_pr_and_confusion(
     )
 
 
+# `no_grad`, not `inference_mode`, and deliberately so: tensors produced under
+# inference mode are *inference tensors*, and the caller — HD-2(iii)'s spherical
+# k-means — mutates what it derives from these (`centres[j] = x[worst]`) and
+# copies the result into a live `nn.Parameter`. The extra bookkeeping
+# `inference_mode` elides is worth having on `_run_eval`, which runs twice per
+# epoch; this runs once per stage and does not need it.
 @torch.no_grad()
 def collect_embeddings(
     model: nn.Module, loader: DataLoader[Any], device: torch.device
@@ -124,6 +171,11 @@ def collect_embeddings(
         for batch in loader:
             x, y, mask, morph = unpack_batch(batch, device)
             _, emb = model(x, return_embed=True, **side_inputs(mask, morph))
-            embs.append(emb.detach().float().cpu())
-            targets.append(y.cpu())
-    return torch.cat(embs), torch.cat(targets)
+            # Kept on the device and moved once below, rather than one blocking
+            # copy per batch. `_spherical_kmeans` runs on the host, so the whole
+            # tensor still lands there — just in a single transfer.
+            embs.append(emb.detach().float())
+            targets.append(y)
+    # One device→host transfer for the whole split rather than one per batch;
+    # `_spherical_kmeans` runs on the host, so everything lands there either way.
+    return torch.cat(embs).cpu(), torch.cat(targets).cpu()

@@ -23,12 +23,15 @@ Three Tier-2 items live here.
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Mapping
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+_log = logging.getLogger(__name__)
 
 #: How far the cosine is held away from ±1 before ``sqrt(1 - c**2)`` is taken.
 #:
@@ -204,12 +207,19 @@ class AdaptiveSubcenterArcFaceHead(nn.Module):
             recall: Per-class recall, keyed by class index. Classes missing
                 from either mapping keep their current margin.
         """
+        # Built on the host and written in one copy: the loop used to issue a
+        # `self.margins[c] = ...` device write per class, i.e. 90 single-element
+        # transfers, and then three more reductions to log the summary.
+        updated = self.margins.detach().cpu().clone()
         for c in sorted(set(precision) & set(recall)):
             raw = self.m_base + self.m_delta * (float(recall[c]) - float(precision[c]))
-            self.margins[c] = min(max(raw, self.m_min), self.m_max)
-        print(
-            f"[INFO] ArcFace margins  mean={self.margins.mean():.3f}  "
-            f"min={self.margins.min():.3f}  max={self.margins.max():.3f}"
+            updated[c] = min(max(raw, self.m_min), self.m_max)
+        self.margins.copy_(updated.to(self.margins.device))
+        _log.info(
+            "[INFO] ArcFace margins  mean=%.3f  min=%.3f  max=%.3f",
+            float(updated.mean()),
+            float(updated.min()),
+            float(updated.max()),
         )
 
     @torch.no_grad()
@@ -274,7 +284,7 @@ class AdaptiveSubcenterArcFaceHead(nn.Module):
                 gram = centres @ centres.t()
                 off = gram - torch.eye(self.K) * 2.0
                 worst = max(worst, float(off.max()))
-        print(f"[INFO] ArcFace (K={self.K}) sub-centres seeded by spherical k-means.")
+        _log.info("[INFO] ArcFace (K=%d) sub-centres seeded by spherical k-means.", self.K)
         return {"classes_seeded": float(seeded), "min_separation": worst}
 
     # ── Forward ───────────────────────────────────────────────────────

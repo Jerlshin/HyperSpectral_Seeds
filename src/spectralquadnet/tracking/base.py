@@ -17,7 +17,14 @@ Method               Channel
 ``banner``           human — a stage header block
 ``log_message``      human — a one-line notice
 ``log_row``          human — one pre-formatted row of a running table
+``progress_start``   human — open a bounded progress display for a stage
+``progress_stop``    human — close it
 ===================  =========================================================
+
+``progress_start``/``progress_stop`` bracket a stage's epoch loop. A backend
+with no notion of a progress display ignores them, and ``log_row`` keeps its
+meaning either way: it is one epoch's summary, and a backend renders it as an
+appended row, as an update to a live bar, or not at all.
 
 The split matters for the console backend: the human channel produces
 readable terminal output, while the machine channel carries diagnostics
@@ -97,6 +104,14 @@ class ExperimentTracker(Protocol):
         """
         ...
 
+    def progress_start(self, tag: str, total: int, description: str = "") -> None:
+        """Open a bounded progress display for ``tag``, spanning ``total`` rows."""
+        ...
+
+    def progress_stop(self, tag: str) -> None:
+        """Close ``tag``'s progress display. Must be safe to call unmatched."""
+        ...
+
 
 class NullTracker:
     """The ``tracking.backend=none`` backend — every method is a no-op.
@@ -134,6 +149,12 @@ class NullTracker:
         return None
 
     def log_row(self, tag: str, cells: dict[str, str], step: int) -> None:
+        return None
+
+    def progress_start(self, tag: str, total: int, description: str = "") -> None:
+        return None
+
+    def progress_stop(self, tag: str) -> None:
         return None
 
 

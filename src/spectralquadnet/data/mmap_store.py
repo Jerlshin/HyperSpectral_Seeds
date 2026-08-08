@@ -15,10 +15,20 @@ Non-negotiable invariants
   it, and only via ``np.array(self.patches[ri])``, which pages in exactly one
   ``(bands, 64, 64)`` patch. Never add a batched ``.copy()`` over the full
   array anywhere on the loader path.
+* **The paths are kept alongside the arrays.** A DataLoader worker is a
+  separate process, and on macOS it is started with ``spawn``, so the dataset
+  is *pickled* into it. ``np.memmap`` pickles by materialising — a worker that
+  received one would silently pull the whole 5.6 GB cube into its own RAM,
+  which is the exact failure the zero-RAM invariant exists to prevent. So
+  :attr:`DataStore.patches_path` and :attr:`DataStore.masks_path` are recorded
+  here and ``RiceSeedDataset.__setstate__`` re-opens the mapping in the worker
+  instead of inheriting it. Never remove the paths without also removing
+  ``num_workers > 0``.
 """
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -29,6 +39,8 @@ import torch
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from spectralquadnet.config.schema import DataConfig
+
+_log = logging.getLogger(__name__)
 
 
 class DataStore:
@@ -55,6 +67,11 @@ class DataStore:
     #: Raw, not standardised: the mean and scale are a property of the *split*,
     #: and `data/morphometrics.py` fits them on the training indices alone.
     morphology: npt.NDArray[Any] | None
+    #: Where the two mmapped arrays came from, so a DataLoader worker can
+    #: re-open them instead of being handed a pickled copy — see the module
+    #: docstring. ``None`` for a store built from in-memory arrays (the tests).
+    patches_path: str | None
+    masks_path: str | None
 
     def __new__(cls, *args: Any, **kwargs: Any) -> DataStore:
         if cls._instance is None:
@@ -64,6 +81,8 @@ class DataStore:
             inst.wavelengths = None
             inst.masks = None
             inst.morphology = None
+            inst.patches_path = None
+            inst.masks_path = None
             cls._instance = inst
         return cls._instance
 
@@ -130,10 +149,11 @@ class DataStore:
         if self.patches is not None:
             return
 
-        print("[DATA] Memory-mapping dataset from disk (Zero-RAM footprint)...")
+        _log.info("[DATA] Memory-mapping dataset from disk (Zero-RAM footprint)...")
         self.patches = np.load(patches_path, mmap_mode="r")
+        self.patches_path = str(patches_path)
         self.labels = np.load(labels_path)
-        print(f"[DATA] ✓ Indexed {self.patches.shape[0]} samples via mmap.")
+        _log.info("[DATA] ✓ Indexed %d samples via mmap.", self.patches.shape[0])
 
     def load_side_arrays(
         self, masks_path: str | None = None, morphology_path: str | None = None
@@ -153,8 +173,9 @@ class DataStore:
         """
         if masks_path and self.masks is None and Path(masks_path).exists():
             self.masks = np.load(masks_path, mmap_mode="r")
+            self.masks_path = str(masks_path)
             self._check_rows(masks_path, self.masks)
-            print(f"[DATA] ✓ Mapped fill maps (FE-2): {self.masks.shape}")
+            _log.info("[DATA] ✓ Mapped fill maps (FE-2): %s", self.masks.shape)
 
         if morphology_path and self.morphology is None and Path(morphology_path).exists():
             morph = np.load(morphology_path).astype(np.float32)
@@ -162,7 +183,7 @@ class DataStore:
             if morph.ndim != 2:
                 raise ValueError(f"{morphology_path} must be (N, 8); got {morph.shape}")
             self.morphology = morph
-            print(f"[DATA] ✓ Loaded morphometrics (FU-4): {morph.shape}")
+            _log.info("[DATA] ✓ Loaded morphometrics (FU-4): %s", morph.shape)
 
     def _check_rows(self, path: str, array: npt.NDArray[Any]) -> None:
         if self.labels is not None and len(array) != len(self.labels):
@@ -184,13 +205,13 @@ class DataStore:
         if self.wavelengths is not None:
             return
 
-        print("[DATA] Loading physical wavelengths from CSV...")
+        _log.info("[DATA] Loading physical wavelengths from CSV...")
         try:
             df = pd.read_csv(csv_path, sep=None, engine="python")
             raw_wl = df.iloc[:, -1].values.astype(np.float32)
             wl_norm = (raw_wl - raw_wl.min()) / (raw_wl.max() - raw_wl.min())
             self.wavelengths = torch.from_numpy(wl_norm).to(device)
-            print(f"[DATA] ✓ Loaded physical wavelengths: {self.wavelengths.size(0)} bands.")
+            _log.info("[DATA] ✓ Loaded physical wavelengths: %d bands.", self.wavelengths.size(0))
         except Exception as e:
             raise RuntimeError(f"Failed to load wavelengths.csv: {e}") from e
 

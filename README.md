@@ -116,7 +116,36 @@ python train.py                                   # the reference experiment
 python train.py stage1.max_lr=1e-4                # single override
 python train.py -m stage1.max_lr=1e-4,5e-4,1e-3   # Hydra sweep
 python train.py run_name=my_run stage1.epochs=20  # short run into outputs/my_run
+
+torchrun --standalone --nproc_per_node=2 train.py # two CUDA GPUs (e.g. T4 x2)
 ```
+
+### Multi-GPU (CUDA)
+
+DDP, launched by `torchrun`. Nothing engages under a plain `python train.py`; the single-device path
+is byte-for-byte the code it was.
+
+The design constraint is that a two-GPU run must report the **same number** as a one-GPU run, and
+that is what rules out `DataParallel`. Both schemes split the batch, and the model has five
+`BatchNorm1d` layers in the fusion plus one in each of Branches C and D — so each replica would
+normalise by *its shard's* statistics rather than the batch's, which is a different function that no
+amount of gradient averaging repairs. `torch.nn.SyncBatchNorm` all-reduces the per-shard sums so
+every replica normalises by the global batch, and it is available for DDP only.
+
+The rest follows from the same rule:
+
+| Concern | Handling |
+| --- | --- |
+| Batch size | Each rank draws `batch // world_size`, so the **global** batch stays `stage1.batch`. A world size that does not divide it is refused, not rounded. |
+| Balanced batches | `ClassBalancedBatchSampler` is seeded under DDP so every rank composes the same batch, then `DistributedBatchShardSampler` gives each rank its slice — class balance survives the split. |
+| Gradients | DDP's mean all-reduce over equal shards is the global-batch gradient. |
+| Evaluation | Sharded, then re-joined by `gather_concat` before any metric is computed. A macro-F1 over half the classes is not half of the macro-F1. |
+| Checkpoints, console | Rank 0 only. Other ranks get a `NullTracker`. |
+| Decisions | Early stopping and Stage 3's greedy SWA accept/reject are broadcast from rank 0 — a rank that decided differently would deadlock the next collective. |
+
+`runtime.multi_gpu=ddp` demands the launcher and raises without it, so a mistyped launch fails
+immediately instead of quietly training on one GPU for eight hours. `runtime.sync_batchnorm=false`
+is the documented, **non-invariant** opt-out.
 
 ### Hardware and mixed precision
 
@@ -139,6 +168,27 @@ Two Metal-specific details are handled in `utils/device.py`:
   raises `scaled_dot_product_attention for MPS does not support dropout`. Grad mode selects the math
   path; forward values, and so the BatchNorm statistics being estimated, are identical.
 
+### Execution knobs (`cfg.runtime`)
+
+Every field under `runtime` is a **throughput** knob, and the invariant that separates it from every
+other config group is that changing it must not change a reported metric. That is why the group
+carries real defaults instead of `MISSING`: the values are not part of the experiment's identity, so
+a config that never mentions them is not under-specified. `-1` means "decide from the hardware".
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| `num_workers` / `eval_num_workers` | `-1` | Half the usable cores (≤8) on CUDA; 2 on Metal/CPU, where the accelerator is the bottleneck and `spawn` start-up is not free. Budgeted **per rank**. |
+| `pin_memory` | `-1` | Page-locked staging, so the H2D copy is an overlapping DMA. CUDA only — there is no Metal equivalent, and an explicit request elsewhere is refused with a reason. |
+| `persistent_workers`, `prefetch_factor` | `-1`, `4` | Stage 1 restarts its loader 600 times; under `spawn` a worker costs seconds to start. |
+| `compile` | `auto` | `torch.compile` on CUDA, **off on Metal**. That is a measurement, not a preference: on this model at batch 32 the Metal inductor backend produced 983 ms per forward against eager's 437 ms, because it cannot fuse the Branch-C 3-D stem. |
+| `fused_optimizer` | `auto` | AdamW's fused multi-tensor kernel on CUDA. The one performance default that is **not** bit-exact — same math, same precision, different accumulation order. `off` reproduces eager AdamW exactly. |
+| `allow_tf32` | `false` | Off on purpose: TF32 cuts a matmul's mantissa from 24 bits to 11. It is a precision change, and Turing (the T4) has no TF32 path anyway. |
+| `channels_last` | `false` | Off on purpose: NHWC re-selects convolution kernels whose reduction order differs. |
+| `multi_gpu`, `sync_batchnorm` | `auto`, `true` | See above. |
+| `progress` | `auto` | A redrawing bar on a TTY, the append-only row stream when stdout is a pipe — a bar written into `training.log` is unreadable, and that file is the record of the run. |
+| `diagnostics_interval` | `50` | Epoch stride for the hardest-class table and the branch-influence ablation behind it (five forward passes). The numbers training consumes — per-class F1, the CDWS weights — are still computed every time; only the rendering is throttled. |
+| `empty_cache_interval` | `0` | Periodic allocator sweep. Stage boundaries always sweep regardless, since that is where Stage 3's two extra model copies are freed. |
+
 Configuration is Hydra-composed from `configs/`, with dataclass schemas in
 `config/schema.py` giving startup-time validation — a typo in a YAML field fails immediately
 instead of hours into Stage 1.
@@ -151,6 +201,9 @@ configs/
 ├── tracking/*.yaml                none | console | wandb | tensorboard
 └── experiment/output_v12_spa40.yaml   composes the above; sets seed and output_dir
 ```
+
+`runtime` has no YAML file: its dataclass defaults are the configuration, and it is overridden on
+the command line (`python train.py runtime.num_workers=8 runtime.compile=on`).
 
 ### Auto-resume
 
@@ -234,6 +287,20 @@ A full training run was never bit-reproducible, and the refactor did not change 
 `set_seed()` sets `cudnn.benchmark=True`, and both custom samplers draw from an unseeded RNG. What
 *is* pinned and tested: weight initialisation, every scheduler and margin value, and the loss of one
 fixed-seed forward+backward step.
+
+One thing the throughput work **did** move, and it is worth stating plainly. `RiceSeedDataset` now
+builds every sample on the host instead of directly on the training device, which is what removed
+the per-sample host-to-device copy and what makes `num_workers > 0` possible at all — a worker
+process cannot hand a CUDA tensor back through the queue. The augmentation *call order* is
+unchanged, every profile probability is unchanged, and every augmentation's distribution is
+unchanged; but the noise tensors are now drawn from the host RNG rather than the accelerator's, and
+at `num_workers > 0` each worker seeds its own stream from the loader's base seed. A run is still
+reproducible at a fixed `cfg.seed` and a fixed worker count. It does not reproduce the *realised
+draws* of a `num_workers=0`, on-device run. Set `runtime.num_workers=0` if you need that stream.
+
+Everything else on the hot path was verified bit-identical rather than argued to be: the EMA update
+(50 steps, every tensor equal), the SAM ascent/descent/restore (15 steps, both ASAM modes), the
+`ProtoNCE` label vectorisation, and the epoch loss/accuracy reduction.
 
 ---
 

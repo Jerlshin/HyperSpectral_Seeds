@@ -22,6 +22,7 @@ observability sink with no backend attached should emit nothing.
 
 from __future__ import annotations
 
+import weakref
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -81,6 +82,9 @@ def compute_branch_influence(
     model.eval()
     influences = torch.zeros(4, device=device)
     total = 0
+    # The four ablation vectors are the same on every batch and every call, so
+    # they are built once rather than 4 x max_batches times.
+    ablations = 1.0 - torch.eye(4, device=device)
 
     for i, batch in enumerate(loader):
         if i >= max_batches:
@@ -91,9 +95,7 @@ def compute_branch_influence(
         p_full = torch.softmax(logits_full, dim=1)
 
         for b in range(4):
-            ablation = torch.ones(4, device=device)
-            ablation[b] = 0.0
-            logits_ab = model(x, branch_mask=ablation, **side)
+            logits_ab = model(x, branch_mask=ablations[b], **side)
             p_ab = torch.softmax(logits_ab, dim=1).clamp(min=1e-10)
             influences[b] += F.kl_div(p_ab.log(), p_full, reduction="batchmean")
         total += 1
@@ -103,8 +105,30 @@ def compute_branch_influence(
 
     influences /= total
     total_inf = influences.sum().clamp(min=1e-8)
-    influences = influences / total_inf * 100.0
-    return {k: float(influences[i]) for i, k in enumerate("ABCD")}
+    # One transfer for all four, rather than one `float(...)` synchronisation
+    # per branch.
+    shares = (influences / total_inf * 100.0).cpu().tolist()
+    return {k: float(v) for k, v in zip("ABCD", shares, strict=True)}
+
+
+def should_render_details(step: int, interval: int) -> bool:
+    """Whether this epoch renders the *expensive* diagnostics.
+
+    Two things hang off this gate, and only one of them is I/O:
+
+    * the hardest-class table, which ``rich`` lays out and measures cell by cell
+      before writing it to a terminal the training loop is blocked on;
+    * :func:`compute_branch_influence`, which is **five forward passes over
+      three batches** — an ablated pass per branch plus the full one.
+
+    Neither feeds training. ``class_f1`` and the CDWS weights, which do, are
+    computed on every call regardless, so throttling this changes what a run
+    *prints*, never what it learns.
+
+    Epoch 1 always renders — a run whose first diagnostic arrived at epoch 50
+    would hide a broken setup for an hour.
+    """
+    return interval <= 1 or step <= 1 or step % interval == 0
 
 
 def compute_class_difficulty(
@@ -115,14 +139,14 @@ def compute_class_difficulty(
     label: str = "Stage",
     tracker: ExperimentTracker | None = None,
     step: int = 0,
+    detail: bool = True,
 ) -> tuple[dict[int, float], dict[int, float]]:
     """Evaluate per-class F1, derive CDWS weights, and log a difficulty summary.
 
-    Runs :func:`~spectralquadnet.engine.evaluate.evaluate_per_class` and
-    :func:`compute_branch_influence` against ``ema_shadow``, builds fresh
-    class-difficulty-weighted-sampling weights from the resulting F1s, and
-    logs a macro-F1/hard-class-count/branch-influence message plus the
-    matching scalars and a hardest-classes table.
+    Runs :func:`~spectralquadnet.engine.evaluate.evaluate_per_class` against
+    ``ema_shadow`` and builds fresh class-difficulty-weighted-sampling weights
+    from the resulting F1s. When ``detail`` is set it additionally runs
+    :func:`compute_branch_influence` and renders the hardest-classes table.
 
     Args:
         cfg: Composed experiment config.
@@ -132,6 +156,9 @@ def compute_class_difficulty(
         label: Prefix for the logged message and table name (e.g. ``"Stage 2"``).
         tracker: Experiment tracker to log to; ``None`` logs nowhere.
         step: Step index passed through to the tracker's scalar/table logs.
+        detail: Whether to run the branch-influence ablation and render the
+            table. See :func:`should_render_details`; the returned values do
+            not depend on it.
 
     Returns:
         ``(class_f1, cdws_weights)`` — per-class F1 and the sampling weights
@@ -145,30 +172,66 @@ def compute_class_difficulty(
     macro = float(np.mean(list(class_f1.values())))
     n_hard = sum(1 for f in class_f1.values() if f < 0.50)
 
-    branch_inf = compute_branch_influence(ema_shadow, val_ldr, device, max_batches=3)
-
-    trk.log_message(
+    scalars = {"diag/macro_f1": macro, "diag/hard_classes": float(n_hard)}
+    summary = (
         f"{label} class difficulty — macro F1={macro:.3f}  "
-        f"hard classes (<0.50 F1): {n_hard}/{cfg.data.num_classes}  |  "
-        f"Branch influence % → "
-        f"A:{branch_inf['A']:.1f}  B:{branch_inf['B']:.1f}  "
-        f"C:{branch_inf['C']:.1f}  D:{branch_inf['D']:.1f}"
+        f"hard classes (<0.50 F1): {n_hard}/{cfg.data.num_classes}"
     )
-    trk.log_scalars(
-        {
-            "diag/macro_f1": macro,
-            "diag/hard_classes": float(n_hard),
-            **{f"influence/branch_{k.lower()}": v for k, v in branch_inf.items()},
-        },
-        step=step,
-    )
-    trk.log_table(f"hardest_classes/{label}", hardest_classes_report(class_f1), step=step)
+
+    if detail:
+        branch_inf = compute_branch_influence(ema_shadow, val_ldr, device, max_batches=3)
+        summary += (
+            "  |  Branch influence % → "
+            f"A:{branch_inf['A']:.1f}  B:{branch_inf['B']:.1f}  "
+            f"C:{branch_inf['C']:.1f}  D:{branch_inf['D']:.1f}"
+        )
+        scalars.update({f"influence/branch_{k.lower()}": v for k, v in branch_inf.items()})
+
+    trk.log_message(summary)
+    trk.log_scalars(scalars, step=step)
+    if detail:
+        trk.log_table(f"hardest_classes/{label}", hardest_classes_report(class_f1), step=step)
     return class_f1, cdws_wts
 
 
 # ══════════════════════════════════════════════════════════════════════
 #  Per-branch gradient diagnostics
 # ══════════════════════════════════════════════════════════════════════
+
+
+#: ``model -> {prefix: [parameters]}``, so the name-prefix match runs once per
+#: model rather than once per optimiser step.
+#:
+#: The grouping is a pure function of the module's parameter *names*, which do
+#: not change over a run, but the match did not know that: at ~200 parameters
+#: and six prefixes it re-ran 1,200 ``str.startswith`` calls on every step of
+#: every stage, and both the AdamW and the SAM loop call this unconditionally
+#: whenever GradNorm is on (``aux_gradnorm_alpha != 0``, which the shipped
+#: config sets). Weak keys so a discarded model — Stage 3 builds two — does not
+#: keep its parameters alive through this cache.
+_BRANCH_GROUP_CACHE: weakref.WeakKeyDictionary[nn.Module, dict[str, list[nn.Parameter]]] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _branch_groups(model: nn.Module, prefixes: tuple[str, ...]) -> dict[str, list[nn.Parameter]]:
+    """``{prefix: parameters}`` in ``named_parameters()`` order, cached per model.
+
+    Order is load-bearing: the caller sums the per-parameter squares
+    sequentially, and float addition is not associative, so a reordering would
+    move the reported norm — and with it the GradNorm weights that read it.
+    """
+    cached = _BRANCH_GROUP_CACHE.get(model)
+    if cached is not None and cached.get("__prefixes__") == list(prefixes):  # type: ignore[comparison-overlap]
+        return cached
+    groups: dict[str, Any] = {"__prefixes__": list(prefixes)}
+    for name, param in model.named_parameters():
+        for prefix in prefixes:
+            if name.startswith(prefix):
+                groups.setdefault(prefix, []).append(param)
+                break
+    _BRANCH_GROUP_CACHE[model] = groups
+    return groups
 
 
 @torch.no_grad()
@@ -203,14 +266,22 @@ def branch_grad_norm_tensors(
         ``arcface_head``) stays distinguishable from one that trains but is flat.
     """
     squares: dict[str, torch.Tensor] = {}
-    for name, param in model.named_parameters():
-        if param.grad is None:
+    for prefix, params in _branch_groups(model, prefixes).items():
+        if prefix == "__prefixes__":
             continue
-        for prefix in prefixes:
-            if name.startswith(prefix):
-                sq = param.grad.detach().float().pow(2).sum()
-                squares[prefix] = sq if prefix not in squares else squares[prefix] + sq
-                break
+        grads = [p.grad.detach().float() for p in params if p.grad is not None]
+        if not grads:
+            continue
+        # `_foreach_pow` squares the whole group in one multi-tensor kernel
+        # instead of one launch per parameter; the sum stays sequential and in
+        # parameter order, so the float is the one the per-parameter loop
+        # produced.
+        total: torch.Tensor | None = None
+        for squared in torch._foreach_pow(grads, 2):
+            term = squared.sum()
+            total = term if total is None else total + term
+        assert total is not None  # `grads` is non-empty
+        squares[prefix] = total
     return {prefix.rstrip("."): value.sqrt() for prefix, value in squares.items()}
 
 

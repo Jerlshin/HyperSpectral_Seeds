@@ -112,6 +112,8 @@ class ContinuumDepths(nn.Module):
 
     chord_w: torch.Tensor
     chord_valid: torch.Tensor
+    chord_w_complement: torch.Tensor
+    chord_invalid: torch.Tensor
 
     def __init__(
         self,
@@ -138,6 +140,14 @@ class ContinuumDepths(nn.Module):
 
         self.register_buffer("chord_w", t, persistent=False)
         self.register_buffer("chord_valid", valid, persistent=False)
+        # `1 - t` and `~valid` are functions of the wavelength grid alone, and
+        # `envelope` rebuilt both on every chunk of every forward — five
+        # `(C/chunk, C, C)` tensors per call, at 64,000 elements each, to
+        # recompute a constant. They are buffers for the same reason the two
+        # above are, and non-persistent for the same reason: derivable from
+        # `wl_pe_cnn.pe`, and cubic in the band count.
+        self.register_buffer("chord_w_complement", 1.0 - t, persistent=False)
+        self.register_buffer("chord_invalid", ~valid, persistent=False)
 
     def envelope(self, r: torch.Tensor) -> torch.Tensor:
         """The upper concave envelope of ``r``, evaluated at every band. ``(B, C)``."""
@@ -145,13 +155,11 @@ class ContinuumDepths(nn.Module):
         n_bands = r.shape[1]
         for start in range(0, n_bands, self.chunk):
             stop = min(start + self.chunk, n_bands)
-            t = self.chord_w[start:stop]  # (A, C_b, C_i)
-            valid = self.chord_valid[start:stop]
             chords = (
-                r[:, start:stop, None, None] * (1.0 - t)  # (B, A, C_b, C_i)
-                + r[:, None, :, None] * t
+                r[:, start:stop, None, None] * self.chord_w_complement[start:stop]
+                + r[:, None, :, None] * self.chord_w[start:stop]
             )
-            chords = chords.masked_fill(~valid, -torch.inf)
+            chords = chords.masked_fill(self.chord_invalid[start:stop], -torch.inf)
             env = torch.maximum(env, chords.amax(dim=(1, 2)))
         return env
 

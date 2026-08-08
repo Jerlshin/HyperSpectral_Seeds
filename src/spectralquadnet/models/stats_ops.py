@@ -47,6 +47,43 @@ def foreground_mask(x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.
     return m.to(dtype=x.dtype, device=x.device)
 
 
+def extract_grid_spectra_multi(
+    x: torch.Tensor,
+    grid_sizes: tuple[int, ...],
+    mask: torch.Tensor | None = None,
+) -> list[tuple[torch.Tensor, torch.Tensor]]:
+    """:func:`extract_grid_spectra` at several grid sizes, sharing the masked cube.
+
+    Branches A and D read the same patch at 8×8 and 4×4 (``model.grid_size_a``
+    and ``model.grid_size_d``), and calling the single-grid function twice
+    materialised ``x * m`` — a full ``(B, C, H, W)`` tensor, 80 MB at batch 128
+    — once per grid. Only the *pooling* differs between the two, so the product
+    is formed once here and both grids pool the same buffer.
+
+    Bit-identical to two separate calls: ``adaptive_avg_pool2d`` is a pure
+    function of its input, and its input is the same tensor either way.
+
+    Returns:
+        One ``(grid_mean, cell_mass)`` pair per entry of ``grid_sizes``, in order.
+    """
+    n_batch, n_bands = x.shape[0], x.shape[1]
+    m = foreground_mask(x, mask)
+    masked = x * m
+
+    out: list[tuple[torch.Tensor, torch.Tensor]] = []
+    for grid_size in grid_sizes:
+        grid_sum = F.adaptive_avg_pool2d(masked, (grid_size, grid_size))
+        grid_mask_sum = F.adaptive_avg_pool2d(m, (grid_size, grid_size))
+        grid_mean = grid_sum / grid_mask_sum.clamp(min=1e-5)
+        out.append(
+            (
+                grid_mean.view(n_batch, n_bands, -1).transpose(1, 2),
+                grid_mask_sum.view(n_batch, -1),
+            )
+        )
+    return out
+
+
 def extract_grid_spectra(
     x: torch.Tensor,
     grid_size: int = 4,
@@ -74,21 +111,7 @@ def extract_grid_spectra(
         ``(grid_mean, cell_mass)`` of shapes ``(B, grid_size ** 2, C)`` and
         ``(B, grid_size ** 2)``.
     """
-    n_batch, n_bands = x.shape[0], x.shape[1]
-    m = foreground_mask(x, mask)
-
-    # Pool the valid signal and the mask area separately
-    grid_sum = F.adaptive_avg_pool2d(x * m, (grid_size, grid_size))
-    grid_mask_sum = F.adaptive_avg_pool2d(m, (grid_size, grid_size))
-
-    # Divide to get the true mean of valid pixels in that specific cell
-    # Clamp avoids division by zero for cells that are entirely background
-    grid_mean = grid_sum / grid_mask_sum.clamp(min=1e-5)
-
-    # Reshape and transpose to (Batch, Regions, Channels)
-    spectra = grid_mean.view(n_batch, n_bands, -1).transpose(1, 2)
-    mass = grid_mask_sum.view(n_batch, -1)
-    return spectra, mass
+    return extract_grid_spectra_multi(x, (grid_size,), mask)[0]
 
 
 def masked_spectral_stats(
@@ -165,8 +188,14 @@ def masked_mean_spectrum(x: torch.Tensor, mask: torch.Tensor | None = None) -> t
     only one of the nine the network still consumes, and computing the other
     eight (two sorts over 4,096 pixels among them) to throw them away was a
     measurable share of the forward pass.
+
+    ``x`` is promoted to float32 **once**. It used to be promoted twice — once
+    for the flattened cube and again inside the ``foreground_mask`` call — which
+    is free in fp32 (``.float()`` on a float32 tensor returns the same object)
+    and a second full-cube copy under autocast.
     """
     n_batch, n_bands = x.shape[0], x.shape[1]
-    flat = x.float().reshape(n_batch, n_bands, -1)
-    m = foreground_mask(x.float(), mask).reshape(n_batch, 1, -1)
+    x32 = x.float()
+    flat = x32.reshape(n_batch, n_bands, -1)
+    m = foreground_mask(x32, mask).reshape(n_batch, 1, -1)
     return torch.nan_to_num((flat * m).sum(2) / m.sum(2).clamp(min=1.0), 0.0)

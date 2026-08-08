@@ -48,24 +48,31 @@ this case.
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import numpy.typing as npt
+import torch
 from sklearn.model_selection import train_test_split
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, Sampler
 
 from spectralquadnet.data.datasets import RiceSeedDataset
 from spectralquadnet.data.morphometrics import standardise_morphometrics
-from spectralquadnet.data.samplers import ClassBalancedBatchSampler, HardClassOversampledSampler
+from spectralquadnet.data.samplers import (
+    ClassBalancedBatchSampler,
+    DistributedBatchShardSampler,
+    DistributedIndexShardSampler,
+    HardClassOversampledSampler,
+)
+from spectralquadnet.utils.distributed import DistContext
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    import torch
-
     from spectralquadnet.config.schema import ExperimentConfig
     from spectralquadnet.data.mmap_store import DataStore
+    from spectralquadnet.utils.device import RuntimePlan
 
 #: Accepted values of ``cfg.data.split_scheme``.
 SPLIT_SCHEMES: tuple[str, ...] = ("stratified", "grouped")
@@ -75,6 +82,11 @@ SPLIT_SCHEMES: tuple[str, ...] = ("stratified", "grouped")
 #: the per-class group ordering is reproducible without touching the global
 #: NumPy RNG (``train.py`` requires the split to consume no shared stream).
 SPLIT_SEED: int = 42
+
+#: Batch size every evaluation loader is built at. Was a literal repeated at
+#: four call sites; evaluation never touches a gradient, so this is bounded by
+#: activation memory alone and is not a hyperparameter.
+EVAL_BATCH: int = 256
 
 #: What :func:`grouped_split` does about a class with only one group. ``error``
 #: refuses and names the classes — §3.1's "report the count explicitly … rather
@@ -543,6 +555,92 @@ def build_splits(
     return bundle.labels, bundle.train, bundle.val, bundle.test
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  DataLoader construction
+# ══════════════════════════════════════════════════════════════════════
+
+
+def seed_worker(worker_id: int) -> None:
+    """Seed a worker's ``random`` and NumPy streams from the one torch already set.
+
+    ``DataLoader`` derives each worker's *torch* seed from its ``generator``, so
+    the ``torch.rand``/``torch.randint`` guards in
+    :meth:`~spectralquadnet.data.datasets.RiceSeedDataset.__getitem__` are
+    reproducible out of the box. The two augmentations that do not use torch —
+    :meth:`~spectralquadnet.data.datasets.RiceSeedDataset._spectral_warp`'s
+    ``random.uniform`` — are not, and under ``spawn`` a worker's ``random``
+    module starts from OS entropy. Deriving both from ``torch.initial_seed()``
+    puts every stream in the worker back under ``cfg.seed``.
+    """
+    seed = torch.initial_seed() % 2**32
+    np.random.seed(seed)
+    random.seed(seed)
+
+
+def loader_options(plan: RuntimePlan | None = None, *, evaluation: bool = False) -> dict[str, Any]:
+    """The performance keywords for a ``DataLoader``, or the pre-refactor defaults.
+
+    ``plan=None`` yields ``num_workers=0, pin_memory=False`` — a synchronous,
+    single-process feed, which is what every loader in this module used to be
+    unconditionally. Passing a plan is what turns on worker processes, page-locked
+    staging and prefetch; see :class:`~spectralquadnet.utils.device.RuntimePlan`.
+    """
+    if plan is None:
+        return {"num_workers": 0, "pin_memory": False}
+    return plan.eval_loader_kwargs if evaluation else plan.loader_kwargs
+
+
+def _make_loader(
+    dataset: Dataset[Any],
+    *,
+    plan: RuntimePlan | None,
+    evaluation: bool,
+    seed: int | None = None,
+    **kwargs: Any,
+) -> DataLoader[Any]:
+    """One place that knows how a loader is configured on this hardware.
+
+    Every ``DataLoader(...)`` in the package goes through here, so worker
+    counts, pinning, prefetch depth and the per-worker RNG seeding cannot drift
+    between the seven construction sites that used to hardcode
+    ``num_workers=0``.
+    """
+    options = loader_options(plan, evaluation=evaluation)
+    if options["num_workers"] > 0:
+        kwargs["worker_init_fn"] = seed_worker
+        if seed is not None:
+            generator = torch.Generator()
+            generator.manual_seed(int(seed))
+            kwargs["generator"] = generator
+    return DataLoader(dataset, **options, **kwargs)
+
+
+def _shard_batch(batch_train: int, dist: DistContext) -> int:
+    """The per-rank batch size whose ``world_size`` copies sum to ``batch_train``.
+
+    This is what keeps a two-GPU run the same run: DDP averages the per-rank
+    gradients, so the optimiser sees the gradient of the **global** batch, and
+    the global batch has to be the single-GPU one or ``stage1.batch`` has
+    silently doubled.
+
+    Raises:
+        ValueError: The batch does not divide by the world size. Unequal shards
+            make the all-reduced mean a weighted average of differently sized
+            means, which is not the global-batch gradient — so this refuses
+            rather than approximating it.
+    """
+    if not dist.enabled:
+        return batch_train
+    if batch_train % dist.world_size:
+        raise ValueError(
+            f"batch size {batch_train} does not divide by world_size {dist.world_size}. "
+            "DDP splits the batch so the global batch stays the configured one; an uneven "
+            "split would change the effective batch. Use a world size that divides it, or "
+            "set runtime.multi_gpu=off."
+        )
+    return batch_train // dist.world_size
+
+
 def build_loaders(
     cfg: ExperimentConfig | Any,
     store: DataStore,
@@ -555,29 +653,40 @@ def build_loaders(
     all_labels: npt.NDArray[Any] | None = None,
     train_aug: str = "none",
     class_weights: dict[int, float] | None = None,
+    plan: RuntimePlan | None = None,
+    dist: DistContext | None = None,
+    morph: npt.NDArray[Any] | None = None,
 ) -> tuple[DataLoader[Any], DataLoader[Any], DataLoader[Any]]:
     """Build train/val/test loaders sharing one ``DataStore``/config/device.
 
     The train loader uses a :class:`~spectralquadnet.data.samplers.ClassBalancedBatchSampler`
     when ``balanced=True``, otherwise plain shuffled batching; val/test are
-    always shuffled=False at a fixed batch size of 256.
+    always shuffled=False at :data:`EVAL_BATCH`.
 
     Args:
         cfg: Composed experiment config.
         store: Memory-mapped patch store shared by all three datasets.
-        device: Device patches are moved to on ``__getitem__``.
+        device: Device the batch is moved to. Recorded on the dataset; the move
+            itself happens once per batch in ``engine/batch.py``.
         train_idx: Indices for the training split.
         val_idx: Indices for the validation split.
         test_idx: Indices for the test split.
-        batch_train: Batch size for the (non-balanced) train loader.
+        batch_train: **Global** batch size for the (non-balanced) train loader.
+            Under DDP each rank draws ``batch_train // world_size``.
         balanced: Whether to use class-balanced batch sampling for training.
         all_labels: Full label array, required when ``balanced=True``.
         train_aug: Augmentation profile name for the training dataset.
         class_weights: Optional per-class weights for the balanced sampler.
+        plan: Resolved runtime plan. ``None`` keeps the synchronous
+            single-process feed, which is what the unit tests build.
+        dist: DDP context. ``None`` is single-process.
+        morph: Pre-fitted standardised morphometrics, to avoid refitting the
+            train-split mean and scale once per call. ``None`` fits them here.
 
     Returns:
         ``(train_loader, val_loader, test_loader)``.
     """
+    dist = dist or DistContext()
     # Annotated rather than inferred: the inferred value type is the union of the
     # three entries, which cannot be checked against `RiceSeedDataset`'s distinct
     # keyword types when unpacked with `**`.
@@ -585,29 +694,122 @@ def build_loaders(
         store=store,
         data_cfg=cfg.data,
         device=device,
-        morph=standardised_morphometrics(store, train_idx),
+        morph=standardised_morphometrics(store, train_idx) if morph is None else morph,
     )
 
     ds = RiceSeedDataset(train_idx, aug_strength=train_aug, **kw)
+    seed = int(getattr(cfg, "seed", 42))
 
     if balanced and all_labels is not None:
-        samp = ClassBalancedBatchSampler(
+        samp: Any = ClassBalancedBatchSampler(
             all_labels[train_idx],
             cfg.stage2.bal_n_cls,
             cfg.stage2.bal_n_spc,
             class_weights=class_weights,
+            # Every rank must compose the *same* batch before slicing it, or
+            # the "global batch" the gradient average describes does not exist.
+            seed=seed if dist.enabled else None,
         )
-        tr_ldr = DataLoader(ds, batch_sampler=samp, num_workers=0)
+        if dist.enabled:
+            samp = DistributedBatchShardSampler(samp, dist.rank, dist.world_size)
+        tr_ldr = _make_loader(ds, plan=plan, evaluation=False, seed=seed, batch_sampler=samp)
     else:
-        tr_ldr = DataLoader(ds, batch_size=batch_train, shuffle=True, drop_last=True, num_workers=0)
+        tr_ldr = _make_loader(
+            ds,
+            plan=plan,
+            evaluation=False,
+            seed=seed,
+            batch_size=_shard_batch(batch_train, dist),
+            shuffle=not dist.enabled,
+            sampler=(
+                torch.utils.data.DistributedSampler(
+                    ds, num_replicas=dist.world_size, rank=dist.rank, shuffle=True, seed=seed
+                )
+                if dist.enabled
+                else None
+            ),
+            drop_last=True,
+        )
 
-    va_ldr = DataLoader(
-        RiceSeedDataset(val_idx, **kw), batch_size=256, shuffle=False, num_workers=0
-    )
-    te_ldr = DataLoader(
-        RiceSeedDataset(test_idx, **kw), batch_size=256, shuffle=False, num_workers=0
-    )
+    va_ldr = build_eval_loader(RiceSeedDataset(val_idx, **kw), plan=plan, dist=dist)
+    te_ldr = build_eval_loader(RiceSeedDataset(test_idx, **kw), plan=plan, dist=dist)
     return tr_ldr, va_ldr, te_ldr
+
+
+def build_train_loader(
+    dataset: Dataset[Any],
+    batch: int,
+    *,
+    seed: int = SPLIT_SEED,
+    plan: RuntimePlan | None = None,
+    dist: DistContext | None = None,
+) -> DataLoader[Any]:
+    """A shuffled, drop-last training loader over an **already-built** dataset.
+
+    :func:`build_loaders` constructs its own datasets, so Stage 1's three
+    per-phase loaders — which differ only in their augmentation profile — cannot
+    go through it. They still need the same worker, pinning and DDP-sharding
+    decisions, which is what this shares with it.
+
+    Args:
+        dataset: The dataset to iterate.
+        batch: **Global** batch size; each rank draws ``batch // world_size``.
+        seed: Seeds the loader's generator and the distributed sampler.
+        plan: Resolved runtime plan; ``None`` keeps the synchronous feed.
+        dist: DDP context; ``None`` is single-process.
+    """
+    dist = dist or DistContext()
+    sampler: Sampler[int] | None = (
+        torch.utils.data.DistributedSampler(
+            dataset, num_replicas=dist.world_size, rank=dist.rank, shuffle=True, seed=seed
+        )
+        if dist.enabled
+        else None
+    )
+    return _make_loader(
+        dataset,
+        plan=plan,
+        evaluation=False,
+        seed=seed,
+        batch_size=_shard_batch(batch, dist),
+        shuffle=not dist.enabled,
+        sampler=sampler,
+        drop_last=True,
+    )
+
+
+def build_eval_loader(
+    dataset: Dataset[Any],
+    *,
+    plan: RuntimePlan | None = None,
+    dist: DistContext | None = None,
+    batch_size: int = EVAL_BATCH,
+) -> DataLoader[Any]:
+    """An unshuffled loader over an evaluation split, sharded across ranks under DDP.
+
+    ``drop_last=False`` and ``shuffle=False`` on both paths: every patch must be
+    scored exactly once, and the order has to be the order the targets come back
+    in. Under DDP the shards are re-joined by
+    :func:`~spectralquadnet.utils.distributed.gather_concat`, which trims the
+    padding ``DistributedSampler`` adds — so a val set whose size does not
+    divide by the world size is still scored on its true size.
+    """
+    dist = dist or DistContext()
+    sampler: Sampler[int] | None = (
+        torch.utils.data.DistributedSampler(
+            dataset, num_replicas=dist.world_size, rank=dist.rank, shuffle=False, drop_last=False
+        )
+        if dist.enabled
+        else None
+    )
+    return _make_loader(
+        dataset,
+        plan=plan,
+        evaluation=True,
+        batch_size=batch_size,
+        shuffle=False,
+        sampler=sampler,
+    )
 
 
 def standardised_morphometrics(
@@ -636,8 +838,10 @@ def build_calib_loader(
     store: DataStore,
     device: torch.device | str,
     calib_idx: npt.NDArray[Any],
-    batch_size: int = 256,
+    batch_size: int = EVAL_BATCH,
     train_idx: npt.NDArray[Any] | None = None,
+    plan: RuntimePlan | None = None,
+    dist: DistContext | None = None,
 ) -> DataLoader[Any] | None:
     """An un-augmented, unshuffled loader over the calibration split (P-5 / T4-5).
 
@@ -652,7 +856,7 @@ def build_calib_loader(
     # is a held-out split like val and test, and standardising it on itself
     # would put a different origin under the margins than under the gradients.
     fit_on = train_idx if train_idx is not None else calib_idx
-    return DataLoader(
+    return build_eval_loader(
         RiceSeedDataset(
             calib_idx,
             store=store,
@@ -660,14 +864,16 @@ def build_calib_loader(
             device=device,
             morph=standardised_morphometrics(store, fit_on),
         ),
+        plan=plan,
+        dist=dist,
         batch_size=batch_size,
-        shuffle=False,
-        num_workers=0,
     )
 
 
 def build_natural_prior_loader(
-    loader: DataLoader[Any], batch_size: int | None = None
+    loader: DataLoader[Any],
+    batch_size: int | None = None,
+    plan: RuntimePlan | None = None,
 ) -> DataLoader[Any]:
     """Re-wrap ``loader``'s dataset in a plain shuffled loader, dropping any sampler.
 
@@ -697,8 +903,16 @@ def build_natural_prior_loader(
             n_spc = getattr(sampler, "n_spc", None)
             bs = n_cls * n_spc if n_cls and n_spc else 128
         batch_size = int(bs)
-    return DataLoader(
-        loader.dataset, batch_size=batch_size, shuffle=True, drop_last=False, num_workers=0
+    return _make_loader(
+        loader.dataset,
+        plan=plan,
+        # BN re-estimation is a forward-only pass over the training split, so it
+        # is budgeted like an evaluation loader: workers, but never persistent
+        # ones, since this loader is built once and dropped.
+        evaluation=True,
+        batch_size=batch_size,
+        shuffle=True,
+        drop_last=False,
     )
 
 
@@ -707,6 +921,8 @@ def build_phase3_loader(
     store: DataStore,
     train_ds: Dataset[Any],
     class_f1: dict[int, float],
+    plan: RuntimePlan | None = None,
+    dist: DistContext | None = None,
 ) -> DataLoader[Any]:
     """Build the Phase-3 DataLoader with hard-class oversampling.
 
@@ -726,19 +942,35 @@ def build_phase3_loader(
     Returns:
         DataLoader over ``train_ds``, oversampled or plain-shuffled.
     """
+    dist = dist or DistContext()
+    seed = int(getattr(cfg, "seed", 42))
+    batch = _shard_batch(cfg.stage1.batch, dist)
+
     if not cfg.stage1.p3_oversample or not class_f1:
-        return DataLoader(
-            train_ds, batch_size=cfg.stage1.batch, shuffle=True, drop_last=True, num_workers=0
+        return _make_loader(
+            train_ds,
+            plan=plan,
+            evaluation=False,
+            seed=seed,
+            batch_size=batch,
+            shuffle=not dist.enabled,
+            sampler=(
+                torch.utils.data.DistributedSampler(
+                    train_ds, num_replicas=dist.world_size, rank=dist.rank, shuffle=True, seed=seed
+                )
+                if dist.enabled
+                else None
+            ),
+            drop_last=True,
         )
 
-    labels = store.require_labels()
-    # `.indices` is `RiceSeedDataset`'s, not the generic `Dataset` protocol's;
-    # the parameter type stays the duck-typed `Dataset` so `DataLoader.dataset`
-    # can be handed straight in without a downcast.
-    train_labels = np.array(
-        [int(labels[train_ds.indices[i]]) for i in range(len(train_ds.indices))]  # type: ignore[attr-defined]
-    )
-    sampler = HardClassOversampledSampler(
+    # `.indices`/`.split_labels` are `RiceSeedDataset`'s, not the generic
+    # `Dataset` protocol's; the parameter type stays the duck-typed `Dataset` so
+    # `DataLoader.dataset` can be handed straight in without a downcast. The
+    # labels were rebuilt here with a Python loop over every training index;
+    # the dataset already resolved them once at construction.
+    train_labels = np.asarray(train_ds.split_labels)  # type: ignore[attr-defined]
+    sampler: Any = HardClassOversampledSampler(
         labels=train_labels,
         class_f1=class_f1,
         num_samples=len(train_labels),
@@ -747,6 +979,14 @@ def build_phase3_loader(
         hard_f1_thresh=cfg.stage1.p3_hard_f1_thresh,
         eps=cfg.stage1.p3_oversample_eps,
     )
-    return DataLoader(
-        train_ds, batch_size=cfg.stage1.batch, sampler=sampler, drop_last=True, num_workers=0
+    if dist.enabled:
+        sampler = DistributedIndexShardSampler(sampler, dist.rank, dist.world_size)
+    return _make_loader(
+        train_ds,
+        plan=plan,
+        evaluation=False,
+        seed=seed,
+        batch_size=batch,
+        sampler=sampler,
+        drop_last=True,
     )

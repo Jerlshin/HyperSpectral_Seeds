@@ -76,3 +76,11 @@ class MultiTracker:
     def log_row(self, tag: str, cells: dict[str, str], step: int) -> None:
         for t in self._trackers:
             t.log_row(tag, cells, step)
+
+    def progress_start(self, tag: str, total: int, description: str = "") -> None:
+        for t in self._trackers:
+            t.progress_start(tag, total, description)
+
+    def progress_stop(self, tag: str) -> None:
+        for t in self._trackers:
+            t.progress_stop(tag)
