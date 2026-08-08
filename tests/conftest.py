@@ -4,6 +4,13 @@ Most fixtures here need nothing but the committed golden files. The two that do
 need real artifacts (:func:`checkpoint_paths` and the ``dataset/`` wavelength CSV)
 skip themselves when those are absent, so ``pytest`` stays green on a fresh clone
 where ``dataset/`` and ``outputs/`` are gitignored.
+
+``pytest_addoption``/``pytest_collection_modifyitems`` below make the default
+invocation — bare ``pytest``, ``pytest tests/``, ``pytest tests/unit/`` — a fast
+tier: ``regression``, ``slow`` and ``requires_dataset`` tests are collected but
+reported as skipped, not deselected, so `-k`/`-m` filtering and test counts stay
+honest. Pass the matching ``--run-*`` flag (or ``--run-all``) to opt them back
+in; CI and pre-release runs should use ``pytest tests/ --run-all``.
 """
 
 from __future__ import annotations
@@ -20,6 +27,37 @@ import torch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
+
+_OPT_IN_MARKERS = ("regression", "slow", "requires_dataset")
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    group = parser.getgroup("spectralquadnet")
+    for name in _OPT_IN_MARKERS:
+        group.addoption(
+            f"--run-{name.replace('_', '-')}",
+            action="store_true",
+            default=False,
+            help=f"also run tests marked '{name}' (skipped by default for a fast dev loop)",
+        )
+    group.addoption(
+        "--run-all",
+        action="store_true",
+        default=False,
+        help="shorthand for every --run-* flag above",
+    )
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    run_all = config.getoption("--run-all")
+    enabled = {name for name in _OPT_IN_MARKERS if run_all or config.getoption(f"--run-{name.replace('_', '-')}")}
+    for marker in _OPT_IN_MARKERS:
+        if marker in enabled:
+            continue
+        skip = pytest.mark.skip(reason=f"needs --run-{marker.replace('_', '-')} (or --run-all)")
+        for item in items:
+            if marker in item.keywords:
+                item.add_marker(skip)
 #: Schema-v1 goldens — the pinned reference implementation's values, frozen.
 GOLDEN_V1 = Path(__file__).resolve().parent / "regression" / "golden"
 #: Schema-v2 goldens — the Tier-2 architecture. Frozen at Tier-3 completion and
@@ -46,6 +84,21 @@ if str(SCRIPTS) not in sys.path:
 # ══════════════════════════════════════════════════════════════════════
 #  The pinned reference implementation
 # ══════════════════════════════════════════════════════════════════════
+
+
+@pytest.fixture(autouse=True)
+def _clear_accelerator_memory():
+    """Frees CUDA/MPS cache after every test — a no-op on CPU-only runs.
+
+    Model-instantiation tests build a fresh ``SpectralQuadNet`` per test; on a
+    GPU-backed CI runner or a developer's Metal machine, letting each one's
+    allocator cache linger is how a fast suite still creeps up on VRAM.
+    """
+    yield
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    if torch.backends.mps.is_available():
+        torch.mps.empty_cache()
 
 
 @pytest.fixture(scope="session")

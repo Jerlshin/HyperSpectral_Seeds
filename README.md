@@ -260,11 +260,18 @@ bottom-K hardest-classes table.
 ## Development
 
 ```bash
-pytest tests/            # unit + regression
+pytest tests/                              # fast tier only — seconds, not minutes
+pytest tests/ --run-all                    # + regression, slow and requires_dataset tests
+pytest tests/ --run-regression             # just the config/numerics regression gates
 ruff check src scripts train.py tests
 black --check src scripts train.py tests
 mypy                     # --strict, configured in pyproject.toml
 ```
+
+Tests marked `regression`, `slow` or `requires_dataset` are collected but skipped by default
+(`tests/conftest.py::pytest_collection_modifyitems`), so a bare `pytest tests/unit/` finishes in
+a few seconds. Pass the matching `--run-<marker>` flag, or `--run-all` for everything, to opt them
+back in — that's what CI and pre-release checks should run.
 
 This package was mechanically decomposed from a single 2,857-line script (`hsi_training.py`, plus
 three root-level data scripts), all of which Phase 5 deleted. The decomposition is still
@@ -274,7 +281,7 @@ introduced no behavioural drift:
 
 | Check | Guarantees |
 |---|---|
-| `pytest tests/regression/` | the three real checkpoints load `strict=True`; a fixed-seed forward pass matches its pre-refactor golden logits; the recorded metrics regenerate |
+| `pytest tests/regression/ --run-all` | the three real checkpoints load `strict=True`; a fixed-seed forward pass matches its pre-refactor golden logits; the recorded metrics regenerate |
 | `python scripts/check_ast_no_op_move.py` | every relocated class/method is AST-identical to the pre-refactor original, or carries a written deviation reason |
 | `python scripts/check_config_roundtrip.py` | all 81 keys of the original `CONFIG` dict map 1:1 onto `configs/`, with identical values |
 

@@ -1,39 +1,70 @@
 # 3 · Model Architecture
 
-Notation throughout: $B$ = batch, $C = 40$ bands, $H = W = 64$, $N_g = 16$ grid cells
-($4\times4$), $D = 256$ branch/embedding width, $K = 90$ classes. Grid-flattened tensors are
-written with leading dimension $BN_g = 16B$. All shapes are verified against a live traced
-forward pass of the shipped configuration.
+Notation throughout: $B$ = batch, $C = 40$ bands, $H = W = 64$. The two grid branches use
+**different** grids since Tier 3: Branch A pools onto an $8\times8$ grid
+($N_a = 64$ cells, flattened batch $BN_a = 64B$), Branch D onto a $4\times4$ grid
+($N_d = 16$ cells, flattened batch $BN_d = 16B$) — before Tier 3 they shared one $4\times4$
+grid and received a byte-identical input; separate `grid_size_a`/`grid_size_d` config keys now
+make that impossible to reintroduce silently. $D = 256$ is the fusion/embedding width,
+$K_{\text{cls}} = 90$ classes, $K_{\text{sub}} = 3$ ArcFace sub-centres per class. All shapes
+and parameter counts below are measured from a live `SpectralQuadNet.from_config` build of the
+shipped configuration (`configs/model/spectral_quadnet_v4.yaml`), not estimated.
+
+This is the **Tier-3 architectural redesign** (`IMPROVEMENT_PLAN.md` §3.2–§3.4,
+`MIGRATION_PROGRESS.md` → Tier 3). It replaced a 4-branch, 7.88 M-parameter model in which two
+branches received a byte-identical input, the statistics branch read a provably rank-2 tensor,
+no module combined spectral and spatial extent, and fusion was Perceiver-style latent
+cross-attention. The current model has **5,194,578 trainable parameters** across four branches
+plus a fifth, non-spectral morphology token, fused by a gated low-rank bilinear pool, and
+classified by **one** adaptive sub-centre ArcFace head shared across all three curriculum
+stages (`04_CURRICULUM_AND_LOSSES.md`).
 
 ---
 
 ## 3.1 Forward contract
 
-`SpectralQuadNet.forward(x, labels=None, return_embed=False, arc_m=None, branch_mask=None)`
-returns a *different type per mode*, and every caller in `engine/` branches on exactly this
-shape — it is contract, not implementation detail:
+```python
+SpectralQuadNet.forward(
+    x, labels=None, return_embed=False, arc_m=None,
+    branch_mask=None, mask=None, morph=None,
+)
+```
+
+`x`$\in\mathbb{R}^{B\times40\times64\times64}$ is required; `mask`$\in\mathbb{R}^{B\times64\times64}$
+(the persisted fill map $\alpha$) and `morph`$\in\mathbb{R}^{B\times8}$ (the persisted
+morphometrics) are both **optional with exact fallbacks** — `mask=None` reproduces the
+pre-Tier-3 `\sum_c|x_c|>10^{-5}` threshold bit-for-bit, and `morph=None` substitutes a zero
+vector. Neither array exists until `scripts/prepare_dataset.py` is re-run, so the fallbacks are
+the operative path for the archived reference run.
+
+There is **no `linear_head`.** HD-1 (T2-10) removed the second head entirely: Stage 1, Stage 2
+and Stage 3 all run the same `arcface_head`, differing only in the margin passed at each call
+(`stage1.arcface_m = 0.0` makes it a plain cosine/NormFace classifier — §4.1). The forward
+return type is a strict function of `self.training` and `return_embed`:
 
 | Mode | `return_embed` | Return |
 |---|---|---|
-| `.train()` | `False` | `{"main", "aux_a", "aux_b", "aux_c", "aux_d"}`, each $(B, 90)$ |
+| `.train()` | `False` | `{"main", "aux_a", "aux_b", "aux_c", "aux_d"}`, each $(B, 90)$, plus `"balance"` (scalar) when labels are supplied |
 | `.train()` | `True` | the above plus `"emb"` $= \hat{\mathbf{e}} \in \mathbb{R}^{B\times256}$ |
 | `.eval()` | `False` | logits $(B, 90)$ |
 | `.eval()` | `True` | `(logits, emb)` |
 
-`tests/regression/test_golden_forward_pass.py::test_training_mode_returns_auxiliary_logits`
-pins the five training-mode keys and their shapes.
+`tests/unit/test_unified_head.py` pins both the absence of `linear_head`/`use_arcface`/
+`freeze_head`/`init_from_linear`/`update_margins_from_f1` (all removed with the second head) and
+the presence of exactly one head, `arcface_head`.
 
 ### Control API
 
 | Method | Effect |
 |---|---|
-| `use_arcface(flag)` | routes the head: `linear_head` (Stage 1) vs `arcface_head` (Stage 2+); persisted in the checkpoint as `use_arcface` |
-| `set_dropout(p)` | sets `p` on **every** `nn.Dropout` module uniformly, overriding construction-time values |
-| `freeze_head(which)` / `unfreeze_head(which)` | toggles `requires_grad` on one head, which also removes/adds it from the optimiser's parameter groups |
+| `set_dropout(p)` | sets `p` on every `nn.Dropout` module uniformly, overriding construction-time values |
+| `set_subcentre_tau(tau)` | forwards to `arcface_head.set_tau(tau)` — the soft-to-hard sub-centre pooling temperature (§3.5) |
 
-`set_dropout` does **not** affect `nn.MultiheadAttention`'s internal dropout, which is a float
-attribute rather than a module — attention dropout stays at its construction value
-(`fusion_drop = 0.10` in fusion, `0.10` in SpecFormer) for the whole run.
+`set_dropout` does **not** reach `nn.MultiheadAttention`'s internal dropout float, used inside
+Branch D's transformer blocks — it walks `nn.Dropout` instances only. This is a known gap
+(`engine/checkpoint.py`'s `_STOCHASTIC_MODULES` list routes around it for BatchNorm
+re-estimation, §4.3); Branch D's attention dropout stays at its construction value
+(`specf_drop = 0.15`) for the whole run.
 
 ---
 
@@ -41,15 +72,11 @@ attribute rather than a module — attention dropout stays at its construction v
 
 ### Masked spectral ECA (`MaskedSpectralECA`)
 
-Applied to the raw cube before any branch. It is a *residual excitation* gate: weights lie in
-$(1, 2)$, so a band can be amplified but never deleted — the failure mode a standard SE block
-has on hyperspectral input.
-
-With the foreground mask $m_{b,h,w} = \mathbb{1}\big[\sum_c |x_{b,c,h,w}| > 10^{-5}\big]$ and
-$n_b = \max(\sum_{h,w} m_{b,h,w},\, 10^{-5})$:
+Applied to the raw cube **once**, before any branch — a residual excitation gate whose output
+lies in $[x, 2x]$ per band, so a band can be amplified but never deleted:
 
 $$
-\mu_{b,c} = \frac{1}{n_b}\sum_{h,w} x_{b,c,h,w}\, m_{b,h,w},
+\mu_{b,c} = \frac{\sum_{h,w} x_{b,c,h,w}\, m_{b,h,w}}{\max(\sum_{h,w} m_{b,h,w},\, 10^{-5})},
 \qquad
 \nu_{b,c} = \max_{(h,w)\,:\,m=1} x_{b,c,h,w}
 $$
@@ -57,449 +84,608 @@ $$
 $$
 \mathbf{y}_b = \operatorname{stack}(\mu_b, \nu_b) \in \mathbb{R}^{2\times C},
 \qquad
-g_{b,c} = \sigma\big(\operatorname{Conv1d}_{2\to1,\,k}(\mathbf{y}_b)\big)_c,
+g_{b,c} = \sigma\big(\operatorname{Conv1d}_{2\to1,\,k=3}(\mathbf{y}_b)\big)_c,
 \qquad
 x' = x + x \odot g
 $$
 
-The kernel width follows the ECA adaptive rule
-$t = \big\lfloor\,|\log_2 C / 2 + 1|\,\big\rfloor$, $k = t$ if odd else $t+1$; at $C = 40$ this
-gives $k = 3$, i.e. **6 parameters for the entire block**. The $\mathrm{Conv1d}$ over the band
-axis is what makes it *spectral*: adjacent bands gate each other.
+**6 parameters for the entire block** (a $\mathrm{Conv1d}(2\to1, k=3)$, bias-free). Every branch
+sees the same post-gate cube $x'$; the gate is not per-branch.
 
-### Regional grid spectra (`extract_grid_spectra`, stateless)
+### Foreground mask (`foreground_mask`, `stats_ops.py`)
 
-Background-excluding adaptive pooling into a $4\times4$ grid — each cell's mean is taken over
-its *valid* pixels only:
+The single definition of "background" used everywhere in the model:
 
 $$
-G_{b,(i,j),c} \;=\; \frac{\operatorname{AvgPool}_{4\times4}\!\big(x'\odot m\big)_{b,c,i,j}}
-                          {\max\!\big(\operatorname{AvgPool}_{4\times4}(m)_{b,i,j},\; 10^{-5}\big)}
-\;\in\; \mathbb{R}^{B \times 16 \times 40}
+m_{b,h,w} =
+\begin{cases}
+\alpha_{b,h,w} & \text{persisted fill map supplied} \\
+\mathbb{1}\!\left[\sum_c |x_{b,c,h,w}| > 10^{-5}\right] & \text{fallback}
+\end{cases}
 $$
 
-Cells that are entirely background clamp to $0$ rather than dividing by zero.
+When the persisted map is supplied it is used as a **soft weight**, not binarised; the fallback
+reproduces the pre-Tier-3 threshold exactly.
 
-### Masked spectral statistics (`masked_spectral_stats`, stateless)
+### Regional grid spectra (`extract_grid_spectra_multi`, stateless)
 
-Nine per-band statistics over foreground pixels only, each $(B, 40)$, computed in `float32`
-regardless of autocast state. With $\mathrm{flat} \in \mathbb{R}^{B\times C\times HW}$,
-$n_b = \max(\sum_p m_{b,p}, 1)$ and $\delta_{b,c,p} = (\mathrm{flat}_{b,c,p} - \mu_{b,c})\,m_{b,p}$:
-
-| # | Statistic | Definition |
-|---|---|---|
-| 1 | mean | $\mu_{b,c} = \frac{1}{n_b}\sum_p \mathrm{flat}_{b,c,p}\, m_{b,p}$ |
-| 2 | std | $\sigma_{b,c} = \sqrt{\frac{1}{n_b}\sum_p \delta^2 + 10^{-5}}$ |
-| 3 | max | $\max_{p:\,m=1}\mathrm{flat}_{b,c,p}$, with the all-background case forced to $0$ |
-| 4 | skewness | $\operatorname{clamp}\!\Big(\frac{n_b^{-1}\sum_p \delta^3}{\sigma^3 + 10^{-4}},\; -10,\; 10\Big)$ |
-| 5 | kurtosis | $\operatorname{clamp}\!\Big(\frac{n_b^{-1}\sum_p \delta^4}{\sigma^4 + 10^{-4}},\; 0,\; 20\Big)$ — raw, not excess |
-| 6–9 | $p_{10}, p_{25}, p_{75}, p_{90}$ | order statistic at index $\min\!\big(\lfloor n_b\, q \rfloor,\; HW-1\big)$ of the foreground-only sorted values (background filled with $+\infty$ so it sorts to the tail) |
-
-Every output passes through `nan_to_num(·, 0)`. Because $\delta$ is masked, background pixels
-contribute exactly zero to all moment sums — the property the extraction pipeline's
-"zero outside the component" invariant (§2.3) exists to guarantee.
-
-### Physical wavelength positional encoding (`PhysicalWavelengthPE`)
-
-Shared by branches A and B (one module instance, referenced from three attribute paths).
-With $d = 96$, $h = d/2 = 48$:
+Both grids are extracted from **one** shared masked product $x'\odot m$ (formed once,
+not per grid), background-excluding adaptive pooling:
 
 $$
-\omega_j = \exp\!\Big(-j\,\frac{\ln 10^4}{h-1}\Big),\quad j = 0,\dots,47
-\qquad
-E_{\mathrm{wl}} \in \mathbb{R}^{40\times96},\quad
-E_{\mathrm{wl}}[i,:] = \big[\sin(\tilde\lambda_i \boldsymbol{\omega}) \,\|\, \cos(\tilde\lambda_i \boldsymbol{\omega})\big]
+G^{(g)}_{b,(i,j),c} = \frac{\operatorname{AvgPool}_{g\times g}(x'\odot m)_{b,c,i,j}}
+                            {\max(\operatorname{AvgPool}_{g\times g}(m)_{b,i,j},\,10^{-5})},
+\qquad g \in \{8, 4\}
 $$
 
-and the application is additive over the channel axis of a 1-D feature map:
-$F \leftarrow F + E_{\mathrm{wl}}^{\top}$, broadcasting $(1, 96, 40)$ over $(\cdot, 96, 40)$.
-$E_{\mathrm{wl}}$ is a registered buffer: **it is part of `state_dict()`** and appears in every
+Each call also returns the **cell mass** $\omega^{(g)}_{b,(i,j)} = \operatorname{AvgPool}_{g\times g}(m)_{b,i,j}$
+— the per-cell foreground coverage, consumed by Branch A's mass-weighted pool (§3.3).
+Grid $8\times8$ ($N_a=64$ cells) feeds Branch A; grid $4\times4$ ($N_d=16$ cells) feeds Branch D.
+Cells entirely background clamp to $0$.
+
+### Masked mean spectrum (`masked_mean_spectrum`, stateless)
+
+Branch B's entire spectral input — the foreground mean spectrum, nothing higher-order:
+
+$$
+\bar{x}_{b,c} = \frac{\sum_p x_{b,c,p}\, m_{b,p}}{\max(\sum_p m_{b,p},\, 1)} \in \mathbb{R}^{B\times40}
+$$
+
+The pre-Tier-3 nine-statistic extractor (`masked_spectral_stats`: mean/std/max/skew/kurtosis/
+percentiles) still exists in `stats_ops.py` but is **no longer consumed by any branch** — it was
+found to be a provably rank-2 tensor under a per-session gain (§2.2.5 of the plan). Only the
+mean survives, computed by the cheaper `masked_mean_spectrum` rather than the full nine-way
+reduction.
+
+### Physical wavelength — two independent mechanisms (FE-1)
+
+**`SpectralDerivatives`** (Branch A only) — exact λ-derivatives on the irregular band grid via
+local Savitzky–Golay operators, fit once from the wavelength vector:
+
+$$
+D_1, D_2 \in \mathbb{R}^{C\times C}, \qquad
+\text{shape\_channels}(\bar{x}) = \big[\operatorname{snv}(\bar{x}) \,\|\, D_1\operatorname{snv}(\bar{x}) \,\|\, D_2\operatorname{snv}(\bar{x})\big] \in \mathbb{R}^{B\times3\times C}
+$$
+
+$D_1$/$D_2$ are built per-band from its $k{=}7$ nearest neighbours in $\lambda$ by a degree-2
+weighted-least-squares fit (exact on quadratics regardless of grid irregularity), then globally
+rescaled by the **median** band spacing (and its square) so the operators are unitless. Zero
+learnable parameters — `d1_op`/`d2_op` are registered buffers, $(40,40)$ each, and travel in the
 checkpoint.
+
+**SNV** (`snv`, applied before the derivative operators):
+
+$$
+\operatorname{snv}(\bar{x})_{b,c} = \frac{\bar{x}_{b,c} - \operatorname{mean}_c(\bar{x}_b)}{\operatorname{std}_c(\bar{x}_b) + 10^{-5}}
+$$
+
+invariant to $r \mapsto a\,r+b$ for $a>0$ — removes exactly the per-pixel/per-session gain that
+made the old nine-moment tensor rank-2.
+
+**`LambdaConv1d`** — the continuous-wavelength kernel generator $\kappa_\phi$, replacing a
+learned-per-index convolution with one generated from physical $\Delta\lambda$:
+
+$$
+(\mathrm{Conv}_\lambda F)_{o,i} = \sum_{j\in\mathcal{N}_k(i)} \big[\kappa_\phi(\lambda_j-\lambda_i)\big]_{o,c}\, F_{c,j},
+\qquad
+\kappa_\phi(\delta) = \mathrm{MLP}\big(\mathrm{FourierFeatures}(\delta)\big)
+$$
+
+$\mathcal{N}_k(i)$ is the $k{=}5$ nearest bands in $\lambda$ (a buffer, precomputed once);
+`FourierFeatures` is a zero-parameter $2n_{\text{freq}}$-wide sinusoidal lift of the signed
+offset $\delta$ (log-spaced frequencies over the observed $\Delta\lambda$ span,
+$n_{\text{freq}} = $ `wl_embed_dim` $= 16$); the MLP (`Linear(32\to32)\to\mathrm{GELU}\to
+\mathrm{LayerNorm}\to\mathrm{Linear}(32\to O{\cdot}I)`) generates the convolution weights **once
+per forward, shared across the batch** — they depend only on the wavelength grid, not on $x$.
+Parameter cost is **independent of band count** (measured $8\text{k}\text{–}12\text{k}$ params
+for a $(3\to96, k{=}5)$ instance); this is what makes Branch A's stem transferable across a
+band-count ablation. `nbr`/`offsets` are non-persistent-free buffers ($40\times5$), also travel
+in the checkpoint.
+
+### Physical-wavelength positional encoding (`PhysicalWavelengthPE`, `wl_pe_cnn`)
+
+Shared by reference between `self.wl_pe_cnn` and `branch_a.wl_pe_module` — **the same module
+object**, so both checkpoint keys carry identical values by construction, not by convention.
+With $d=96$, $h=d/2=48$:
+
+$$
+\omega_j = \exp\!\Big(-j\,\frac{\ln 10^4}{h-1}\Big),\quad j=0,\dots,47,
+\qquad
+E_{\mathrm{wl}}[i,:] = \big[\sin(\tilde\lambda_i\boldsymbol\omega)\,\|\,\cos(\tilde\lambda_i\boldsymbol\omega)\big] \in \mathbb{R}^{40\times96}
+$$
+
+applied additively over the channel axis of Branch A's 1-D tower. Registered buffer, part of
+`state_dict()`.
 
 ### Reusable blocks
 
 | Block | Structure |
 |---|---|
-| `SEBlock1D(C, r{=}8)` | $x \odot \sigma\big(W_2\,\mathrm{GELU}(W_1\,\mathrm{GAP}(x))\big)$, hidden $=\max(C/8, 8)$ |
-| `ResBlock1D(C_i, C_o, k, \text{dil})` | $\mathrm{GELU}\big(\mathrm{SE}(\mathrm{GN}(\mathrm{Conv}_k(\mathrm{GELU}(\mathrm{GN}(\mathrm{Conv}_k(x)))))) + \mathrm{skip}(x)\big)$, `GroupNorm(1, ·)` |
-| `LargeKernelBlock1D(d, k)` | ConvNeXt-style: depthwise $\mathrm{Conv}_k \to \mathrm{GN}(1,d) \to 1{\times}1\,(d{\to}4d) \to \mathrm{GELU} \to 1{\times}1\,(4d{\to}d) \to \mathrm{SE} \to + x$ |
-| `ResBlock2D(C_i, C_o, s)` | bottleneck $1{\times}1 \to 3{\times}3_{(s)} \to 1{\times}1$, `GroupNorm(min(8,·))`, GELU, projected skip; $\text{mid} = \max(C_o/2, C_i)$ |
-| `CBAM(c, r{=}8)` | channel then spatial gating (§3.3, Branch C) |
+| `SEBlock1D(C, r{=}8)` | $x\odot\sigma(W_2\,\mathrm{GELU}(W_1\,\mathrm{GAP}(x)))$ |
+| `LargeKernelBlock1D(d,k)` | ConvNeXt-style: depthwise $\mathrm{Conv}_k\to\mathrm{GN}(1,d)\to1{\times}1(d{\to}4d)\to\mathrm{GELU}\to1{\times}1(4d{\to}d)\to\mathrm{SE}\to{+}x$ |
+| `ResBlock2D(C_i,C_o,s)` | bottleneck $1{\times}1\to3{\times}3_{(s)}\to1{\times}1$, GroupNorm, GELU, projected skip |
+| `CBAM(c,r{=}8)` | channel-then-spatial gating (Branch C) |
+| `_PreLNBlock` | pre-norm Transformer block: $\mathrm{LN}\to\mathrm{MHSA}\to{+}\to\mathrm{LN}\to\mathrm{GELU\text{-}FFN}\to{+}$ (Branch D) |
 
 ---
 
 ## 3.3 The four branches
 
+Tier 3's controlling constraint: **each branch must see something the others cannot
+reconstruct.**
+
+| Branch | Input after Tier 3 | Unique information |
+|---|---|---|
+| A | $8\times8$ per-cell SNV spectra + $\partial_\lambda,\partial^2_\lambda$ | spectral *shape*, gain-free |
+| B | learned NDI bank + continuum-removed depths + morphometry | ratios and physical size |
+| C | the $(40,64,64)$ cube through a 3-D stem | spatial texture $\times$ spectral position |
+| D | $4\times4$ raw grid spectra, $\lambda$-uniform tokens | long-range band interactions |
+
 ### Branch A — Spectral Profile (`SpectralProfileBranch`)
 
-**Input:** the 16 regional mean spectra, flattened to $(16B, 40)$ — the branch processes each
-grid cell *independently* and the 16 embeddings are averaged afterwards, so it is a
-permutation-invariant regional descriptor.
+**Input:** `shape_channels` on the $8\times8$ grid, flattened to $(64B, 3, 40)$ — SNV spectrum
+plus its two λ-derivatives, one grid cell at a time (permutation-invariant regional
+descriptor; cells cost no extra parameters since they're processed independently).
 
-Pipeline: a single-channel stem lifts the raw spectrum to 96 channels, $E_{\mathrm{wl}}$ is
-added, three parallel `LargeKernelBlock1D` towers with kernel widths $\{3, 5, 7\}$ read the
-same stem output at different receptive fields (two blocks each), their outputs are
-concatenated and fused back to 96 channels, and the band axis is collapsed by **learned
-attention pooling**:
+Pipeline: `LambdaConv1d`-based stem ($3\to96$ channels) $\to$ `wl_pe_cnn` added $\to$ three
+parallel `LargeKernelBlock1D` towers at kernel widths $\{3,5,7\}$ (two blocks each) $\to$
+concat $\to$ fused back to 96 channels $\to$ softmax attention pooling over the band axis:
 
 $$
-\mathbf{w} = \operatorname{softmax}_{\lambda}\!\big(\mathrm{Conv}_{96\to1}(\mathrm{GELU}(\mathrm{Conv}_{96\to24}(F)))\big),
+\mathbf{w} = \operatorname{softmax}_\lambda\big(\mathrm{Conv}_{96\to1}(\mathrm{GELU}(\mathrm{Conv}_{96\to24}(F)))\big),
 \qquad
-\mathbf{z} = \sum_{\lambda} F_{:,:,\lambda}\, \mathbf{w}_{:,\lambda}
+\mathbf{z} = \sum_\lambda F_{:,:,\lambda}\,\mathbf{w}_{:,\lambda} \in \mathbb{R}^{64B\times96}
 $$
 
-$\mathbf{z} \in \mathbb{R}^{16B \times 96}$ is projected to $D$ by
-$\mathrm{Linear} \to \mathrm{LayerNorm} \to \mathrm{GELU} \to \mathrm{Dropout}(0.15)$, then
-reduced over the grid:
-$\mathbf{b}_A = \frac{1}{16}\sum_{n=1}^{16} \mathbf{z}^{(n)} \in \mathbb{R}^{B\times256}$.
-
-Depthwise large kernels are used instead of dilated convolutions specifically because
-dilation leaves blind spots across wide absorption valleys.
-
-### Branch B — Spectral Statistics (`SpectralStatsBranch`)
-
-**Input:** the nine masked statistics, stacked to $(B, 9, 40)$ — a *global* seed descriptor
-(no grid). A statistic-level gate re-weights the nine channels before anything else:
+projected to $D{=}256$ by $\mathrm{Linear}\to\mathrm{LayerNorm}\to\mathrm{GELU}\to
+\mathrm{Dropout}(0.15)$. The 64 cell embeddings are then **mass-weighted** (not simply averaged)
+back to one vector per patch — this pooling happens in `SpectralQuadNet.forward`, not inside the
+branch:
 
 $$
-S \leftarrow S \odot \sigma\big(W_2\,\mathrm{GELU}(W_1\,\mathrm{GAP}_\lambda(S))\big),
-\qquad W_1: 9\to16,\; W_2: 16\to9
+\mathbf{b}_A = \frac{\sum_{n=1}^{64} \mathbf{z}^{(n)}\,\omega^{(8)}_n}{\max(\sum_n \omega^{(8)}_n,\,10^{-5})} \in \mathbb{R}^{B\times256}
 $$
 
-so the network learns *which moments matter* rather than being forced to use all nine
-equally. A $1\times1$ projection lifts $9 \to 96$ channels, $E_{\mathrm{wl}}$ is added, three
-`ResBlock1D` towers with kernels $\{1, 3, 5\}$ run in parallel (two blocks each), the
-concatenation is fused by two more `ResBlock1D(k{=}5)`, and the same softmax attention pooling
-and projection as Branch A produce $\mathbf{b}_B \in \mathbb{R}^{B\times256}$.
+so cells with little or no foreground coverage contribute little or nothing to the pooled
+descriptor, rather than diluting it as a plain mean would.
 
-The branch is band-count agnostic: `in_channels` is fixed at $9$ — the moment count — not at
-`num_bands`, which is accepted for signature symmetry and unused.
+**Measured parameters: 603,089** (stem 10,816 · tower$_{3/5/7}$ 153,024/153,408/153,792 ·
+fusion 104,352 · attn\_pool 2,353 · proj 25,344). Buffers: 7,456
+($D_1$/$D_2$ = 3,200; `LambdaConv1d`'s `nbr`/`offsets`/`omega` = 4,256).
+
+### Branch B — Index Bank (`SpectralStatsBranch`)
+
+**Input:** the foreground mean spectrum $\bar{x}\in\mathbb{R}^{B\times40}$ plus 8 persisted
+morphometrics (zeros if absent) — a *global* seed descriptor, no grid.
+
+**`SoftIndexBank`** — $n_{\text{idx}}{=}64$ learned normalised-difference indices, each a
+softmax-weighted numerator/denominator band group rather than a fixed pair, exactly invariant to
+a per-pixel/per-session gain:
+
+$$
+\pi^\pm_k = \operatorname{softmax}(\theta^\pm_k) \in \Delta^{C-1},
+\qquad
+u_k = \bar{x}\cdot\pi^+_k,\;\; v_k = \bar{x}\cdot\pi^-_k,
+\qquad
+z_k = \frac{u_k - v_k}{|u_k|+|v_k|+10^{-6}}
+$$
+
+$\theta^\pm\in\mathbb{R}^{64\times40}$ are raw `nn.Parameter`s ($\mathcal{N}(0,0.02^2)$ init,
+**not** touched by the model's outer weight-init pass), costing $2\times64\times40=5{,}120$
+parameters. $|z_k|\le1$ by construction.
+
+**`ContinuumDepths`** — $n_{\text{depth}}{=}16$ deepest continuum-removed absorption features,
+via the upper concave hull (piecewise-chord envelope) of the spectrum:
+
+$$
+\text{depth}_c = 1 - \frac{\bar{x}_c}{\operatorname{envelope}(\bar{x})_c},
+\qquad
+\text{output} = \operatorname{topk}_{16}(\text{depth})
+$$
+
+Zero learnable parameters; its $O(C^3)$ interpolation-weight buffers ($(40,40,40)$, four of
+them) are **non-persistent** — computed once from the wavelength grid, never written to the
+checkpoint.
+
+**Assembly:** $[z\,(64) \,\|\, \text{depth}\,(16) \,\|\, \text{morph}\,(8)] \in \mathbb{R}^{B\times88}$
+$\to \mathrm{LayerNorm} \to$ MLP $\mathrm{Linear}(88{\to}256)\to\mathrm{LN}\to\mathrm{GELU}\to
+\mathrm{Dropout}(0.15)\to\mathrm{Linear}(256{\to}256)\to\mathrm{LN}\to\mathrm{GELU} \to
+\mathbf{b}_B\in\mathbb{R}^{B\times256}$.
+
+**Measured parameters: 94,896** — an $88{,}000\times$-smaller reduction than the pre-Tier-3
+branch's 686,424 params spent on a provably rank-2 input.
 
 ### Branch C — Spatial CNN (`SpatialCNNBranch`)
 
-**Input:** the full gated cube $(B, 40, 64, 64)$ — the only branch that sees spatial texture.
+**Input:** the full gated cube $(B,40,64,64)$ + mask — the only branch that keeps both spatial
+axes and the spectral axis jointly.
 
-*Band reduction* is a depthwise $1\times1$ (`groups=num_bands`, one scalar per band) followed
-by a dense $1\times1$ to 64 channels, so per-band scaling is learned separately from
-cross-band mixing.
-
-*Backbone*: four `ResBlock2D` stages, each stride 2, with `CBAM` after the first three:
-
-$$
-64{\times}64 \;\to\; 128{\times}32^2 \;\to\; 192{\times}16^2 \;\to\; 256{\times}8^2 \;\to\; 256{\times}4^2
-$$
-
-CBAM is sequential channel-then-spatial gating:
+**`SpectralSpatialStem3D`** — three `Conv3d` stages fold the spectral axis into the channel
+dimension while halving spatial resolution, rather than discarding it via $1{\times}1$
+convolutions as the pre-Tier-3 stem did:
 
 $$
-x \leftarrow x \odot \sigma\big(\mathrm{MLP}(\operatorname{avgpool}_{hw} x) + \mathrm{MLP}(\operatorname{maxpool}_{hw} x)\big)
+(B,1,40,64,64) \xrightarrow{\text{Conv3d}(1\to16,\,k=(7,3,3),\,s=(2,1,1))} (B,16,20,64,64)
+\xrightarrow{\text{Conv3d}(16\to32,\,k=(5,3,3),\,s=2)} (B,32,10,32,32)
 $$
 $$
-x \leftarrow x \odot \sigma\big(\mathrm{Conv}_{7\times7}\big([\operatorname{mean}_c x \,\|\, \operatorname{max}_c x]\big)\big)
+\xrightarrow{\text{Conv3d}(32\to64,\,k=(5,3,3),\,s=2)} (B,64,5,16,16)
+\xrightarrow{\text{reshape}} (B,320,16,16)
+\xrightarrow{\text{Conv2d}(320\to192,1)} (B,192,16,16)
 $$
 
-with a shared two-layer MLP $c \to \max(c/8, 8) \to c$ for the channel stage.
+each `Conv3d` stage followed by `GroupNorm`+`GELU`; the mask is re-pooled to the current spatial
+resolution and multiplied in **after every stage**, so the padded region is exactly zero at
+every depth. The fold-in channel width (`stem_channels = 192`) is band-count agnostic — derived
+from the folded spectral depth ($\lceil\lceil\lceil40/2\rceil/2\rceil/2\rceil=5$) times 64, not
+hardcoded. Measured stem parameters: **178,256**.
 
-*Pooling* uses signed power normalisation, which is stable under the heavy-tailed activations
-a ResNet stack produces, followed by $\ell_2$ normalisation of the concatenation:
+**Tail** — four `ResBlock2D` stages, stride 2, `CBAM` after the first three:
 
 $$
-\operatorname{pn}(u) = \operatorname{sign}(u)\sqrt{\max(|u|, 10^{-8})},
+16{\times}16 \;(192\text{ ch}) \;\to\; 32{\times}32\,(128) \;\to\; 16{\times}16\,(192) \;\to\; 8{\times}8\,(256) \;\to\; 4{\times}4\,(256)
+$$
+
+Pooling by signed power normalisation, concatenated mean+max, $\ell_2$-normalised:
+
+$$
+\operatorname{pn}(u)=\operatorname{sign}(u)\sqrt{\max(|u|,10^{-8})},
 \qquad
-\mathbf{b}_C = \mathrm{proj}\Big(\tfrac{\mathbf{v}}{\|\mathbf{v}\|_2}\Big),\quad
-\mathbf{v} = \big[\operatorname{pn}(\operatorname{mean}_{hw} h) \,\|\, \operatorname{pn}(\max_{hw} h)\big] \in \mathbb{R}^{512}
+\mathbf{b}_C = \mathrm{proj}\Big(\tfrac{\mathbf{v}}{\|\mathbf{v}\|_2}\Big),
+\quad
+\mathbf{v}=[\operatorname{pn}(\operatorname{mean}_{hw}h)\,\|\,\operatorname{pn}(\max_{hw}h)]\in\mathbb{R}^{512}
 $$
 
-with $\mathrm{proj} = \mathrm{Linear}(512{\to}256) \to \mathrm{BatchNorm1d} \to \mathrm{GELU}$.
+with $\mathrm{proj}=\mathrm{Linear}(512{\to}256)\to\mathrm{BatchNorm1d}\to\mathrm{GELU}$.
+
+**Measured parameters: 2,230,646** (stem 178,256 + stages 1,920,550 + proj 131,840) — up from
+1,694,158 pre-Tier-3, a deliberate capacity *increase*: the branch now performs the only joint
+spectral-spatial convolution in the network. A synthetic band/space-swap test confirms the 3-D
+stem (unlike the old $1{\times}1$ reduction) produces different outputs for cubes differing only
+in *which band* a spatial blob occupies.
 
 ### Branch D — SpecFormer (`SpecFormerBranch`)
 
-**Input:** the same $(B, 16, 40)$ grid spectra as Branch A, but factorised into two attention
-stages: *spectral within a cell*, then *spatial across cells*.
+**Input:** the $4\times4$ grid spectra $(B,16,40)$, tokenised on a **wavelength-uniform** axis
+rather than a raw band-index stride.
 
-**Multi-scale tokenisation.** Each cell's spectrum is tokenised by three parallel strided
-1-D convolutions with kernels $\{3,5,7\}$ (narrow kernels resolve sharp absorption lines,
-wide kernels carry broad shape). With $d_{\text{model}} = 256$ the channel split is
-$\lfloor 256/3 \rfloor = 85, 85, 86$; stride is `specf_patch // 2` $= 4$, giving
+**`LambdaWindowPooling`** — pools $C{=}40$ bands into $n_{\text{tok}}=\lfloor
+40/(\texttt{specf\_patch}/2)\rfloor=10$ tokens whose edges are equal-width windows over
+$\tilde\lambda\in[0,1]$ (**not** the observed min/max of the selected band subset), so token $t$
+means the same physical spectral region regardless of which/how-many bands were selected — the
+property that lets a checkpoint trained at one band count load `strict=True` into a branch built
+for a different one. A window that catches no band takes its nearest band instead of averaging
+to zero. Raises `ValueError` at construction if `physical_wl` is not already normalised to
+$[0,1]$.
 
-$$
-L = \left\lfloor \frac{40 + 2p - k}{4} \right\rfloor + 1 = 10 \quad \text{for all three kernels}
-$$
-
-(the streams are additionally truncated to the shortest length, a no-op here). The
-concatenation passes `GroupNorm(1, 256)` and GELU.
-
-**Stage D1 — spectral.** A learned `spec_cls` token is prepended, giving 11 tokens; a learned
-positional embedding of capacity $\lfloor 40/4 \rfloor + 2 = 12$ is added over the first 11
-positions. Two pre-LN encoder blocks run, and **token 0 becomes the cell's spectral summary**.
-
-**Stage D2 — spatial.** The 16 cell summaries are re-assembled to $(B, 16, 256)$, a learned
-`spatial_cls` is prepended (17 tokens), two more pre-LN blocks run, and token 0 — now a
-spatio-spectral object descriptor — is `LayerNorm`ed and projected
-$\mathrm{Linear}(256{\to}256) \to \mathrm{BatchNorm1d} \to \mathrm{GELU}$.
-
-Each pre-LN block is standard:
+**`RelativeLambdaBias`** — a learned, per-head additive attention bias keyed on the *difference*
+in window centre wavelengths:
 
 $$
-x \leftarrow x + \mathrm{Drop}\big(\mathrm{MHSA}(\mathrm{LN}(x))\big),
-\qquad
-x \leftarrow x + \mathrm{Drop}\big(\mathrm{FF}(\mathrm{LN}(x))\big)
+b_\psi(\bar\lambda_t - \bar\lambda_u) = \mathrm{MLP}\big(\mathrm{FourierFeatures}(\bar\lambda_t-\bar\lambda_u)\big) \in \mathbb{R}^{n_{\text{heads}}}
 $$
 
-with 8 heads, $d_{\text{ff}} = 2d = 512$, dropout $0.10$. The layer budget splits evenly:
-`specf_layers = 4` $\Rightarrow$ 2 spectral + 2 spatial blocks.
+fed to `nn.MultiheadAttention` as an additive `attn_mask`; CLS-token rows/columns are
+zero-padded (no wavelength). $\sim$1.3k parameters.
 
-`physical_wl` and `patch_size` are accepted by this branch and **unused** — the tokenizer is
-stride-based and carries no wavelength encoding.
+**Positional codes are a sinusoidal buffer keyed on the token centre wavelengths**
+(`spec_pos_embed`, the same free function that builds `PhysicalWavelengthPE`), not a learned
+table — zero parameters for token position. Both CLS tokens (`spec_cls`, `spatial_cls`) remain
+learned parameters, `trunc_normal_(std=0.02)`.
+
+**Multi-scale tokenisation** — three parallel strided-1-D convs at kernels $\{3,5,7\}$ over the
+now-uniform 10-token axis, channel split $\lfloor192/3\rfloor{=}64$ each, concatenated $\to$
+`GroupNorm`+`GELU`.
+
+**Two-stage attention**, $d_{\text{model}}=192$ (`specf_dim`), 8 heads, dropout $0.15$
+(`specf_drop`, now actually wired to the branch): Stage D1 prepends `spec_cls`, adds the position
+buffer, runs `specf_layers // 2 = 2` pre-LN blocks with the λ-bias, and token 0 becomes the
+cell's spectral summary. Stage D2 re-assembles the 16 cell summaries, prepends `spatial_cls`,
+runs 2 more pre-LN blocks (no bias — cells have no natural spatial ordering), and token 0 is
+`LayerNorm`ed and projected $\mathrm{Linear}(192{\to}256)\to\mathrm{BatchNorm1d}\to\mathrm{GELU}$.
+
+**Measured parameters: 1,241,640** (tokenizer 1,536 + λ-bias 1,320 + spectral blocks 594,048 +
+spatial blocks 594,048 + norm 384 + proj 49,920) — down from 2,180,866 pre-Tier-3 (`specf_dim`
+$256\to192$): with the wavelength axis now carried explicitly by token identity and the
+relative-λ bias, the branch needs less brute capacity to rediscover it. A checkpoint trained at
+40 bands loads `strict=True` into a 20-band instance and their embeddings agree on a spectrum
+both can sample, confirming the transfer property the λ-uniform tokenisation is built for.
 
 ### Branch masking (training-time regularisation)
 
-Before fusion, branch embeddings can be zeroed. With an explicit `branch_mask` (used by the
-influence diagnostic, §5.2) the mask is applied verbatim. Otherwise, in training mode:
+$$
+\mathbf{p} = 0.20\times(0.75,\,0.75,\,0.0,\,0.75) = (0.15,\,0.15,\,0,\,0.15)
+$$
+
+— the **inverse** of the pre-Tier-3 profile. Before Tier 3, Branches C and D (the only
+non-duplicated branches) were dropped hardest and A/B (near-duplicates of each other) never at
+all; BR-3 inverts this: **drop the branches another branch can reconstruct, never the one that
+sees the full cube** (Branch C, factor $0$).
+
+One keep/drop decision per branch is drawn **per batch** (not per sample), forced to keep at
+least one branch via a uniformly-random "safe index":
 
 $$
-p = (0,\; 0,\; 0.30,\; 0.20),
+k_b = \mathbb{1}[u_b > p_b],\; u_b\sim\mathcal{U}(0,1)^4,
 \qquad
-k_b = \mathbb{1}[u_b > p_b],\quad u_b \sim \mathcal{U}(0,1)
-$$
-$$
-k \leftarrow \max\big(k,\; \operatorname{onehot}(s)\big),\quad s \sim \mathcal{U}\{0,1,2,3\}
-\qquad
-\mathbf{b}_x \leftarrow \mathbf{b}_x \cdot k_x
+k \leftarrow \max(k,\,\operatorname{onehot}(s)),\; s\sim\mathcal{U}\{0,1,2,3\}
 $$
 
-The "safe index" guarantees at least one branch always survives. Only the *fused* path is
-masked — the auxiliary heads always read the **unmasked** embeddings $\mathbf{b}^{\text{raw}}$,
-so deep supervision keeps flowing to a dropped branch. In `.eval()` no masking occurs and no
-RNG is consumed, which is what makes eval-mode forwards bit-deterministic.
-
-> `model.branch_drop_prob` (config `model.branch_drop_prob = 0.20`) is stored on the module
-> and set to $0$ by Stage 3, but the forward pass uses the hardcoded vector above; the
-> attribute does not currently influence the drop probabilities.
+Only the **fused** path is masked ($\mathbf{b}_x \leftarrow \mathbf{b}_x\cdot k_x$) — the
+auxiliary heads always read the unmasked $\mathbf{b}^{\text{raw}}$, so deep supervision keeps
+flowing to a dropped branch. An explicit `branch_mask` argument (used by the leave-one-branch-out
+influence diagnostic, §5.2) overrides this draw verbatim. In `.eval()` no masking occurs and no
+RNG is consumed.
 
 ---
 
 ## 3.4 Fusion
 
-### `CrossModalInteraction` — Perceiver-style latent cross-attention
-
-The four branch embeddings are LayerNormed **independently** (preserving modality structure)
-and stacked into $T \in \mathbb{R}^{B\times4\times256}$. A learned latent array
-$L \in \mathbb{R}^{4\times256}$ (initialised $\mathcal{N}(0, 0.02^2)$) is broadcast over the
-batch, and $\text{depth} = 2$ blocks of
+### `MorphologyEmbed` — the fifth modality
 
 $$
-L \leftarrow L + \mathrm{MHA}(Q{=}L,\; K{=}T,\; V{=}T) \qquad\text{(cross: latents query modalities)}
-$$
-$$
-L \leftarrow L + \mathrm{MHA}(Q{=}K{=}V{=}L) \qquad\text{(latent self-attention)}
-$$
-$$
-L \leftarrow L + \mathrm{FF}\big(\mathrm{LN}(L)\big),\quad \mathrm{FF}: 256 \to 1024 \to 256
+\mathbf{b}_E = \mathrm{Linear}(64{\to}256)\big(\mathrm{GELU}(\mathrm{Linear}(8{\to}64)(\text{morph}))\big) \in \mathbb{R}^{B\times256}
 $$
 
-run with 8 heads and dropout $0.10$. The latents are pooled and combined with a
-**Mixture-of-Experts style modality gate**:
+17,216 parameters. The eight persisted morphometrics enter fusion as a genuine fifth token,
+alongside — not folded into — Branch B.
+
+### `CrossModalInteraction` — gated low-rank bilinear pool
+
+Replaces the pre-Tier-3 Perceiver-style latent cross-attention entirely (`output_proj`,
+`latents` and the attention blocks are gone). With $M=5$ modality tokens
+$\{\mathbf{b}_A,\mathbf{b}_B,\mathbf{b}_C,\mathbf{b}_D,\mathbf{b}_E\}$:
+
+**Per-modality normalisation** is a **dataset statistic**, not a per-sample rescale —
+`BatchNorm1d`, one per modality, so a low-confidence sample's small-norm branch output stays
+small in `.eval()` rather than being renormalised to unit scale:
 
 $$
-\mathbf{f} = \frac{1}{4}\sum_{n=1}^{4} L_n,
-\qquad
-\mathbf{g} = \operatorname{softmax}\big(W_2\,\mathrm{GELU}(W_1 \mathbf{f})\big) \in \Delta^3,
-\qquad
-\mathbf{f} \leftarrow \mathbf{f} + \sum_{m=1}^{4} g_m T_m
+\hat{\mathbf{b}}_m = \mathrm{BatchNorm1d}_m(\mathbf{b}_m), \qquad m=1,\dots,5
 $$
 
-so the fused token carries both the cross-attended latent summary and a *directly gated*
-convex combination of the modalities — the residual path that keeps a single strong branch
-usable even if cross-attention collapses. Output is
-$\mathrm{Dropout}(\mathrm{GELU}(W_o \mathrm{LN}(\mathbf{f})))$.
+**Confidence vector** — the log-norm of each branch *before* normalisation:
 
-Attention scales with the number of modalities, not their product, so adding a fifth branch
-costs one extra key/value token.
+$$
+\nu_m = \log(\|\mathbf{b}_m\|_2 + 10^{-6})
+$$
 
-> Config `model.fusion_heads = 4` is declared in the schema and YAML but **not passed** at the
-> construction site; the module's default of 8 heads is what runs. `model.fusion_drop = 0.10`
-> *is* wired.
+**Modality gate** — a **sigmoid**, not a softmax, so two modalities can be fully attended to at
+once rather than competing for a probability budget:
+
+$$
+\boldsymbol\gamma = \sigma\Big(W_g\big[\hat{\mathbf{b}}_1\|\cdots\|\hat{\mathbf{b}}_5\|\boldsymbol\nu\big]\Big) \in (0,1)^5
+$$
+
+**First-order term:**
+
+$$
+\mathbf{f}_1 = \sum_{m=1}^5 \gamma_m\,\hat{\mathbf{b}}_m
+$$
+
+**Second-order term** — low-rank bilinear pooling over all $\binom{5}{2}=10$ modality pairs,
+rank $r=128$ (`fusion_rank`):
+
+$$
+\mathbf{f}_2 = \sum_{m<m'} (U_m\hat{\mathbf{b}}_m)\odot(U_{m'}\hat{\mathbf{b}}_{m'}) \in \mathbb{R}^{128}
+$$
+
+$U_m\in\mathbb{R}^{128\times256}$, bias-free — a full bilinear pool would cost $10d^2$; this
+costs $5dr$.
+
+**Output:**
+
+$$
+\mathbf{f} = \mathrm{Dropout}\Big(W_o\big[\mathbf{f}_1 \,\|\, V\mathbf{f}_2\big]\Big), \qquad V:128\to256,\;\; W_o:512\to256
+$$
+
+`fusion_gate_hidden = 128` sizes the gate MLP's hidden width; `fusion_drop = 0.10` is the output
+dropout.
+
+**Measured parameters: 496,005** (branch\_norms 2,560 · modality\_gate 165,253 · bilinear
+163,840 · bilinear\_out 33,024 · output 131,328) — a $\mathbf{-1.64\,M}$ reduction from the
+pre-Tier-3 fusion's 2,190,916, the single largest saving in the redesign. `model.fusion_heads`,
+which named the deleted Perceiver's attention head count, has **no home in the schema anymore**
+(deleted, not merely unwired — §3.8).
 
 ### `EmbedNet` — pre-norm residual refinement
 
 $$
-\mathbf{e} = \mathrm{LN}_2\Big(\mathbf{u} + \mathrm{Drop}\big(\mathrm{MLP}(\mathrm{LN}_1(\mathbf{u}))\big)\Big),
-\qquad \mathrm{MLP}: 256 \to 512 \to 256
+\mathbf{e} = \mathrm{LN}_2\Big(\mathbf{f} + \mathrm{Drop}\big(\mathrm{MLP}(\mathrm{LN}_1(\mathbf{f}))\big)\Big),
+\qquad \mathrm{MLP}: 256\to512\to256
 $$
 
-$\mathbf{e}$ is the embedding consumed by the classification heads, by SupCon/ProtoNCE (as
-$\hat{\mathbf{e}} = \mathbf{e}/\|\mathbf{e}\|_2$) and by the t-SNE figure.
+The only post-fusion refinement block (Tier 3 deleted the Perceiver's duplicate `output_proj`,
+which was this same block applied twice to the same vector). $\mathbf{e}$ is $\ell_2$-normalised
+to $\hat{\mathbf{e}}$ before the head, and consumed identically by SupCon/ProtoNCE (§4.4) and the
+t-SNE figure. Its terminal `LayerNorm` pins $\|\mathbf{e}\|\approx\sqrt{256}=16$ — the reason a
+zero-margin ArcFace head (Stage 1) is nearly what a plain linear head already was: the linear
+head was implicitly scoring a near-constant-norm embedding all along.
+
+263,936 measured parameters.
 
 ---
 
-## 3.5 Classification heads
+## 3.5 Classification head — one head, three margins
 
-### Linear head (Stage 1)
+### Adaptive sub-centre ArcFace head (`AdaptiveSubcenterArcFaceHead`)
 
-$\mathrm{GELU} \to \mathrm{Dropout}(0.4\,p) \to \mathrm{Linear}(256 \to 90)$, where
-$p$ = `stage1.dropout` $= 0.15$, so the head's own dropout is $0.06$ at construction.
+Built **once**, shared verbatim by all three stages. Weight
+$\mathbf{W}\in\mathbb{R}^{(90\cdot3)\times256}$ (`xavier_uniform_`), i.e. $K{=}3$ sub-centres
+per class; a `margins` buffer $(90,)$ initialised to $m_{\text{base}}$ and a `confusion` buffer
+$(90,90)$ initialised to zero both travel in the checkpoint.
 
-### Adaptive sub-centre ArcFace head (Stage 2+)
-
-Weight $\mathbf{W} \in \mathbb{R}^{(90 \cdot 3)\times256}$ (`xavier_uniform_`), i.e. $K = 3$
-sub-centres per class; a `margins` buffer of shape $(90,)$ initialised to $m_{\text{base}}$
-travels in the checkpoint.
-
-**Cosine logit** — both inputs are $\ell_2$-normalised and the class score is the *max* over
-its sub-centres:
+**Sub-centre cosine with soft-to-hard pooling** — a temperature $\tau$ (set per-stage via
+`set_subcentre_tau`, **not itself part of the checkpoint** — it is a plain Python float, not a
+buffer) interpolates between a differentiable log-sum-exp pool early in a stage and the exact
+hard maximum late in it:
 
 $$
-\cos\theta_{i,c} = \max_{k\in[3]} \operatorname{clamp}\!\big(\hat{\mathbf{e}}_i^{\top}\hat{\mathbf{W}}_{c,k},\, -1{+}10^{-6},\, 1{-}10^{-6}\big)
-$$
-
-**Inference / no labels:** $\;\text{logits} = s\,\cos\theta$, with $s = 48$.
-
-**Training with labels:** the per-sample margin is $m_i = $ `global_m` if supplied (margin
-warm-up) else $M(y_i) = \mathbf{margins}[y_i]$. Writing $c_i = \cos\theta_{i,y_i}$ and
-$s_i = \sqrt{\max(1 - c_i^2, 10^{-6})}$:
-
-$$
-\phi_i \;=\; c_i\cos m_i - s_i \sin m_i \;=\; \cos(\theta_{i,y_i} + m_i)
+\cos\theta_{i,c,k} = \operatorname{clamp}(\hat{\mathbf{e}}_i^\top\hat{\mathbf{W}}_{c,k},\,-1{+}\varepsilon,\,1{-}\varepsilon),
+\qquad \varepsilon = 10^{-3}
 $$
 
 $$
-\phi_i \;\leftarrow\;
+\cos\theta_{i,c} =
 \begin{cases}
-\phi_i, & c_i > \cos(\pi - m_i)\\[2pt]
-c_i - m_i \sin(\pi - m_i), & \text{otherwise}
+\tau\log\sum_k \exp(\cos\theta_{i,c,k}/\tau), & \tau > 0 \quad\text{(soft, re-clamped)}\\
+\max_k \cos\theta_{i,c,k}, & \tau \le 0 \quad\text{(hard, exact)}
 \end{cases}
 $$
 
-$$
-\text{logits}_{i,c} \;=\; s\big(\mathbb{1}[c = y_i]\,\phi_i + \mathbb{1}[c \ne y_i]\cos\theta_{i,c}\big)
-$$
+`subcenter_tau_init = 0.20 \to subcenter_tau_final = 0.02` anneals across each stage, so every
+sub-centre receives gradient early (none can die before seeing data) and the assignment hardens
+back to the $\max_k$ it started as. $\varepsilon=10^{-3}$ (not the pre-Tier-1 $10^{-6}$) bounds
+$|d/dc\sqrt{1-c^2}|$ at $22.4$ rather than $707$ at the clamp boundary — a numerical-conditioning
+fix, not a gradient-amplification one: both embedding and weight are normalised, so the ArcFace
+gradient reaching either is $s\sin(\theta+m)$, bounded by $s$, with no singularity regardless of
+the clamp.
 
-The second line is the standard "easy-margin" guard: past $\theta + m > \pi$ the cosine is no
-longer monotone, so the penalty is replaced by a linear one, preserving a usable gradient.
-
-**Adaptive per-class margin.** `update_margins_from_f1(class_f1)` sets
-
-$$
-M(c) = m_{\text{base}} + m_\Delta\big(1 - \min(F_1^{(c)}, 1)\big) \in [0.35,\, 0.45]
-$$
-
-Classes absent from the dict keep their current margin.
-
-**Bootstrap from the linear head.** `init_from_linear(W_{\text{lin}})` copies the Stage-1 head's
-row-normalised weights into all $K$ sub-centres with increasing jitter, so sub-centres start
-near a known-good boundary yet are not identical:
+**Sub-centre load-balancing** (`subcenter_balance_weight = 0.01`) — a soft assignment
+$\pi_{i,k}=\operatorname{softmax}_k(\cos\theta_{i,y_i,k}/\tau)$ (or a one-hot at $\tau\le0$),
+averaged per class present in the batch, penalised against uniform:
 
 $$
-\mathbf{W}_{c,k} \;\leftarrow\; \frac{\mathbf{w}^{\text{lin}}_c}{\|\mathbf{w}^{\text{lin}}_c\|_2} + 0.01\,k\,\boldsymbol{\epsilon},
-\qquad \boldsymbol{\epsilon}\sim\mathcal{N}(0, I),\quad k = 0,1,2
+\mathcal{L}_{\text{balance}} = \sum_{c\in\text{batch}} \mathrm{KL}\big(\boldsymbol\pi_c \,\|\, \mathrm{Uniform}_K\big)
 $$
 
-Sub-centre $k=0$ is therefore an exact copy of the normalised linear head.
+A uniform assignment costs exactly $0$; a fully-collapsed one costs $|\mathcal{C}|\log K$. This
+term keeps sub-centres from dying — sub-centres are seeded by spherical $k$-means over real
+training embeddings (`init_subcentres_from_embeddings`, run once at Stage-2 entry on both the
+live model and the EMA shadow), not by the old "one vector plus $0.01k$ Gaussian jitter"
+bootstrap, which under hard-max assignment left decoy sub-centres permanently unreachable.
+
+**Margined target logit**, with the classic "easy-margin" guard generalised to a hard cap on
+$\theta+m$ at $\pi/2$ (past which $-s\sin(\theta+m)$ would start decreasing rather than
+increasing, breaking ArcFace's whole premise):
+
+$$
+\theta_{i,y_i} = \arccos(\cos\theta_{i,y_i}),
+\qquad
+m_i = \min\!\big(M_i,\; \max(0,\,\tfrac{\pi}{2}-\theta_{i,y_i})\big)
+$$
+
+$$
+\phi_i = \cos\theta_{i,y_i}\cos m_i - \sin\theta_{i,y_i}\sin m_i = \cos(\theta_{i,y_i}+m_i)
+$$
+
+**Pairwise confusion term** — pushes a class away from what it is *actually* confused with,
+rather than uniformly from all 89 others, using a row-normalised, zero-diagonal confusion matrix
+$\Omega$ fitted once at Stage-2 entry (`set_confusion`):
+
+$$
+\mathrm{logit}_{i,c} = s\Big(\mathbb{1}[c{=}y_i]\,\phi_i + \mathbb{1}[c{\ne}y_i]\big(\cos\theta_{i,c} - \delta_{\text{pw}}\,\Omega_{y_i,c}\big)\Big),
+\qquad s=48,\;\; \delta_{\text{pw}} = 0.10
+$$
+
+**At `global_m = 0` the head takes a fast path** that skips the margin algebra entirely
+(bit-identical to running the full computation at a vanishing margin) — this is the code path
+Stage 1 always runs.
+
+### The per-class margin — a signed precision/recall rule (HD-3)
+
+Computed **once per stage**, at Stage-2 entry, from precision/recall measured on the fit split
+(calibration split if carved, else `val`):
+
+$$
+\boxed{\,M(c) = \operatorname{clip}\big(m_{\text{base}} + m_\Delta\,(R_c - P_c),\; m_{\min},\; m_{\max}\big)\,},
+\qquad m_{\text{base}}{=}0.35,\; m_\Delta{=}0.20,\; m_{\min}{=}0.20,\; m_{\max}{=}0.50
+$$
+
+This **replaces** the pre-Tier-2 F1-driven rule $M(c)=m_{\text{base}}+m_\Delta(1-F_1^{(c)})$, and
+the sign is the whole point: an additive angular margin *shrinks* a class's decision region, so
+an **over-claiming** class ($R_c > P_c$) should have its margin *raised*, and an
+**under-claiming** one ($R_c < P_c$, losing recall) should have it *lowered* — the F1-driven rule
+moved every low-F1 class the same direction regardless of which error it was making. Two classes
+sharing the same $F_1$ can therefore land on opposite sides of $m_{\text{base}}$.
+
+Stages 1/2/3 read this vector through three different lenses (§4.1–§4.3): Stage 1 always passes
+`global_m = 0`, bypassing it; Stage 2 warms a **global scalar** up to `arcface_m = 0.35` over 20
+epochs, then hands over to the per-class vector; Stage 3 keeps the vector but scales the *whole*
+of it multiplicatively by a per-cycle annealed $\kappa$.
 
 ### Auxiliary heads (deep supervision)
 
-Four identical `AuxiliaryHead`s, $\mathrm{Linear}(256{\to}128) \to \mathrm{GELU} \to
-\mathrm{Linear}(128{\to}90)$, initialised `trunc_normal_(std=0.02)` with zero bias
-(conservative, to avoid saturating the softmax early). They are called **only in training
-mode** and read the *unmasked* branch embeddings. Their loss weighting is in §4.3.
+Four identical `AuxiliaryHead`s, $\mathrm{Linear}(256{\to}128)\to\mathrm{GELU}\to
+\mathrm{Linear}(128{\to}90)$, `trunc_normal_(std=0.02)`, zero bias. Called **only in training
+mode**, and always on the **unmasked** branch embeddings $\mathbf{b}^{\text{raw}}$ — so branch
+dropout regularises the fusion pathway without ever starving deep supervision. 44,506 parameters
+each, 178,024 total.
 
 ---
 
 ## 3.6 Tensor shape matrix
 
-Input contract: $x \in \mathbb{R}^{B \times 40 \times 64 \times 64}$, `float32`.
+Input contract: $x\in\mathbb{R}^{B\times40\times64\times64}$, `float32`.
 
 ### Shared front-end
 
 | Stage | Module | Input | Output |
 |---|---|---|---|
-| Spectral gate | `se` (`MaskedSpectralECA`) | $(B, 40, 64, 64)$ | $(B, 40, 64, 64)$ |
-| ↳ gate conv | `se.conv` (`Conv1d(2→1, k=3)`) | $(B, 2, 40)$ | $(B, 1, 40)$ |
-| Grid spectra | `extract_grid_spectra(·, 4)` | $(B, 40, 64, 64)$ | $(B, 16, 40)$ → flat $(16B, 40)$ |
-| Masked stats | `masked_spectral_stats` | $(B, 40, 64, 64)$ | $9 \times (B, 40)$ |
+| Spectral gate | `se` | $(B,40,64,64)$ | $(B,40,64,64)$ |
+| Grid A | `extract_grid_spectra_multi(\cdot,8)` | $(B,40,64,64)$ | $(B,64,40)$ → flat $(64B,40)$, mass $(B,64)$ |
+| Grid D | `extract_grid_spectra_multi(\cdot,4)` | $(B,40,64,64)$ | $(B,16,40)$ |
+| Mean spectrum | `masked_mean_spectrum` | $(B,40,64,64)$ | $(B,40)$ |
 
-### Branch A — Spectral Profile ($BN_g = 16B$)
-
-| Step | Module | Input | Output |
-|---|---|---|---|
-| A.0 | unsqueeze | $(16B, 40)$ | $(16B, 1, 40)$ |
-| A.1 | `stem` (`Conv1d(1→96,k=3)`+GN+GELU) | $(16B, 1, 40)$ | $(16B, 96, 40)$ |
-| A.2 | `wl_pe_module` ($+E_{\mathrm{wl}}^{\top}$) | $(16B, 96, 40)$ | $(16B, 96, 40)$ |
-| A.3 | `tower_s` / `tower_m` / `tower_l` ($k = 3/5/7$) | $(16B, 96, 40)$ | $3 \times (16B, 96, 40)$ |
-| A.4 | concat | $3 \times (16B, 96, 40)$ | $(16B, 288, 40)$ |
-| A.5 | `fusion` ($1{\times}1$ + `LargeKernelBlock1D`) | $(16B, 288, 40)$ | $(16B, 96, 40)$ |
-| A.6 | `attn_pool` (+ softmax over $\lambda$) | $(16B, 96, 40)$ | $(16B, 1, 40)$ |
-| A.7 | weighted sum over $\lambda$ | $(16B, 96, 40)$ | $(16B, 96)$ |
-| A.8 | `proj` (Linear+LN+GELU+Drop) | $(16B, 96)$ | $(16B, 256)$ |
-| A.9 | reshape + mean over 16 cells | $(B, 16, 256)$ | $\mathbf{b}_A\;(B, 256)$ |
-
-### Branch B — Spectral Statistics
+### Branch A ($64B$ flattened cells)
 
 | Step | Module | Input | Output |
 |---|---|---|---|
-| B.0 | stack 9 statistics | $9\times(B, 40)$ | $(B, 9, 40)$ |
-| B.1 | `stat_attn` (gate) | $(B, 9, 40)$ | $(B, 9, 1)$ → applied |
-| B.2 | `input_proj` ($1{\times}1$, $9{\to}96$) | $(B, 9, 40)$ | $(B, 96, 40)$ |
-| B.3 | `wl_pe_module` | $(B, 96, 40)$ | $(B, 96, 40)$ |
-| B.4 | `tower_s` / `tower_m` / `tower_l` ($k = 1/3/5$) | $(B, 96, 40)$ | $3 \times (B, 96, 40)$ |
-| B.5 | concat | — | $(B, 288, 40)$ |
-| B.6 | `fusion` (2 × `ResBlock1D`, $k{=}5$) | $(B, 288, 40)$ | $(B, 96, 40)$ |
-| B.7 | `pool_attn` + weighted sum | $(B, 96, 40)$ | $(B, 96)$ |
-| B.8 | `proj` | $(B, 96)$ | $\mathbf{b}_B\;(B, 256)$ |
+| A.0 | `shape_channels` (SNV + $D_1,D_2$) | $(64B,40)$ | $(64B,3,40)$ |
+| A.1 | `stem` (`LambdaConv1d` 3→96 + GN + GELU) | $(64B,3,40)$ | $(64B,96,40)$ |
+| A.2 | `+ wl_pe_cnn` | $(64B,96,40)$ | $(64B,96,40)$ |
+| A.3 | `tower_{s,m,l}` ($k{=}3/5/7$) | $(64B,96,40)$ | $3\times(64B,96,40)$ |
+| A.4–5 | concat + `fusion` | $(64B,288,40)$ | $(64B,96,40)$ |
+| A.6–7 | `attn_pool` + weighted sum | $(64B,96,40)$ | $(64B,96)$ |
+| A.8 | `proj` | $(64B,96)$ | $(64B,256)$ |
+| A.9 | mass-weighted pool over 64 cells | $(B,64,256),(B,64)$ | $\mathbf{b}_A\,(B,256)$ |
 
-### Branch C — Spatial CNN
-
-| Step | Module | Input | Output |
-|---|---|---|---|
-| C.1 | `band_reduce.0` (depthwise $1{\times}1$, groups $=40$) | $(B, 40, 64, 64)$ | $(B, 40, 64, 64)$ |
-| C.2 | `band_reduce.1` ($1{\times}1$, $40{\to}64$) + GN(8) + GELU | $(B, 40, 64, 64)$ | $(B, 64, 64, 64)$ |
-| C.3 | `stages.0` `ResBlock2D(64→128, s2)` | $(B, 64, 64, 64)$ | $(B, 128, 32, 32)$ |
-| C.4 | `stages.1` `CBAM(128)` | $(B, 128, 32, 32)$ | $(B, 128, 32, 32)$ |
-| C.5 | `stages.2` `ResBlock2D(128→192, s2)` | $(B, 128, 32, 32)$ | $(B, 192, 16, 16)$ |
-| C.6 | `stages.3` `CBAM(192)` | $(B, 192, 16, 16)$ | $(B, 192, 16, 16)$ |
-| C.7 | `stages.4` `ResBlock2D(192→256, s2)` | $(B, 192, 16, 16)$ | $(B, 256, 8, 8)$ |
-| C.8 | `stages.5` `CBAM(256)` | $(B, 256, 8, 8)$ | $(B, 256, 8, 8)$ |
-| C.9 | `stages.6` `ResBlock2D(256→256, s2)` | $(B, 256, 8, 8)$ | $(B, 256, 4, 4)$ |
-| C.10 | concat $\operatorname{pn}$(mean), $\operatorname{pn}$(max), then $\ell_2$-normalise | $(B, 256, 4, 4)$ | $(B, 512)$ |
-| C.11 | `proj` (Linear+BN1d+GELU) | $(B, 512)$ | $\mathbf{b}_C\;(B, 256)$ |
-
-### Branch D — SpecFormer ($BN_g = 16B$)
+### Branch B
 
 | Step | Module | Input | Output |
 |---|---|---|---|
-| D.0 | reshape | $(B, 16, 40)$ | $(16B, 1, 40)$ |
-| D.1 | `tokenizer.proj_small` ($k{=}3$, $s{=}4$) | $(16B, 1, 40)$ | $(16B, 85, 10)$ |
-| D.2 | `tokenizer.proj_medium` ($k{=}5$, $s{=}4$) | $(16B, 1, 40)$ | $(16B, 85, 10)$ |
-| D.3 | `tokenizer.proj_large` ($k{=}7$, $s{=}4$) | $(16B, 1, 40)$ | $(16B, 86, 10)$ |
-| D.4 | concat + GN(1,256) + GELU | — | $(16B, 256, 10)$ |
-| D.5 | transpose | $(16B, 256, 10)$ | $(16B, 10, 256)$ |
-| D.6 | prepend `spec_cls` + `spec_pos_embed[:11]` | $(16B, 10, 256)$ | $(16B, 11, 256)$ |
-| D.7 | `spectral_blocks.{0,1}` (pre-LN, 8 heads) | $(16B, 11, 256)$ | $(16B, 11, 256)$ |
-| D.8 | take token 0, reshape | $(16B, 11, 256)$ | $(B, 16, 256)$ |
-| D.9 | prepend `spatial_cls` | $(B, 16, 256)$ | $(B, 17, 256)$ |
-| D.10 | `spatial_blocks.{0,1}` | $(B, 17, 256)$ | $(B, 17, 256)$ |
-| D.11 | token 0 → `norm` (LN) | $(B, 17, 256)$ | $(B, 256)$ |
-| D.12 | `proj` (Linear+BN1d+GELU) | $(B, 256)$ | $\mathbf{b}_D\;(B, 256)$ |
+| B.0 | `SoftIndexBank` | $(B,40)$ | $(B,64)$ |
+| B.1 | `ContinuumDepths` | $(B,40)$ | $(B,16)$ |
+| B.2 | concat with morph | $(B,64),(B,16),(B,8)$ | $(B,88)$ |
+| B.3 | MLP | $(B,88)$ | $\mathbf{b}_B\,(B,256)$ |
 
-### Fusion, embedding and heads
+### Branch C
 
 | Step | Module | Input | Output |
 |---|---|---|---|
-| F.0 | branch masking (train only) | $4\times(B, 256)$ | $4\times(B, 256)$ |
-| F.1 | `cross_interaction.branch_norms.{0..3}` + stack | $4\times(B, 256)$ | $T\;(B, 4, 256)$ |
-| F.2 | latents broadcast | $(4, 256)$ | $L\;(B, 4, 256)$ |
-| F.3 | $2 \times$ [cross-attn ← $T$; self-attn; FF] | $(B, 4, 256)$ | $(B, 4, 256)$ |
-| F.4 | mean over latents | $(B, 4, 256)$ | $(B, 256)$ |
-| F.5 | `modality_gate` ($256{\to}64{\to}4$, softmax) | $(B, 256)$ | $(B, 4)$ |
-| F.6 | gated modality sum + residual | $(B,4,256), (B,4)$ | $(B, 256)$ |
-| F.7 | `output_proj` (LN+Linear+GELU+Drop) | $(B, 256)$ | $(B, 256)$ |
-| E.1 | `embed_net` (`EmbedNet`) | $(B, 256)$ | $\mathbf{e}\;(B, 256)$ |
-| H.1a | `linear_head` (Stage 1) | $(B, 256)$ | $(B, 90)$ |
-| H.1b | `arcface_head` (Stage 2+): $\hat{\mathbf{e}}\hat{\mathbf{W}}^{\top}$ | $(B, 256) \times (270, 256)$ | $(B, 270)$ |
-| H.2b | reshape + max over $K$ | $(B, 270)$ | $(B, 90, 3) \to (B, 90)$ |
-| X.1–4 | `aux_head_{a,b,c,d}` (train only) | $4\times(B, 256)$ | $4\times(B, 90)$ |
-| X.5 | `emb` (when `return_embed`) | $(B, 256)$ | $\hat{\mathbf{e}}\;(B, 256)$ |
+| C.1 | `stem` (3-D, 3 stages) | $(B,1,40,64,64)$ | $(B,64,5,16,16)\to(B,192,16,16)$ |
+| C.2–5 | `stages` (4× `ResBlock2D`, 3× `CBAM`) | $(B,192,16,16)$ | $(B,256,4,4)$ |
+| C.6 | pool (pn-mean, pn-max, $\ell_2$) | $(B,256,4,4)$ | $(B,512)$ |
+| C.7 | `proj` | $(B,512)$ | $\mathbf{b}_C\,(B,256)$ |
+
+### Branch D ($16B$ flattened cells)
+
+| Step | Module | Input | Output |
+|---|---|---|---|
+| D.0 | `LambdaWindowPooling` | $(16B,40)$ | $(16B,10)$ |
+| D.1 | `tokenizer` ($k{=}3/5/7$ strided) | $(16B,1,10)$ | $(16B,192,10)$ |
+| D.2 | `+ spec_pos_embed`, prepend `spec_cls` | $(16B,10,192)$ | $(16B,11,192)$ |
+| D.3 | `spectral_blocks` ($\times2$, $+\lambda$-bias) | $(16B,11,192)$ | $(16B,11,192)$ |
+| D.4 | token 0, reshape | $(16B,11,192)$ | $(B,16,192)$ |
+| D.5 | prepend `spatial_cls` | $(B,16,192)$ | $(B,17,192)$ |
+| D.6 | `spatial_blocks` ($\times2$) | $(B,17,192)$ | $(B,17,192)$ |
+| D.7 | token 0 → `norm` → `proj` | $(B,192)$ | $\mathbf{b}_D\,(B,256)$ |
+
+### Fusion, embedding and head
+
+| Step | Module | Input | Output |
+|---|---|---|---|
+| E.0 | `morphology_embed` | $(B,8)$ | $\mathbf{b}_E\,(B,256)$ |
+| F.0 | branch masking (train only) | $4\times(B,256)$ | $4\times(B,256)$ |
+| F.1 | `branch_norms` (5× BatchNorm1d) | $5\times(B,256)$ | $5\times(B,256)$ |
+| F.2 | `modality_gate` (sigmoid) | $(B,1285)$ | $(B,5)$ |
+| F.3 | first order + bilinear second order | $5\times(B,256)$ | $(B,256),(B,128)$ |
+| F.4 | `output` | $(B,512)$ | $(B,256)$ |
+| E.1 | `embed_net` | $(B,256)$ | $\mathbf{e}\,(B,256)$ |
+| H.1 | $\ell_2$-normalise | $(B,256)$ | $\hat{\mathbf{e}}\,(B,256)$ |
+| H.2 | `arcface_head`: $\hat{\mathbf{e}}\hat{\mathbf{W}}^\top$ | $(B,256)\times(270,256)$ | $(B,270)$ |
+| H.3 | reshape + pool over $K{=}3$ | $(B,270)$ | $(B,90,3)\to(B,90)$ |
+| X.1–4 | `aux_head_{a,b,c,d}` (train only) | $4\times(B,256)$ | $4\times(B,90)$ |
 
 ---
 
@@ -507,55 +693,86 @@ Input contract: $x \in \mathbb{R}^{B \times 40 \times 64 \times 64}$, `float32`.
 
 Measured on the shipped configuration (`configs/model/spectral_quadnet_v4.yaml`):
 
-| Component | Parameters | Share |
-|---|---:|---:|
-| `se` (MaskedSpectralECA) | 6 | 0.00 % |
-| `wl_pe_cnn` (buffer only) | 0 | 0.00 % |
-| `branch_a` — Spectral Profile | 592,753 | 7.5 % |
-| `branch_b` — Spectral Stats | 686,424 | 8.7 % |
-| `branch_c` — Spatial CNN | 1,694,158 | 21.5 % |
-| `branch_d` — SpecFormer | 2,180,866 | 27.7 % |
-| `cross_interaction` — fusion | 2,190,916 | 27.8 % |
-| `aux_head_{a,b,c,d}` — $4 \times 44{,}506$ | 178,024 | 2.3 % |
-| `embed_net` | 263,936 | 3.3 % |
-| `linear_head` | 23,130 | 0.3 % |
-| `arcface_head` ($270 \times 256$) | 69,120 | 0.9 % |
-| **Total (all trainable)** | **7,879,333** | 100 % |
+| Component | Parameters | Share | Pre-Tier-3 |
+|---|---:|---:|---:|
+| `se` (MaskedSpectralECA) | 6 | 0.00 % | 6 |
+| `wl_pe_cnn` (buffer only, shared) | 0 | 0.00 % | 0 |
+| `branch_a` — Spectral Profile | 603,089 | 11.6 % | 592,753 |
+| `branch_b` — Index Bank | 94,896 | 1.8 % | 686,424 |
+| `branch_c` — Spatial CNN | 2,230,646 | 42.9 % | 1,694,158 |
+| `branch_d` — SpecFormer | 1,241,640 | 23.9 % | 2,180,866 |
+| `morphology_embed` | 17,216 | 0.3 % | — (new) |
+| `cross_interaction` — fusion | 496,005 | 9.6 % | 2,190,916 |
+| `aux_head_{a,b,c,d}` — $4\times44{,}506$ | 178,024 | 3.4 % | 178,024 |
+| `embed_net` | 263,936 | 5.1 % | 263,936 |
+| `linear_head` | — (removed) | — | 23,130 |
+| `arcface_head` ($270\times256$) | 69,120 | 1.3 % | 69,120 |
+| **Total (all trainable)** | **5,194,578** | 100 % | **7,879,333** |
+
+A $-2.68\text{M}$ ($-34\%$) reduction overall, dominated by fusion ($-1.64\text{M}$, the Perceiver
+replacement) and Branch B ($-0.59\text{M}$, dropping the rank-2 moment tensor), partially spent
+back on Branch C ($+0.54\text{M}$, the new joint spectral-spatial 3-D stem) and a new
+`morphology_embed` (+17k). Checkpoint-persisted buffer elements: 25,013 (state\_dict element
+total: 5,219,591). A further $\sim$253k buffer elements exist at runtime but are **not**
+persisted — dominated by `ContinuumDepths`' four $(40,40,40)$ chord-interpolation tensors,
+recomputed from the wavelength grid on every construction rather than checkpointed.
 
 ---
 
 ## 3.8 Architectural invariants
 
 1. **Attribute names are checkpoint schema.** The 14 top-level names — `se`, `wl_pe_cnn`,
-   `branch_{a,b,c,d}`, `cross_interaction`, `aux_head_{a,b,c,d}`, `embed_net`, `linear_head`,
-   `arcface_head` — are the keys of every trained checkpoint. Renaming any breaks
-   `load_state_dict(strict=True)`; `tests/regression/test_state_dict_compatibility.py` pins them.
-2. **Construction order is initialisation.** Every `_init_weights` draws from the same global
-   torch RNG stream, in `__init__` order, so reordering sub-module construction changes the
-   initial weights. `train.py` documents the required call order at its `set_seed` site:
-   *config → `set_seed` → `DataStore` → `SpectralQuadNet` → `ModelEMA`*, with nothing in
-   between consuming the global RNG. `test_weight_init_is_bit_identical` hashes all 352
-   state-dict tensors against a golden capture.
-3. **Weight initialisation policy.** Conv1d/Conv2d: `kaiming_normal_(mode='fan_out',
-   nonlinearity='relu')`; norm layers: $\gamma = 1$, $\beta = 0$; Linear:
-   `trunc_normal_(std=0.02)` with zero bias; ArcFace weight: `xavier_uniform_`; both CLS
-   tokens: `trunc_normal_(std=0.02)`; fusion latents and SpecFormer positional embedding:
-   $\mathcal{N}(0, 0.02^2)$.
-4. **Buffers travel.** `wl_pe_cnn.pe`, `branch_{a,b}.wl_pe_module.pe` $(40, 96)$ and
-   `arcface_head.margins` $(90,)$ are `register_buffer`s and therefore part of `state_dict()`.
-5. **`ModelEMA.state_dict()` is the shadow's**, so the shadow must carry the identical key
-   structure — asserted for all three stages.
+   `branch_{a,b,c,d}`, `morphology_embed`, `cross_interaction`, `aux_head_{a,b,c,d}`,
+   `embed_net`, `arcface_head` — are the keys of every schema-v3 checkpoint (`SCHEMA_VERSION =
+   3`). There is no `linear_head`.
+2. **v1/v2 → v3 checkpoints cannot be migrated — this is a hard refusal, not a partial load.**
+   `engine/checkpoint.py::remap_state_dict` raises `SchemaTooOldError` for any bundle at schema
+   $\le2$: Branches B, C and D changed what they *consume*, not merely how many parameters they
+   consume it with, so no tensor-level remap exists. The only paths are retraining or checking
+   out the Tier-2 tree to re-score an archived checkpoint.
+3. **Construction order is initialisation.** Every `_init_weights` draws from the same global
+   torch RNG stream, in `__init__` order: `se → wl_pe_cnn → branch_a → branch_b → branch_c →
+   branch_d → morphology_embed → cross_interaction → aux_head_{a,b,c,d} → embed_net →
+   arcface_head`. `train.py` documents the required call order at its `set_seed` site:
+   *config → `set_seed` → `DataStore` → `SpectralQuadNet` → `ModelEMA`*.
+4. **Weight initialisation policy.** The outer `_init_weights` walks every submodule
+   (`self.modules()`) and applies: Conv1d/2d/3d → `kaiming_normal_(mode='fan_out',
+   nonlinearity='relu')`; BatchNorm/GroupNorm → $\gamma{=}1,\beta{=}0$; Linear →
+   `trunc_normal_(std=0.02)`, zero bias. It does **not** reach raw `nn.Parameter`s outside those
+   layer types — `SoftIndexBank.theta_pos/theta_neg` ($\mathcal{N}(0,0.02^2)$),
+   `arcface_head.weight` (`xavier_uniform_`), and both SpecFormer CLS tokens
+   (`trunc_normal_(std=0.02)`) all keep their own construction-time initialisation for the
+   model's whole life. LayerNorm and `LambdaConv1d`'s internal `kernel_mlp` LayerNorm are also
+   left at PyTorch defaults, deliberately — it keeps the generated-kernel scale a known constant.
+5. **Buffers travel — except where explicitly non-persistent.** `wl_pe_cnn.pe` /
+   `branch_a.wl_pe_module.pe` (object-identity-shared, $(40,96)$), `branch_a.derivatives.{d1_op,
+   d2_op}` $(40,40)$ each, `branch_a.stem.0.{nbr,offsets,features.omega}`,
+   `branch_d.spec_pos_embed`, `branch_d.lambda_bias.features.omega`, and
+   `arcface_head.{margins,confusion}` are `register_buffer`s and part of `state_dict()`.
+   `branch_b`'s `ContinuumDepths` hull-interpolation weights and `branch_d`'s
+   `LambdaWindowPooling.{token_wl,pool}` are registered `persistent=False` — deterministic
+   functions of the wavelength grid, recomputed on load rather than stored.
+6. **`ModelEMA.state_dict()` is the shadow's**, so the shadow must carry the identical key
+   structure — asserted for all three stages. Buffers are copied outright at each EMA update,
+   never averaged. `ModelEMA.update` requires the **unwrapped** module — passing a DDP- or
+   `torch.compile`-wrapped model raises `RuntimeError` rather than silently failing to track,
+   since its parameter-matching is by name.
+7. **Aux heads and branch dropout are both training-only.** No auxiliary head is ever invoked in
+   `.eval()`, and `branch_drop_prob` never masks a branch there either — the return-type table in
+   §3.1 reflects this directly (aux keys only appear in the training-mode dict).
 
-### Config keys not wired to behaviour
+### Config keys — full coverage, one call-site-level exception
 
-Kept in the schema and YAML (the config round-trip gate requires all 81 pre-refactor keys to
-have a home), but not read on the path they name:
+Unlike the pre-Tier-3 model, `tests/unit/test_config_wiring.py` currently asserts **every**
+`cfg.model.*` key is either forward-observable (perturbing it changes eval-mode logits),
+train-mode-only observable (a dropout rate), or has an explicit, named reason it cannot be
+(`branch_drop_prob`: eval never masks; `subcenter_tau_final`: the endpoint of an epoch-driven
+schedule, not a constructor argument; `subcenter_balance_weight`: read by the loss, not the
+model). There is no known dead `cfg.model.*` key today. One call-site-level parameter — not a
+config key — is unused: `SpectralQuadNet` computes `stride = cfg.model.specf_patch // 2` and
+passes it to `SpecFormerBranch.__init__`, but the branch derives its token count directly from
+`patch_size` and never reads the `stride` argument it receives.
 
-| Key | Value | Status |
-|---|---|---|
-| `model.fusion_heads` | 4 | not passed to `CrossModalInteraction`; the module's default of **8 heads** runs |
-| `model.specf_drop` | 0.15 | not passed to `SpecFormerBranch`; the call site hardcodes dropout **0.10** |
-| `model.wl_embed_dim` | 16 | accepted by `SpectralQuadNet.__init__`, unused in its body |
-| `model.branch_drop_prob` | 0.20 | stored on the module; forward uses the hardcoded $(0, 0, 0.30, 0.20)$ |
-| `SpectralStatsBranch(num_bands=…)` | 40 | accepted for interface symmetry; the branch is band-count agnostic |
-| `SpecFormerBranch(physical_wl, patch_size)` | — | accepted, unused (`specf_patch` *is* used, as $2\times$ the stride) |
+`model.fusion_heads`, which named the deleted Perceiver fusion's attention head count, is
+**deleted from the schema entirely** (not merely unwired) — there is nothing left in the gated
+bilinear pool for a head count to parameterise.
