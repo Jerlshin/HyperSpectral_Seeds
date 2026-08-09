@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import torch
 
-from spectralquadnet.utils.device import resolve_device
+from spectralquadnet.utils.device import release_memory, resolve_device
 
 
 def test_explicit_device_is_never_overridden() -> None:
@@ -48,6 +48,36 @@ def test_auto_prefers_metal_then_cuda_then_cpu(monkeypatch) -> None:
 
     _availability(mps=False, cuda=False)
     assert resolve_device("auto") == torch.device("cpu")
+
+
+def test_release_memory_collects_before_it_sweeps(monkeypatch) -> None:
+    """Order is the whole point, so it is pinned rather than assumed.
+
+    A tensor held only by a reference cycle is live to the caching allocator
+    until CPython's collector breaks the cycle. Sweeping first therefore frees a
+    pool that is still pinned, and the memory comes back at the next automatic
+    collection — generally after the allocation that needed it has already
+    failed. That is the Phase 1 → 2 OOM.
+    """
+    calls: list[str] = []
+    monkeypatch.setattr("spectralquadnet.utils.device.gc.collect", lambda: calls.append("gc") or 0)
+    monkeypatch.setattr(
+        "spectralquadnet.utils.device.empty_cache", lambda device=None: calls.append("empty")
+    )
+
+    release_memory(torch.device("cpu"))
+    assert calls == ["gc", "empty"]
+
+    calls.clear()
+    release_memory(torch.device("cpu"), collect=False)
+    assert calls == ["empty"], "the caller that has just collected can skip it"
+
+
+def test_release_memory_is_a_no_op_without_an_accelerator(monkeypatch) -> None:
+    """It is called per epoch in all three stages, so a CPU run must not pay for it."""
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+    release_memory(torch.device("cpu"))  # must not raise
 
 
 def test_metal_fused_attention_really_does_reject_dropout_under_no_grad() -> None:

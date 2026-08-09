@@ -164,10 +164,21 @@ class ModelEMA:
         Used at stage-transition boundaries, where the loss landscape shifts
         enough (e.g. new head, new loss) that continuing the old average
         would anchor the shadow to a stale optimum.
+
+        The source is **not** deep-copied first. It used to be, and that copy
+        was a third full set of parameters resident on the accelerator for the
+        length of the load — at a Stage 1 phase boundary, on top of the live
+        model, the shadow, the optimiser's two AdamW moments and the outgoing
+        phase's cached activations, which is where a run at the edge of its VRAM
+        budget tips over (the ep-181 OOM). It bought nothing:
+        ``Module.load_state_dict`` copies element-wise into the destination
+        under ``no_grad``, so it neither aliases the source nor writes to it, and
+        source and destination are distinct tensors regardless. Dropping it
+        leaves the resulting weights bit-identical.
         """
         # `load_state_dict` copies into the existing tensors, so `_pairing`
         # stays valid — it holds the tensors themselves, not their values.
-        self.shadow.load_state_dict(copy.deepcopy(model.state_dict()))
+        self.shadow.load_state_dict(model.state_dict())
         self._num_updates = 0
 
     def set_dropout(self, p: float) -> None:

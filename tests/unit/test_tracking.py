@@ -228,6 +228,97 @@ def test_console_scalars_are_quiet_unless_diagnostics_are_shown() -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  Terminal integrity: sanitization, markup and uniform styling
+# ══════════════════════════════════════════════════════════════════════
+
+
+def _coloured_output(emit: Any, **tracker_kwargs: Any) -> str:
+    """Render to a buffer that keeps ANSI, so the escape runs can be asserted on."""
+    buffer = io.StringIO()
+    console = Console(
+        file=buffer, width=200, force_terminal=True, color_system="truecolor", highlight=False
+    )
+    emit(ConsoleTracker(console=console, **tracker_kwargs))
+    return buffer.getvalue()
+
+
+def test_a_message_is_one_uninterrupted_colour_run() -> None:
+    """The whole line is styled, or none of it — never the left half.
+
+    ``rich`` reads ``[…]`` in a printed string as a style tag. A message that
+    happens to contain one used to *close* the tracker's colour mid-sentence and
+    reopen a different one, which is the "green up to here, plain after"
+    corruption. The style now rides on ``Console.print``'s ``style=``, outside
+    anything the payload can reach.
+    """
+    out = _coloured_output(
+        lambda t: t.log_message("margins c7: R=0.20 [dim]P=0.10[/dim] and the rest", "success")
+    )
+    assert out == "\x1b[32mmargins c7: R=0.20 [dim]P=0.10[/dim] and the rest\x1b[0m\n"
+    # One opening sequence, one reset: the run is not broken up.
+    assert out.count("\x1b[32m") == 1
+    assert out.count("\x1b[0m") == 1
+
+
+def test_a_bracket_in_a_message_cannot_raise() -> None:
+    """A bare ``[/]`` is a `MarkupError` under markup parsing — i.e. a crashed run.
+
+    ``hardest`` class names, ``[DATA]``/``[DDP]`` prefixes and a stray closing
+    tag all reach `log_message` as ordinary text. Killing a 600-epoch run from a
+    log statement is the failure this rules out.
+    """
+    out = _coloured_output(lambda t: t.log_message("Seeded 90 classes [/] worst cosine 0.31"))
+    assert "[/]" in out, "the bracket survives as literal text"
+
+
+def test_embedded_escapes_and_carriage_returns_are_stripped() -> None:
+    """Text arriving with its own ANSI or a cursor rewind cannot corrupt the line.
+
+    An embedded reset ends the tracker's colour run early; a bare ``\\r`` rewinds
+    to column 0 so whatever follows overwrites what came before — the
+    ``12/90F1 live/ema`` class of damage. Both are neutralised before printing.
+    """
+    out = _coloured_output(
+        lambda t: t.log_message("\x1b[32mEMA re-init\x1b[0m at P2\r12/90 after", level="plain")
+    )
+    assert "\x1b[32m" not in out, "the payload's own colour is gone"
+    assert "\r" not in out
+    # The rewind became a line break, so both halves survive and are readable.
+    assert "EMA re-init at P2\n" in out
+    assert "12/90 after" in out
+
+
+def test_a_row_is_styled_as_a_whole_line() -> None:
+    """The plain (row-stream) progress mode styles the entire epoch line at once."""
+    out = _coloured_output(lambda t: t.log_row("stage1", {"Ep": "181/600", "Ph": "P2"}, step=181))
+    row = [line for line in out.splitlines() if "181/600" in line][0]
+    assert row.startswith("\x1b[36m") and row.endswith("\x1b[0m")
+    assert row.count("\x1b[0m") == 1, "one reset, at the end — not mid-row"
+
+
+def test_a_bar_is_refused_on_a_non_interactive_console() -> None:
+    """``progress=bar`` forced onto a dumb terminal degrades to rows, not to garbage.
+
+    ``rich`` only repositions the cursor around a live region when the console is
+    interactive; where it is not — a pipe, a dumb terminal, a web console that
+    reports a TTY it cannot drive — it appends every frame instead, interleaving
+    bar redraws with log lines. The row stream is the readable answer there.
+    """
+    buffer = io.StringIO()
+    # `force_terminal` with `force_interactive=False` is exactly the shape of the
+    # environments in the bug report: it claims a terminal, it cannot drive one.
+    console = Console(file=buffer, width=200, force_terminal=True, force_interactive=False)
+    tracker = ConsoleTracker(console=console, progress="bar")
+    tracker.progress_start("stage1", total=600, description="Stage 1")
+    tracker.log_row("stage1", {"Ep": "181/600", "Loss": "1.2345"}, step=181)
+    tracker.progress_stop("stage1")
+
+    out = buffer.getvalue()
+    assert "181/600" in out, "the epoch line is rendered as a row"
+    assert "\r" not in out, "no cursor rewind reaches a console that cannot honour it"
+
+
+# ══════════════════════════════════════════════════════════════════════
 #  Hyperparameter flattening
 # ══════════════════════════════════════════════════════════════════════
 

@@ -35,6 +35,7 @@ from spectralquadnet.engine.batch import side_inputs, unpack_batch
 from spectralquadnet.engine.evaluate import evaluate_per_class
 from spectralquadnet.losses.cdws import build_cdws_weights
 from spectralquadnet.tracking.base import ExperimentTracker, NullTracker
+from spectralquadnet.utils.device import release_memory
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from spectralquadnet.config.schema import ExperimentConfig
@@ -98,7 +99,12 @@ def compute_branch_influence(
             logits_ab = model(x, branch_mask=ablations[b], **side)
             p_ab = torch.softmax(logits_ab, dim=1).clamp(min=1e-10)
             influences[b] += F.kl_div(p_ab.log(), p_full, reduction="batchmean")
+            del logits_ab, p_ab
         total += 1
+        # Five forward passes' worth of intermediates per batch, on a model this
+        # is called on right after an epoch's backward. `influences` is the only
+        # thing that has to survive the iteration.
+        del x, mask, morph, side, logits_full, p_full
 
     if total == 0:
         return {"A": 0, "B": 0, "C": 0, "D": 0}
@@ -109,6 +115,29 @@ def compute_branch_influence(
     # per branch.
     shares = (influences / total_inf * 100.0).cpu().tolist()
     return {k: float(v) for k, v in zip("ABCD", shares, strict=True)}
+
+
+def epoch_tag(step: int, total: int | None = None) -> str:
+    """``"[ep 181/600] "`` — the epoch stamp every diagnostic line carries.
+
+    A diagnostic line is only actionable next to the epoch that produced it: the
+    per-class F1 summary is emitted on a checkpoint improvement and the branch
+    influence on a diagnostics stride, so consecutive lines in a log are *not*
+    consecutive epochs, and "macro F1 fell" cannot be read off the stream
+    without knowing when each measurement was taken.
+
+    Returns the empty string for ``step <= 0``, which is what a caller outside an
+    epoch loop passes — ``train.py``'s Stage-1 recompute has no epoch to name,
+    and a ``[ep 0/600]`` there would be a worse answer than none.
+
+    Args:
+        step: The epoch this line describes, 1-based.
+        total: The stage's epoch budget, when the caller knows it; omitted
+            renders ``"[ep 181] "``.
+    """
+    if step <= 0:
+        return ""
+    return f"[ep {step}/{total}] " if total else f"[ep {step}] "
 
 
 def should_render_details(step: int, interval: int) -> bool:
@@ -140,6 +169,7 @@ def compute_class_difficulty(
     tracker: ExperimentTracker | None = None,
     step: int = 0,
     detail: bool = True,
+    total_steps: int | None = None,
 ) -> tuple[dict[int, float], dict[int, float]]:
     """Evaluate per-class F1, derive CDWS weights, and log a difficulty summary.
 
@@ -159,6 +189,8 @@ def compute_class_difficulty(
         detail: Whether to run the branch-influence ablation and render the
             table. See :func:`should_render_details`; the returned values do
             not depend on it.
+        total_steps: The caller's epoch budget, used only to render ``step`` as
+            ``[ep 181/600]`` rather than ``[ep 181]``. See :func:`epoch_tag`.
 
     Returns:
         ``(class_f1, cdws_weights)`` — per-class F1 and the sampling weights
@@ -174,12 +206,17 @@ def compute_class_difficulty(
 
     scalars = {"diag/macro_f1": macro, "diag/hard_classes": float(n_hard)}
     summary = (
-        f"{label} class difficulty — macro F1={macro:.3f}  "
+        f"{epoch_tag(step, total_steps)}{label} class difficulty — macro F1={macro:.3f}  "
         f"hard classes (<0.50 F1): {n_hard}/{cfg.data.num_classes}"
     )
 
     if detail:
+        # The ablation is 15 forward passes; it runs on a checkpoint
+        # improvement, which early in a stage is every epoch, and it is the
+        # largest transient any diagnostic allocates. Swept afterwards so the
+        # next epoch's training does not inherit its peak.
         branch_inf = compute_branch_influence(ema_shadow, val_ldr, device, max_batches=3)
+        release_memory(device)
         summary += (
             "  |  Branch influence % → "
             f"A:{branch_inf['A']:.1f}  B:{branch_inf['B']:.1f}  "

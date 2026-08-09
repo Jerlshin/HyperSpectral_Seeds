@@ -28,6 +28,20 @@ epoch wall time. It used to synchronise twice for every batch of that:
 Under DDP the split is sharded across ranks and re-joined by
 :func:`~spectralquadnet.utils.distributed.gather_concat` before any metric is
 computed, because a macro-F1 over half the classes is not half of the macro-F1.
+
+What each pass is allowed to hold
+─────────────────────────────────
+Keeping the per-batch results on the device is what removed the transfers
+above, and it means an evaluation's peak footprint is now *its own* to manage:
+the accumulated predictions for the whole split, plus one batch's activations.
+The loops below therefore drop each batch's tensors at the end of the iteration
+that produced them, rather than letting the loop variable carry the last batch
+alive through the concatenate/gather/transfer tail. Stages 1-3 run this twice
+per epoch, immediately after a backward pass has already driven the caching
+allocator to its high-water mark, so the batch that is not released here is the
+one the next allocation has to grow the pool for — see
+:func:`~spectralquadnet.utils.device.release_memory`, which the stage loops call
+either side of these calls.
 """
 
 from __future__ import annotations
@@ -79,12 +93,27 @@ def _run_eval(
             logits = torch.nan_to_num(logits, nan=0.0, posinf=1e4, neginf=-1e4)
             preds.append(logits.argmax(1))
             targets.append(y)
+            # `logits` is the batch's largest tensor and the loop variable holds
+            # the last one until the *next* iteration rebinds it — so without
+            # this the whole activation chain behind one batch stays resident
+            # across the `cat`, the gather and the transfer below. Two stages
+            # call this twice an epoch; releasing the reference at the end of
+            # the iteration that made it costs nothing and bounds the pass's
+            # high-water mark to one batch.
+            del x, mask, morph, logits
 
     dist = dist or DistContext()
-    all_preds = gather_concat(dist, torch.cat(preds))
-    all_targets = gather_concat(dist, torch.cat(targets))
+    joined_preds = gather_concat(dist, torch.cat(preds))
+    joined_targets = gather_concat(dist, torch.cat(targets))
+    # The per-batch results are on the device and no longer needed once
+    # concatenated; dropping the lists here rather than at return frees the
+    # split's worth of them before the gather allocates its own buffers.
+    del preds, targets
     # One device→host transfer for the whole split instead of one per batch.
-    return all_preds.cpu().numpy(), all_targets.cpu().numpy()
+    out_preds = joined_preds.cpu().numpy()
+    out_targets = joined_targets.cpu().numpy()
+    del joined_preds, joined_targets
+    return out_preds, out_targets
 
 
 def evaluate(
@@ -176,6 +205,10 @@ def collect_embeddings(
             # tensor still lands there — just in a single transfer.
             embs.append(emb.detach().float())
             targets.append(y)
+            del x, mask, morph, emb  # see `_run_eval` — one batch resident, not two
     # One device→host transfer for the whole split rather than one per batch;
     # `_spherical_kmeans` runs on the host, so everything lands there either way.
-    return torch.cat(embs).cpu(), torch.cat(targets).cpu()
+    out_embs = torch.cat(embs).cpu()
+    out_targets = torch.cat(targets).cpu()
+    del embs, targets
+    return out_embs, out_targets
