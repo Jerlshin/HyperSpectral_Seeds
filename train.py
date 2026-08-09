@@ -45,6 +45,7 @@ data=spa40_90class_pfix`` selects the latter.
 
 from __future__ import annotations
 
+import io
 import logging
 import os
 import sys
@@ -91,6 +92,7 @@ from spectralquadnet.utils.device import (
     describe_hardware,
     empty_cache,
     maybe_compile,
+    release_memory,
     reset_compilation,
     resolve_device,
     resolve_runtime,
@@ -109,6 +111,29 @@ register_configs()
 
 #: How `latest_completed_stage()`'s return value reads in the resume banner.
 _RESUME_LABELS = {0: "starting fresh", 1: "Stage 1 done", 2: "Stages 1–2 done", 3: "all done"}
+
+
+class _LateBoundStdout(io.TextIOBase):
+    """``sys.stdout`` resolved per write instead of at handler construction.
+
+    The console tracker's progress bar redirects ``sys.stdout`` while it is live,
+    so that a stray write scrolls *above* the bar rather than through it.
+    ``logging.StreamHandler(sys.stdout)`` captures the stream object before that
+    redirect exists and keeps writing to the original descriptor, which lands its
+    output on top of the live region — the ``P1[INFO] …`` collision, and the
+    reason the traceback from a crash mid-run arrives interleaved with a bar
+    frame. Looking the attribute up per write puts logging back under whatever
+    redirect is installed at that moment, and leaves it unchanged when none is.
+    """
+
+    def write(self, s: str) -> int:
+        stream = sys.stdout
+        written = stream.write(s)
+        stream.flush()
+        return written
+
+    def flush(self) -> None:
+        sys.stdout.flush()
 
 
 def _run(cfg: DictConfig, tracker: ExperimentTracker, dist: DistContext) -> None:
@@ -296,6 +321,10 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker, dist: DistContext) -> None
         )
         tracker.log_message("Reloading best Stage 1 checkpoint ...")
         load_ckpt(ckpt_s1, model, ema, device)
+        # A stage boundary drops the stage's optimiser state, its scheduler, its
+        # phase loaders and their prefetch queues all at once, and the reload
+        # above has just materialised a checkpoint's worth of tensors on top.
+        release_memory(device)
     else:
         tracker.log_message("[SKIP] Stage 1 → loading checkpoint", level="plain")
         load_ckpt(ckpt_s1, model, ema, device)
@@ -403,6 +432,7 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker, dist: DistContext) -> None
         )
         tracker.log_message("Reloading best Stage 2 checkpoint ...")
         load_ckpt(ckpt_s2, model, ema, device)
+        release_memory(device)  # see the Stage 1 boundary above
     else:
         tracker.log_message("[SKIP] Stage 2 → loading checkpoint", level="plain")
         load_ckpt(ckpt_s2, model, ema, device)
@@ -479,8 +509,10 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker, dist: DistContext) -> None
     tracker.log_message(f"Best checkpoint (by val_f1): {best_final_ckpt}")
 
     # Stage 3 leaves two extra model copies behind; the allocator gets them back
-    # before the twelve-view TTA pass allocates its own activations.
-    empty_cache(device)
+    # before the twelve-view TTA pass allocates its own activations. Collected
+    # first, because the SWA probe and the averaged copy are reachable from
+    # cycles that only the cycle collector breaks — see `release_memory`.
+    release_memory(device)
 
     _, _, test_ldr = build_loaders(
         cfg,
@@ -521,7 +553,7 @@ def main(cfg: DictConfig) -> None:
 
     Path(cfg.output_dir).mkdir(parents=True, exist_ok=True)
 
-    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+    handlers: list[logging.Handler] = [logging.StreamHandler(_LateBoundStdout())]
     if dist.is_main:
         handlers.insert(0, logging.FileHandler(os.path.join(cfg.output_dir, "training.log")))
     logging.basicConfig(

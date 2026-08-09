@@ -36,7 +36,11 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from spectralquadnet.engine.checkpoint import save_ckpt
-from spectralquadnet.engine.diagnostics import compute_class_difficulty, should_render_details
+from spectralquadnet.engine.diagnostics import (
+    compute_class_difficulty,
+    epoch_tag,
+    should_render_details,
+)
 from spectralquadnet.engine.evaluate import evaluate, evaluate_pr_and_confusion
 from spectralquadnet.engine.train_epoch import train_one_epoch
 from spectralquadnet.losses.auxiliary import GradNormAuxWeights
@@ -46,7 +50,7 @@ from spectralquadnet.models.ema import ModelEMA
 from spectralquadnet.optim.param_groups import build_optimizer_s2
 from spectralquadnet.optim.schedulers import arcface_margin, sgdr_scheduler, subcentre_tau
 from spectralquadnet.tracking.base import ExperimentTracker, NullTracker
-from spectralquadnet.utils.device import RuntimePlan, empty_cache
+from spectralquadnet.utils.device import RuntimePlan, release_memory
 from spectralquadnet.utils.distributed import DistContext
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -103,8 +107,13 @@ def run_stage2(
     detail_every = plan.diagnostics_interval if plan is not None else 1
     model.set_dropout(cfg.stage2.dropout)
 
+    # Stage entry is a phase transition of the same shape as Stage 1's: the
+    # re-init doubles the parameter footprint for the length of the copy, and it
+    # lands on whatever Stage 1 left in the pool. See `run_stage1`.
+    release_memory(device)
     ema.reinit_from(model)
     ema.set_dropout(cfg.stage2.dropout)
+    release_memory(device)
 
     # One name, one meaning: `val_ldr` selects, `fit_ldr` fits (P-5 / T4-5).
     fit_ldr = calib_ldr if calib_ldr is not None else val_ldr
@@ -216,8 +225,13 @@ def run_stage2(
         )
         scheduler.step()
 
+        tag = epoch_tag(ep, ep_total)
+
+        # Bracketed for the same reason as Stage 1's — see `run_stage1`.
+        release_memory(device)
         f1_live, acc_live = evaluate(model, val_ldr, device, dist)
         f1_ema, acc_ema = evaluate(ema.shadow, val_ldr, device, dist)
+        release_memory(device)
         best_ep_f1 = max(f1_live, f1_ema)
         best_ep_acc = max(acc_live, acc_ema)
         # See stage1_progressive.py — `final_eval` evaluates whichever of the
@@ -230,7 +244,15 @@ def run_stage2(
         if best_ep_f1 > best_f1:
             best_f1, no_improve = best_ep_f1, 0
             _cf1_s2, _cdws_s2 = compute_class_difficulty(
-                cfg, ema.shadow, fit_ldr, device, "S2", tracker=trk, step=ep, detail=detail
+                cfg,
+                ema.shadow,
+                fit_ldr,
+                device,
+                "S2",
+                tracker=trk,
+                step=ep,
+                detail=detail,
+                total_steps=ep_total,
             )
             save_ckpt(
                 cfg,
@@ -305,11 +327,13 @@ def run_stage2(
         )
 
         if plan is not None and plan.empty_cache_interval and ep % plan.empty_cache_interval == 0:
-            empty_cache(device)
+            release_memory(device)
 
         # Broadcast so every rank stops on the same epoch — see stage 1.
         if dist.broadcast_object(no_improve >= cfg.stage2.patience):
-            trk.log_message(f"Early stopping at epoch {ep}.", level="warn")
+            trk.log_message(
+                f"{tag}Early stopping ({no_improve} epochs without improvement).", level="warn"
+            )
             break
 
     trk.progress_stop("stage2")

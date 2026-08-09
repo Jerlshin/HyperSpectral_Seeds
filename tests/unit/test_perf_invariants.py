@@ -97,6 +97,59 @@ def test_ema_multi_tensor_update_is_bit_identical() -> None:
     assert not drifted, f"EMA drifted on {drifted}"
 
 
+def test_ema_reinit_matches_the_deepcopied_load_it_replaced() -> None:
+    """Dropping ``reinit_from``'s ``deepcopy`` must not move a single weight.
+
+    The copy was a third full set of parameters resident on the accelerator for
+    the length of the load, taken at exactly the Stage-1 phase boundary where a
+    run at the edge of its VRAM budget tips over. It bought nothing:
+    ``load_state_dict`` copies element-wise into the destination under
+    ``no_grad``, so it neither aliases the source nor writes to it.
+    """
+    model = _mlp()
+    model(torch.randn(16, 48))  # populate the BatchNorm buffers
+    ema = ModelEMA(model, decay=0.999)
+
+    # What the old line produced, kept verbatim — see the module docstring.
+    reference = copy.deepcopy(ema.shadow)
+    reference.load_state_dict(copy.deepcopy(model.state_dict()))
+
+    torch.manual_seed(3)
+    with torch.no_grad():
+        for p in model.parameters():
+            p.add_(torch.randn_like(p))
+    reference.load_state_dict(copy.deepcopy(model.state_dict()))
+    ema.reinit_from(model)
+
+    actual, expected = ema.shadow.state_dict(), reference.state_dict()
+    assert actual.keys() == expected.keys()
+    drifted = [k for k in expected if not torch.equal(actual[k], expected[k])]
+    assert not drifted, f"re-init drifted on {drifted}"
+    assert ema._num_updates == 0, "the decay warm-up restarts"
+
+
+def test_ema_reinit_does_not_alias_the_source_model() -> None:
+    """Without the copy the shadow must still own its tensors, not share the model's.
+
+    This is the property the ``deepcopy`` was presumably there to guarantee, and
+    the one that would make its removal a real bug: an aliased shadow would
+    track the live weights exactly and every reported EMA F1 would be the live
+    model's.
+    """
+    model = _mlp()
+    ema = ModelEMA(model, decay=0.999)
+    ema.reinit_from(model)
+
+    with torch.no_grad():
+        for p in model.parameters():
+            p.add_(1.0)
+
+    shadow = dict(ema.shadow.named_parameters())
+    for name, param in model.named_parameters():
+        assert shadow[name].data_ptr() != param.data_ptr(), f"{name} aliases the live model"
+        assert not torch.equal(shadow[name], param), f"{name} followed the live model"
+
+
 class _ReferenceSAM(torch.optim.Optimizer):
     """``SAM`` as it was: a clone, a scale and an add per parameter, per step."""
 

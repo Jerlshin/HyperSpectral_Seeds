@@ -53,6 +53,7 @@ from torch.utils.data import DataLoader
 
 from spectralquadnet.data.loaders import build_natural_prior_loader
 from spectralquadnet.engine.checkpoint import save_ckpt, update_bn_stats
+from spectralquadnet.engine.diagnostics import epoch_tag
 from spectralquadnet.engine.evaluate import evaluate
 from spectralquadnet.engine.train_epoch import train_one_epoch_sam
 from spectralquadnet.losses.auxiliary import GradNormAuxWeights
@@ -65,7 +66,7 @@ from spectralquadnet.optim.schedulers import stage3_margin_kappa
 from spectralquadnet.tracking.base import ExperimentTracker, NullTracker
 from spectralquadnet.utils.device import (
     RuntimePlan,
-    empty_cache,
+    release_memory,
     reset_compilation,
     unwrap_model,
 )
@@ -157,11 +158,14 @@ def run_stage3_swa(
     model.set_subcentre_tau(cfg.model.subcenter_tau_final)
 
     # The shadow tracks *this* stage's trajectory, so it starts from the weights
-    # Stage 3 starts from rather than continuing Stage 2's average.
+    # Stage 3 starts from rather than continuing Stage 2's average. Bracketed
+    # like Stage 1's phase boundaries — see `run_stage1`.
+    release_memory(device)
     ema.reinit_from(model)
     ema.set_dropout(cfg.stage2.dropout)
     ema.shadow.branch_drop_prob = 0.0
     ema.shadow.set_subcentre_tau(cfg.model.subcenter_tau_final)
+    release_memory(device)
 
     # T2-1: Stage 2's calibrated margin vector is the thing being annealed, so
     # it is captured before the first cycle scales it.
@@ -249,8 +253,13 @@ def run_stage3_swa(
             aux_weights=aux_weights,
         )
 
+        # SAM's double backward leaves the pool at its high-water mark, and a
+        # cycle-boundary epoch scores a *third* model (the SWA candidate) right
+        # after these two. Bracketed — see `run_stage1`.
+        release_memory(device)
         f1_live, acc_live = evaluate(model, val_ldr, device, dist)
         f1_ema, acc_ema = evaluate(ema.shadow, val_ldr, device, dist)
+        release_memory(device)
         best_live_f1 = max(best_live_f1, f1_live)
         snap_info = ""
 
@@ -317,29 +326,31 @@ def run_stage3_swa(
         )
 
     trk.progress_stop("stage3")
-    trk.log_message(f"Updating BN stats ({n_snap} accepted, {n_rejected} rejected) ...")
+    end_tag = epoch_tag(cfg.stage3.epochs, cfg.stage3.epochs)
+    trk.log_message(f"{end_tag}Updating BN stats ({n_snap} accepted, {n_rejected} rejected) ...")
     if swa_state is None:
-        trk.log_message("No snapshots accepted — using final live model.", level="warn")
+        trk.log_message(f"{end_tag}No snapshots accepted — using final live model.", level="warn")
         swa_state = {k: v.detach().clone() for k, v in unwrap_model(model).state_dict().items()}
 
     # The scratch probe has done its job; a whole extra model is worth freeing
     # before two more (`swa_model`, and `deepcopy`'s transient) are built.
     del probe
-    empty_cache(device)
+    release_memory(device)
 
     swa_model = copy.deepcopy(unwrap_model(model))
     swa_model.load_state_dict(swa_state)
     update_bn_stats(build_natural_prior_loader(train_ldr, plan=plan), swa_model, device)
     f1_swa, acc_swa = evaluate(swa_model, val_ldr, device, dist)
-    trk.log_message(f"SWA val: F1={f1_swa:.3f}  Acc={acc_swa:.1%}", level="plain")
+    trk.log_message(f"{end_tag}SWA val: F1={f1_swa:.3f}  Acc={acc_swa:.1%}", level="plain")
 
     # ── SWA vs EMA — score both, keep the better ──────────────────────
     f1_ema, acc_ema = evaluate(ema.shadow, val_ldr, device, dist)
+    release_memory(device)
     best_source = "swa" if f1_swa >= f1_ema else "ema"
     best_f1 = max(f1_swa, f1_ema)
     best_acc = acc_swa if best_source == "swa" else acc_ema
     trk.log_message(
-        f"EMA val: F1={f1_ema:.3f}  Acc={acc_ema:.1%}  →  keeping {best_source.upper()}",
+        f"{end_tag}EMA val: F1={f1_ema:.3f}  Acc={acc_ema:.1%}  →  keeping {best_source.upper()}",
         level="plain",
     )
     trk.log_scalars(
@@ -356,12 +367,13 @@ def run_stage3_swa(
     if best_f1 <= prev_best_f1:
         note = "val_f1 did not beat Stage 2; Stage 2 ckpt preferred for eval"
         trk.log_message(
-            f"Stage 3 F1 {best_f1:.3f} ≤ Stage 2 best {prev_best_f1:.3f} — Stage 2 preferred.",
+            f"{end_tag}Stage 3 F1 {best_f1:.3f} ≤ Stage 2 best {prev_best_f1:.3f} "
+            "— Stage 2 preferred.",
             level="plain",
         )
     else:
         trk.log_message(
-            f"Stage 3 F1 {best_f1:.3f} > Stage 2 best {prev_best_f1:.3f} → saving.",
+            f"{end_tag}Stage 3 F1 {best_f1:.3f} > Stage 2 best {prev_best_f1:.3f} → saving.",
             level="plain",
         )
 

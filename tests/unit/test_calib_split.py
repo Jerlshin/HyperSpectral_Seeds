@@ -87,11 +87,22 @@ def traced(monkeypatch):
     The doubles mirror the real signatures positionally on purpose — that is
     what lets them assert *which loader argument* each fitted quantity was
     handed. So they have to track those signatures: ``dist`` and ``detail``
-    are the optional parameters the throughput refactor added.
+    are the optional parameters the throughput refactor added, and
+    ``total_steps`` is the one the epoch-tagged diagnostics added.
     """
     seen: dict[str, str] = {}
 
-    def fake_difficulty(cfg, shadow, loader, device, label="", tracker=None, step=0, detail=True):
+    def fake_difficulty(
+        cfg,
+        shadow,
+        loader,
+        device,
+        label="",
+        tracker=None,
+        step=0,
+        detail=True,
+        total_steps=None,
+    ):
         seen[f"cdws_{label}"] = loader.split_name
         return {c: 0.5 for c in range(NUM_CLASSES)}, {c: 1.0 for c in range(NUM_CLASSES)}
 

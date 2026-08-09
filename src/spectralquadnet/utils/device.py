@@ -46,6 +46,7 @@ limitation that motivated it.
 from __future__ import annotations
 
 import contextlib
+import gc
 import logging
 import os
 from dataclasses import dataclass
@@ -428,6 +429,39 @@ def empty_cache(device: torch.device | str | None = None) -> None:
         mps = getattr(torch, "mps", None)
         if mps is not None and hasattr(mps, "empty_cache"):
             mps.empty_cache()
+
+
+def release_memory(device: torch.device | str | None = None, *, collect: bool = True) -> None:
+    """Break reference cycles, then return the freed blocks to the driver.
+
+    :func:`empty_cache` alone is not enough at a phase boundary, and the reason
+    is the order of the two operations. The allocator only hands back blocks
+    with no live tensor pointing at them; a tensor still reachable from a
+    reference *cycle* — an autograd graph whose output the frame above still
+    holds, an exception's ``__traceback__`` chaining back to the frame that
+    raised, a module holding a hook that closes over the module — is live to the
+    allocator until CPython's cycle collector runs. Calling ``empty_cache()``
+    first therefore sweeps a pool that is still pinned, and the memory only
+    comes back at the next automatic collection, which is generally after the
+    allocation that needed it.
+
+    Neither half is free: ``gc.collect()`` walks the process's whole object
+    graph, and ``empty_cache()`` synchronises before it frees, so the blocks it
+    hands back have to be re-requested from the driver by the next allocation.
+    Both costs are per *call*, not per tensor, which is what makes the call site
+    the whole design: this runs **per epoch and per phase boundary**, against an
+    epoch of training and two full validation passes, and never per step. At
+    per-step cadence the same pair would dominate the loop, because every block
+    released would be re-requested by the very next batch.
+
+    Args:
+        device: Accelerator to sweep; ``None`` sweeps every available one.
+        collect: Run the cycle collector first. Left on everywhere it matters;
+            the flag exists for a caller that has just collected.
+    """
+    if collect:
+        gc.collect()
+    empty_cache(device)
 
 
 def synchronize(device: torch.device) -> None:

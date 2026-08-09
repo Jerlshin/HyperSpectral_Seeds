@@ -38,7 +38,11 @@ from torch.utils.data import DataLoader
 
 from spectralquadnet.data.loaders import build_phase3_loader
 from spectralquadnet.engine.checkpoint import save_ckpt
-from spectralquadnet.engine.diagnostics import compute_class_difficulty, should_render_details
+from spectralquadnet.engine.diagnostics import (
+    compute_class_difficulty,
+    epoch_tag,
+    should_render_details,
+)
 from spectralquadnet.engine.evaluate import evaluate
 from spectralquadnet.engine.train_epoch import train_one_epoch
 from spectralquadnet.losses.auxiliary import GradNormAuxWeights, _aux_loss_weight
@@ -48,7 +52,7 @@ from spectralquadnet.models.ema import ModelEMA
 from spectralquadnet.optim.param_groups import build_optimizer_s1
 from spectralquadnet.optim.schedulers import phase_aware_lr, subcentre_tau
 from spectralquadnet.tracking.base import ExperimentTracker, NullTracker
-from spectralquadnet.utils.device import RuntimePlan, empty_cache
+from spectralquadnet.utils.device import RuntimePlan, release_memory
 from spectralquadnet.utils.distributed import DistContext
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -183,29 +187,48 @@ def run_stage1(
         else:
             phase = 3
 
+        tag = epoch_tag(ep, ep_total)
+
         # ── EMA re-init at phase boundaries ───────────────────────────
+        # Both boundaries are bracketed by a memory sweep: the re-init briefly
+        # holds a second copy of every parameter, the incoming phase's loader
+        # brings its own prefetch queue, and cuDNN re-autotunes for the new
+        # epoch's first shapes. That peak landing on a pool still fragmented by
+        # the outgoing phase is what OOMs at ep 181 — see `release_memory`.
         if phase == 2 and not ema_reinited[0] and cfg.stage1.ema_reinit_phases:
+            release_memory(device)
             ema.reinit_from(model)
-            trk.log_message(f"EMA re-init at Phase 2 (ep {ep})")
+            trk.log_message(f"{tag}EMA re-init at Phase 2")
             ema_reinited[0] = True
+            release_memory(device)
 
         if phase == 3 and not ema_reinited[1] and cfg.stage1.ema_reinit_phases:
+            release_memory(device)
             ema.reinit_from(model)
             # Dropout is raised for Phase 3 to fight memorisation on the
             # lighter-augmentation, hard-class-oversampled data it trains on.
             p3_drop = cfg.stage1.p3_dropout
             model.set_dropout(p3_drop)
             ema.set_dropout(p3_drop)
-            trk.log_message(f"EMA re-init at Phase 3 (ep {ep})  dropout→{p3_drop}")
+            trk.log_message(f"{tag}EMA re-init at Phase 3  dropout→{p3_drop}")
             ema_reinited[1] = True
+            release_memory(device)
 
         # ── Phase 3 loader construction (once, at first Phase-3 epoch) ─
         if phase == 3 and phase3_ldr is None:
             trk.log_message(
-                f"Phase 2→3 boundary: measuring per-class F1 for oversampling on {fit_split} ..."
+                f"{tag}Phase 2→3 boundary: measuring per-class F1 "
+                f"for oversampling on {fit_split} ..."
             )
             class_f1_phase2, _ = compute_class_difficulty(
-                cfg, ema.shadow, fit_ldr, device, "Phase2→3", tracker=trk, step=ep
+                cfg,
+                ema.shadow,
+                fit_ldr,
+                device,
+                "Phase2→3",
+                tracker=trk,
+                step=ep,
+                total_steps=ep_total,
             )
             phase3_ldr = build_phase3_loader(
                 cfg,
@@ -275,8 +298,14 @@ def run_stage1(
         scheduler.step()
 
         # ── Evaluate both live model and EMA ──────────────────────────
+        # Two full passes over the validation split, each allocating its own
+        # activations on top of whatever the epoch's backward left cached.
+        # Sweeping either side keeps the evaluation from having to grow the pool
+        # and hands the next epoch a clean one.
+        release_memory(device)
         f1_live, acc_live = evaluate(model, val_ldr, device, dist)
         f1_ema, acc_ema = evaluate(ema.shadow, val_ldr, device, dist)
+        release_memory(device)
         best_ep_f1 = max(f1_live, f1_ema)
         best_ep_acc = max(acc_live, acc_ema)
         # Which of the two `best_ep_f1` came from. `final_eval` evaluates that
@@ -292,7 +321,15 @@ def run_stage1(
         if best_ep_f1 > best_f1:
             best_f1, no_improve = best_ep_f1, 0
             _cf1, _cdws = compute_class_difficulty(
-                cfg, ema.shadow, fit_ldr, device, "S1", tracker=trk, step=ep, detail=detail
+                cfg,
+                ema.shadow,
+                fit_ldr,
+                device,
+                "S1",
+                tracker=trk,
+                step=ep,
+                detail=detail,
+                total_steps=ep_total,
             )
             save_ckpt(
                 cfg,
@@ -348,15 +385,17 @@ def run_stage1(
             step=ep,
         )
 
-        # Periodic sweep of the caching allocator's free blocks. Off by
+        # Extra periodic sweep on top of the per-epoch one above. Off by
         # default; the stage boundary in `train.py` always sweeps.
         if plan is not None and plan.empty_cache_interval and ep % plan.empty_cache_interval == 0:
-            empty_cache(device)
+            release_memory(device)
 
         # Under DDP every rank must reach the same verdict, or the ones that
         # kept going would block forever in the next epoch's all-reduce.
         if dist.broadcast_object(no_improve >= cfg.stage1.patience):
-            trk.log_message(f"Early stopping at epoch {ep}.", level="warn")
+            trk.log_message(
+                f"{tag}Early stopping ({no_improve} epochs without improvement).", level="warn"
+            )
             break
 
     trk.progress_stop("stage1")

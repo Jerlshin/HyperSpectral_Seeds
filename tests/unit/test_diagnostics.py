@@ -20,6 +20,7 @@ import torch.nn as nn
 from spectralquadnet.engine.diagnostics import (
     BRANCH_PREFIXES,
     branch_grad_norms,
+    epoch_tag,
     hardest_classes_report,
 )
 from spectralquadnet.losses.auxiliary import _compute_aux_loss
@@ -87,6 +88,57 @@ def test_branch_grad_norms_sum_in_quadrature_to_the_group_total() -> None:
     model.branch_a[0].weight.grad = torch.tensor([[3.0, 0.0], [0.0, 0.0]])
     model.branch_a[0].bias.grad = torch.tensor([4.0, 0.0])
     assert branch_grad_norms(model)["branch_a"] == 5.0  # sqrt(3² + 4²)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Epoch stamping
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_epoch_tag_names_the_epoch_and_the_budget() -> None:
+    """The stamp every diagnostic line carries, so a log line dates itself.
+
+    Diagnostics are emitted on a checkpoint improvement and on a stride, so
+    consecutive lines are not consecutive epochs — without this, "macro F1 went
+    down" cannot be placed against the schedule that moved.
+    """
+    assert epoch_tag(181, 600) == "[ep 181/600] "
+    assert epoch_tag(181) == "[ep 181] ", "no budget known → epoch alone"
+
+
+def test_epoch_tag_is_empty_outside_an_epoch_loop() -> None:
+    """`train.py`'s Stage-1 recompute has no epoch; `[ep 0/600]` would be worse than none."""
+    assert epoch_tag(0, 600) == ""
+    assert epoch_tag(0) == ""
+
+
+def test_class_difficulty_stamps_its_summary_with_the_epoch(monkeypatch) -> None:
+    """The line the stages actually emit carries the tag ahead of the label.
+
+    Pins the rendered string, not just the helper: the ``S1 class difficulty —
+    macro F1=…`` line is the one a run is read back through, and it used to
+    reach ``training.log`` with no way to tell epoch 181 from epoch 12.
+    """
+    from types import SimpleNamespace
+
+    from spectralquadnet.engine import diagnostics
+
+    monkeypatch.setattr(diagnostics, "evaluate_per_class", lambda *a, **k: {0: 0.9, 1: 0.2, 2: 0.4})
+    cfg = SimpleNamespace(
+        data=SimpleNamespace(num_classes=3),
+        stage2=SimpleNamespace(cdws_max_weight=3.0, cdws_eps=0.05),
+    )
+    messages: list[str] = []
+    tracker = SimpleNamespace(
+        log_message=lambda text, level="info": messages.append(text),
+        log_scalars=lambda tags, step: None,
+        log_table=lambda tag, rows, step: None,
+    )
+
+    diagnostics.compute_class_difficulty(
+        cfg, None, None, torch.device("cpu"), "S1", tracker, step=181, detail=False, total_steps=600
+    )
+    assert messages[0].startswith("[ep 181/600] S1 class difficulty — macro F1=")
 
 
 # ══════════════════════════════════════════════════════════════════════
