@@ -472,14 +472,23 @@ class RuntimeConfig:
     empty_cache_interval: int = 0
 
     # ── Console ───────────────────────────────────────────────────────
-    #: ``auto`` renders a progress bar on a TTY and falls back to the
-    #: append-only row stream when stdout is a pipe (a bar redrawn into a log
-    #: file is unreadable). ``bar``/``rows``/``off`` force it.
+    #: Whether the per-epoch line is rendered. ``off`` suppresses it (banners,
+    #: notices and diagnostic blocks still print); every other value renders it.
+    #:
+    #: There is no longer a *choice of rendering*: the console backend emits one
+    #: appended line per epoch on every stdout, because the three environments
+    #: this runs in — a macOS terminal, an SSH session piped to a file, a
+    #: Kaggle/Colab cell — cannot all honour a redrawing bar, and the two that
+    #: cannot produce an unreadable log rather than a degraded one. ``bar`` and
+    #: ``rows`` are still accepted, and both mean "render the line", so an
+    #: existing command line keeps composing.
     progress: str = "auto"
     #: Epoch stride for the expensive console diagnostics — the hardest-class
-    #: table and the per-class classification report. The *numbers* behind them
-    #: (per-class F1, the CDWS weights) are still computed on the schedule
-    #: training needs; only the rendering is throttled.
+    #: block and the leave-one-branch-out influence percentages. A new best
+    #: checkpoint renders them too, off-stride, since that is the epoch the
+    #: saved weights describe. The *numbers* behind them (per-class F1, the CDWS
+    #: weights) are still computed whenever a checkpoint needs them; only the
+    #: rendering and the ablation are throttled.
     diagnostics_interval: int = 50
 
 

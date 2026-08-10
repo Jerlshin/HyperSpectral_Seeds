@@ -19,11 +19,15 @@ shards is the global-batch gradient. See
 :mod:`spectralquadnet.utils.distributed`. Nothing about it engages under a
 plain ``python train.py``.
 
-Execution knobs — worker counts, ``torch.compile``, fused AdamW, progress
-rendering, the diagnostics stride — live under ``cfg.runtime`` and are resolved
-once here into a :class:`~spectralquadnet.utils.device.RuntimePlan`. None of
-them may change a reported number; the two that would (TF32, channels_last) are
-off by default.
+Execution knobs — worker counts, ``torch.compile``, fused AdamW, whether the
+per-epoch line is rendered at all, the diagnostics stride — live under
+``cfg.runtime`` and are resolved once here into a
+:class:`~spectralquadnet.utils.device.RuntimePlan`. None of them may change a
+reported number; the two that would (TF32, channels_last) are off by default.
+
+Console output is append-only: one line per epoch, written once, mirrored into
+``output_dir/training.log`` — see :func:`_setup_logging` and
+:mod:`spectralquadnet.tracking.console_tracker`.
 
 Auto-resume: ``latest_completed_stage()`` probes stages 3 → 2 → 1, each
 completed stage is loaded rather than retrained, and
@@ -45,7 +49,15 @@ data=spa40_90class_pfix`` selects the latter.
 
 from __future__ import annotations
 
-import io
+# First, and before `torch`: importing this module installs the warning filters,
+# and the loudest warning it silences is emitted by `import torch` itself
+# (`torch/cuda/__init__.py` imports `pynvml`, which warns about its own rename).
+# A filter installed further down the file cannot unprint it. The package's
+# `__init__` is three lines and imports nothing, so this costs no import time.
+# isort: off
+import spectralquadnet.utils.warning_filters  # noqa: F401
+
+# isort: on
 import logging
 import os
 import sys
@@ -105,6 +117,7 @@ from spectralquadnet.utils.distributed import (
     wrap_for_training,
 )
 from spectralquadnet.utils.seed import set_seed
+from spectralquadnet.utils.warning_filters import route_warnings_to_logging
 
 # Makes the dataclass schemas available to Hydra's composition, so a typo in a
 # YAML field fails at startup instead of hours into Stage 1.
@@ -113,28 +126,61 @@ register_configs()
 #: How `latest_completed_stage()`'s return value reads in the resume banner.
 _RESUME_LABELS = {0: "starting fresh", 1: "Stage 1 done", 2: "Stages 1–2 done", 3: "all done"}
 
+#: The logger the console tracker mirrors its human-channel lines to.
+#: See :func:`_setup_logging`.
+_CONSOLE_MIRROR = "spectralquadnet.console"
 
-class _LateBoundStdout(io.TextIOBase):
-    """``sys.stdout`` resolved per write instead of at handler construction.
 
-    The console tracker's progress bar redirects ``sys.stdout`` while it is live,
-    so that a stray write scrolls *above* the bar rather than through it.
-    ``logging.StreamHandler(sys.stdout)`` captures the stream object before that
-    redirect exists and keeps writing to the original descriptor, which lands its
-    output on top of the live region — the ``P1[INFO] …`` collision, and the
-    reason the traceback from a crash mid-run arrives interleaved with a bar
-    frame. Looking the attribute up per write puts logging back under whatever
-    redirect is installed at that moment, and leaves it unchanged when none is.
+def _setup_logging(cfg: DictConfig, dist: DistContext) -> None:
+    """Point stdout, ``training.log`` and the warnings machinery at one another.
+
+    Three streams have to end up in two places without any of them duplicating
+    or interleaving:
+
+    * **Module logs** (``utils/device.py``, ``data/mmap_store.py``, the fatal
+      traceback) go to the root logger → terminal *and* file.
+    * **The tracker's own lines** — banners, epoch lines, diagnostic blocks —
+      are already written to stdout by the console backend, which formats and
+      flushes them itself. They are mirrored to the ``spectralquadnet.console``
+      logger, which carries **only** the file handler and does not propagate, so
+      the file gets the run and the terminal does not get it twice. Before this,
+      ``training.log`` held nothing but crashes: the file handler only ever saw
+      ``logging`` records, and the run's actual output went to stdout alone.
+    * **Warnings** that survive :func:`silence_known_warnings` are routed
+      through ``logging`` rather than raw stderr, so an unexpected one arrives
+      as its own formatted line instead of splicing itself into an epoch line.
+
+    Only the main rank writes a file: ``training.log`` is rank 0's record, and
+    every rank appending to it would interleave three copies of the same run.
     """
+    file_handler: logging.Handler | None = None
+    handlers: list[logging.Handler] = []
+    if dist.is_main:
+        file_handler = logging.FileHandler(os.path.join(cfg.output_dir, "training.log"))
+        handlers.append(file_handler)
+    handlers.append(logging.StreamHandler(sys.stdout))
 
-    def write(self, s: str) -> int:
-        stream = sys.stdout
-        written = stream.write(s)
-        stream.flush()
-        return written
+    logging.basicConfig(
+        level=logging.INFO if dist.is_main else logging.WARNING,
+        format=(
+            ("%(asctime)s | %(levelname)s | %(message)s")
+            if not dist.enabled
+            else (f"%(asctime)s | rank{dist.rank} | %(levelname)s | %(message)s")
+        ),
+        handlers=handlers,
+        force=True,  # @hydra.main installs its own handlers first
+    )
+    route_warnings_to_logging()
 
-    def flush(self) -> None:
-        sys.stdout.flush()
+    mirror = logging.getLogger(_CONSOLE_MIRROR)
+    # Cleared rather than appended to: `basicConfig(force=True)` closes the
+    # previous root handlers, and a stale one left here would write to a closed
+    # file for the rest of the run.
+    mirror.handlers.clear()
+    mirror.setLevel(logging.INFO)
+    mirror.propagate = False
+    if file_handler is not None:
+        mirror.addHandler(file_handler)
 
 
 def _run(cfg: DictConfig, tracker: ExperimentTracker, dist: DistContext) -> None:
@@ -541,16 +587,17 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker, dist: DistContext) -> None
 def main(cfg: DictConfig) -> None:
     """Compose the config, set up logging and the tracker, then run.
 
-    Logs to both a ``training.log`` file in the output directory and stdout.
-    Any exception escaping :func:`_run` is logged at ``critical`` and exits
-    with status 1, so a crashed run is visible in both the log file and the
-    process exit code.
+    Logs to both a ``training.log`` file in the output directory and stdout —
+    including the tracker's own per-epoch lines, which :func:`_setup_logging`
+    mirrors into the file. Any exception escaping :func:`_run` is logged at
+    ``critical`` and exits with status 1, so a crashed run is visible in both
+    the log file and the process exit code.
 
     Under ``torchrun`` the process group is joined **first** — before the model,
     the store or the tracker exist — because every rank has to own its CUDA
     device before anything allocates on it. Only rank 0 gets a tracker; the
     others get a :class:`~spectralquadnet.tracking.base.NullTracker`, so two
-    GPUs do not write two interleaved copies of the same progress bar into one
+    GPUs do not write two interleaved copies of the same epoch line into one
     terminal, and rank 0's ``training.log`` stays the record of the run.
     """
     # `cfg.device` is the fallback, not a suggestion: without a launcher this is
@@ -560,18 +607,7 @@ def main(cfg: DictConfig) -> None:
     dist = init_distributed(cfg.runtime, fallback=resolve_device(cfg.device))
 
     Path(cfg.output_dir).mkdir(parents=True, exist_ok=True)
-
-    handlers: list[logging.Handler] = [logging.StreamHandler(_LateBoundStdout())]
-    if dist.is_main:
-        handlers.insert(0, logging.FileHandler(os.path.join(cfg.output_dir, "training.log")))
-    logging.basicConfig(
-        level=logging.INFO if dist.is_main else logging.WARNING,
-        format=("%(asctime)s | %(levelname)s | %(message)s")
-        if not dist.enabled
-        else (f"%(asctime)s | rank{dist.rank} | %(levelname)s | %(message)s"),
-        handlers=handlers,
-        force=True,  # @hydra.main installs its own handlers first
-    )
+    _setup_logging(cfg, dist)
 
     tracker: ExperimentTracker = build_tracker(cfg) if dist.is_main else NullTracker()
     if dist.is_main:

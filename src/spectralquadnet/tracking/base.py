@@ -16,15 +16,20 @@ Method               Channel
 ``close``            lifecycle
 ``banner``           human — a stage header block
 ``log_message``      human — a one-line notice
-``log_row``          human — one pre-formatted row of a running table
-``progress_start``   human — open a bounded progress display for a stage
+``log_row``          human — one epoch's summary, pre-formatted
+``progress_start``   human — open a stage's span (its label and epoch budget)
 ``progress_stop``    human — close it
 ===================  =========================================================
 
-``progress_start``/``progress_stop`` bracket a stage's epoch loop. A backend
-with no notion of a progress display ignores them, and ``log_row`` keeps its
-meaning either way: it is one epoch's summary, and a backend renders it as an
-appended row, as an update to a live bar, or not at all.
+``progress_start``/``progress_stop`` bracket a stage's epoch loop and carry the
+two facts a per-epoch line needs but an epoch does not know: what the stage is
+called and how many epochs it may run. A backend with no notion of either
+ignores them. ``log_row`` keeps its meaning regardless: it is one epoch's
+summary, rendered as a single appended line by the console backend
+(``[Stage 1 | Ep 181/600]  Time: …  Loss: …``) and as a set of series by the
+structured ones. No backend redraws anything — see
+:mod:`spectralquadnet.tracking.console_tracker` for why the live progress bar
+was removed rather than made conditional.
 
 The split matters for the console backend: the human channel produces
 readable terminal output, while the machine channel carries diagnostics
@@ -95,21 +100,24 @@ class ExperimentTracker(Protocol):
         ...
 
     def log_row(self, tag: str, cells: dict[str, str], step: int) -> None:
-        """Render one row of the running table identified by ``tag``.
+        """Render epoch ``step`` of the stage identified by ``tag``.
 
         Cells are **pre-formatted strings**, not numbers: the call site owns
-        the formatting (``.4f`` for a loss, ``.1%`` for an accuracy). A
-        backend seeing a ``tag`` for the first time emits a header before
-        the row.
+        the formatting (``.4f`` for a loss, ``.1%`` for an accuracy). A cell
+        whose value is empty is *absent* rather than blank — that is how the
+        checkpoint marker means "saved this epoch". The stage's name, the epoch
+        budget, the elapsed clock and the ETA are **not** cells: they come from
+        the span opened by :meth:`progress_start`, so every stage renders them
+        the same way.
         """
         ...
 
     def progress_start(self, tag: str, total: int, description: str = "") -> None:
-        """Open a bounded progress display for ``tag``, spanning ``total`` rows."""
+        """Open ``tag``'s span: ``description`` is the stage label, ``total`` its epoch budget."""
         ...
 
     def progress_stop(self, tag: str) -> None:
-        """Close ``tag``'s progress display. Must be safe to call unmatched."""
+        """Close ``tag``'s span. Must be safe to call unmatched."""
         ...
 
 

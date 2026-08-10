@@ -5,8 +5,9 @@ zeroing it (``branch_mask``) and taking the KL divergence of the ablated
 prediction from the full one, then normalising the four numbers to
 percentages. Note the cost: ``max_batches x 5`` forward passes, which is why
 every caller passes a small ``max_batches`` (3 from
-:func:`compute_class_difficulty`) and only calls it on a checkpoint
-improvement.
+:func:`compute_class_difficulty`) and only calls it on an epoch that renders
+diagnostics — a new best checkpoint, or the ``runtime.diagnostics_interval``
+stride. See :func:`should_render_details`.
 
 :func:`branch_grad_norms` and :func:`hardest_classes_report` are thin
 wrappers around values that already exist elsewhere (the total pre-clip norm
@@ -141,21 +142,27 @@ def epoch_tag(step: int, total: int | None = None) -> str:
 
 
 def should_render_details(step: int, interval: int) -> bool:
-    """Whether this epoch renders the *expensive* diagnostics.
+    """Whether this epoch is on the diagnostics stride.
 
     Two things hang off this gate, and only one of them is I/O:
 
-    * the hardest-class table, which ``rich`` lays out and measures cell by cell
-      before writing it to a terminal the training loop is blocked on;
-    * :func:`compute_branch_influence`, which is **five forward passes over
-      three batches** — an ablated pass per branch plus the full one.
+    * the hardest-class block, printed as plain aligned text;
+    * :func:`compute_branch_influence`, the leave-one-branch-out ablation, which
+      is **five forward passes over three batches** — an ablated pass per branch
+      plus the full one.
 
     Neither feeds training. ``class_f1`` and the CDWS weights, which do, are
-    computed on every call regardless, so throttling this changes what a run
-    *prints*, never what it learns.
+    computed whenever a checkpoint needs them regardless, so throttling this
+    changes what a run *prints*, never what it learns.
 
     Epoch 1 always renders — a run whose first diagnostic arrived at epoch 50
     would hide a broken setup for an hour.
+
+    This is the *stride* half of the rule the stages apply. The other half is
+    the checkpoint: a stage renders the block when this returns true **or** when
+    the epoch produced a new best checkpoint, because that is the epoch whose
+    per-class breakdown the saved weights actually describe. Callers therefore
+    read it as ``show = improved or should_render_details(ep, interval)``.
     """
     return interval <= 1 or step <= 1 or step % interval == 0
 
@@ -205,26 +212,28 @@ def compute_class_difficulty(
     n_hard = sum(1 for f in class_f1.values() if f < 0.50)
 
     scalars = {"diag/macro_f1": macro, "diag/hard_classes": float(n_hard)}
-    summary = (
-        f"{epoch_tag(step, total_steps)}{label} class difficulty — macro F1={macro:.3f}  "
+    tag = epoch_tag(step, total_steps)
+    # One fixed-shape line, whatever `detail` is. The branch influence used to be
+    # appended to it, which made the same diagnostic two different widths on
+    # alternating epochs and pushed the hard-class count off the right edge of a
+    # narrow terminal; it is its own line below.
+    trk.log_message(
+        f"{tag}{label} class difficulty — macro F1={macro:.3f}  "
         f"hard classes (<0.50 F1): {n_hard}/{cfg.data.num_classes}"
     )
 
     if detail:
-        # The ablation is 15 forward passes; it runs on a checkpoint
-        # improvement, which early in a stage is every epoch, and it is the
-        # largest transient any diagnostic allocates. Swept afterwards so the
-        # next epoch's training does not inherit its peak.
+        # The ablation is 15 forward passes and the largest transient any
+        # diagnostic allocates. Swept afterwards so the next epoch's training
+        # does not inherit its peak.
         branch_inf = compute_branch_influence(ema_shadow, val_ldr, device, max_batches=3)
         release_memory(device)
-        summary += (
-            "  |  Branch influence % → "
-            f"A:{branch_inf['A']:.1f}  B:{branch_inf['B']:.1f}  "
-            f"C:{branch_inf['C']:.1f}  D:{branch_inf['D']:.1f}"
+        trk.log_message(
+            f"{tag}{label} branch influence % (leave-one-out KL) — "
+            + "  ".join(f"{k}: {branch_inf[k]:5.1f}" for k in "ABCD")
         )
         scalars.update({f"influence/branch_{k.lower()}": v for k, v in branch_inf.items()})
 
-    trk.log_message(summary)
     trk.log_scalars(scalars, step=step)
     if detail:
         trk.log_table(f"hardest_classes/{label}", hardest_classes_report(class_f1), step=step)

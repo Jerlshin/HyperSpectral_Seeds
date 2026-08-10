@@ -33,6 +33,13 @@ re-weighted class prior are applied at test under the natural one
 Stage 2's; the ``note`` field records that, and ``_pick_best_checkpoint``
 decides which checkpoint the final evaluation loads.
 
+Reporting follows Stages 1-2: ``progress_start`` opens the ``Stage 3`` span the
+console prefix and ETA come from, and every epoch emits one appended
+``log_row`` line. There is no per-epoch checkpoint here — the stage saves once,
+after BN re-estimation — so the epoch line reports the SWA bookkeeping instead:
+the cycle position, the accepted/rejected snapshot counts, and this epoch's
+verdict.
+
 **Two averaging schemes run side by side.** The EMA shadow is maintained
 throughout, scored every epoch as ``val/f1_ema`` (as Stages 1–2 do), and
 compared against the SWA average at the end; the better of the two is what the
@@ -44,6 +51,7 @@ from __future__ import annotations
 
 import copy
 import math
+import time
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -216,6 +224,7 @@ def run_stage3_swa(
 
     trk.progress_start("stage3", cfg.stage3.epochs, "Stage 3")
     for ep in range(1, cfg.stage3.epochs + 1):
+        ep_started = time.perf_counter()
         cycle_ep = (ep - 1) % cfg.stage3.cycle_len
         lr_now = cfg.stage3.swa_lr * (
             0.3 + 0.7 * 0.5 * (1 + math.cos(math.pi * cycle_ep / cfg.stage3.cycle_len))
@@ -290,16 +299,23 @@ def run_stage3_swa(
                     n_rejected += 1
                     snap_info = f"✗ rejected (avg {f1_cand:.3f} ≤ {f1_swa_running:.3f})"
 
+        # One appended line per epoch — see `run_stage1`. Stage 3 has no
+        # per-epoch checkpoint (it saves once, after BN re-estimation), so the
+        # cell that would carry `ckpt` carries the SWA verdict instead: a
+        # snapshot accepted, a candidate rejected, or a warm-up cycle discarded.
         trk.log_row(
             "stage3",
             {
-                "Ep": f"{ep:03d}/{cfg.stage3.epochs}",
+                "dt": f"{time.perf_counter() - ep_started:.1f}s",
                 "Loss": f"{tl:.4f}",
                 "Tr": f"{ta:.1%}",
                 "F1 live/ema": f"{f1_live:.3f}/{f1_ema:.3f}",
                 "Acc live/ema": f"{acc_live:.1%}/{acc_ema:.1%}",
+                "Best": f"{best_live_f1:.3f}",
                 "LR": f"{lr_now:.2e}",
                 "κ": f"{kappa:.3f}",
+                "cyc": f"{cycle_ep + 1}/{cfg.stage3.cycle_len}",
+                "snaps": f"{n_snap}✓/{n_rejected}✗",
                 "swa": snap_info,
             },
             step=ep,

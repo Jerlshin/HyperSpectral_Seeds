@@ -18,6 +18,15 @@ already computes:
 All are accumulated as device tensors and resolved to floats **once per epoch**,
 so the per-step cost is a handful of adds rather than a host synchronisation.
 
+A fourth family is host-side bookkeeping rather than measurement —
+``train/steps``, ``train/skipped_batches`` and ``train/epoch_s``. The skip count
+is the one worth stating outright: a non-finite loss silently ``continue``\\ s
+(see below), and an epoch that dropped a third of its batches to NaN otherwise
+looks exactly like one that trained, because the mean is taken over
+``len(loader)`` either way. Any non-zero count is additionally raised as a
+``[WARN]`` line, so it appears in the log next to the epoch it happened in
+rather than only as a curve nobody plotted.
+
 Host synchronisation, and the one that is left
 ──────────────────────────────────────────────
 A ``.item()``, a ``.cpu()`` or a Python ``if`` on a device tensor all drain the
@@ -65,6 +74,7 @@ Behaviour worth keeping in mind when reading these loops:
 from __future__ import annotations
 
 import math
+import time
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -74,7 +84,12 @@ from torch.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
 
 from spectralquadnet.engine.batch import side_inputs, unpack_batch
-from spectralquadnet.engine.diagnostics import branch_grad_norm_tensors, flat_grad, grad_cosine
+from spectralquadnet.engine.diagnostics import (
+    branch_grad_norm_tensors,
+    epoch_tag,
+    flat_grad,
+    grad_cosine,
+)
 from spectralquadnet.losses.auxiliary import GradNormAuxWeights, _aux_loss_weight, _compute_aux_loss
 from spectralquadnet.losses.mixup import mix_side_inputs, mixed_aug, mixed_loss
 from spectralquadnet.models.ema import ModelEMA
@@ -157,6 +172,7 @@ def train_one_epoch(
     Returns:
         ``(mean_loss, mean_accuracy)`` over the epoch.
     """
+    started = time.perf_counter()
     model.train()
     # `model` may be a DDP and/or `torch.compile` wrapper; the gradient
     # grouping helpers below match on **unprefixed** parameter names
@@ -187,6 +203,7 @@ def train_one_epoch(
     diag_branch: dict[str, torch.Tensor] = {}
     diag_clip: dict[str, torch.Tensor] = {}
     n_aux = n_branch = n_clip = 0
+    n_skipped = 0
 
     for step, batch in enumerate(loader):
         x, y, mask, morph = unpack_batch(batch, device)
@@ -272,6 +289,7 @@ def train_one_epoch(
         loss_value, acc_value = _resolve_step_scalars(loss, _batch_accuracy(logits, ya))
 
         if not math.isfinite(loss_value):
+            n_skipped += 1
             optimizer.zero_grad(set_to_none=True)
             continue
 
@@ -319,16 +337,18 @@ def train_one_epoch(
         total_loss += loss_value
         total_acc += acc_value
 
+    n = max(len(loader), 1)
     scalars = _diagnostic_scalars(
         (diag_aux, n_aux),
         (diag_branch if want_grad_norms else {}, n_branch),
         (diag_clip, n_clip),
     )
     scalars.update(_update_aux_weights(aux_weights, diag_branch, n_branch))
-    if tracker is not None and scalars:
+    if tracker is not None:
+        scalars.update(_epoch_bookkeeping(n, n_skipped, time.perf_counter() - started))
         tracker.log_scalars(scalars, step=current_ep)
+        _warn_on_skips(tracker, n_skipped, n, current_ep, total_ep)
 
-    n = max(len(loader), 1)
     return total_loss / n, total_acc / n
 
 
@@ -382,6 +402,7 @@ def train_one_epoch_sam(
         ``(mean_loss, mean_accuracy)`` over the epoch, computed from the
         first (ascent) step's forward pass.
     """
+    started = time.perf_counter()
     torch.set_default_dtype(torch.float32)
     model.train()
     core = unwrap_model(model)  # see `train_one_epoch` — grouping needs raw names
@@ -400,6 +421,11 @@ def train_one_epoch_sam(
     diag_clip: dict[str, torch.Tensor] = {}
     diag_cos: dict[str, torch.Tensor] = {}
     n_aux = n_branch = n_clip = n_cos = 0
+    # Both of SAM's steps can produce a non-finite loss, and they mean different
+    # things: an ascent skip is a bad batch, a descent skip is a batch the
+    # rho-perturbation itself blew up. Counted together for the log line, since
+    # either way the batch contributed no update.
+    n_skipped = 0
 
     # The embedding is only materialised when a term actually consumes it.
     want_embed = (supcon is not None) or (proto is not None)
@@ -453,6 +479,7 @@ def train_one_epoch_sam(
         loss_value, acc_value = _resolve_step_scalars(loss, _batch_accuracy(logits, y))
 
         if not math.isfinite(loss_value):
+            n_skipped += 1
             sam_opt.zero_grad()
             continue
 
@@ -484,6 +511,7 @@ def train_one_epoch_sam(
         # ── SAM second step (descent, same objective) ─────────────────
         loss2, _logits2, _ = _objective(x, y, side)
         if not torch.isfinite(loss2):
+            n_skipped += 1
             # Put the weights back before skipping: `first_step` has already
             # moved them, and the next batch's `first_step` would overwrite the
             # cached originals.
@@ -502,6 +530,7 @@ def train_one_epoch_sam(
         total_loss += loss_value
         total_acc += acc_value
 
+    n = max(len(loader), 1)
     scalars = _diagnostic_scalars(
         (diag_aux, n_aux),
         (diag_branch if want_grad_norms else {}, n_branch),
@@ -509,16 +538,50 @@ def train_one_epoch_sam(
         (diag_cos, n_cos),
     )
     scalars.update(_update_aux_weights(aux_weights, diag_branch, n_branch))
-    if tracker is not None and scalars:
+    if tracker is not None:
+        scalars.update(_epoch_bookkeeping(n, n_skipped, time.perf_counter() - started))
         tracker.log_scalars(scalars, step=current_ep)
+        _warn_on_skips(tracker, n_skipped, n, current_ep, None)
 
-    n = max(len(loader), 1)
     return total_loss / n, total_acc / n
 
 
 # ══════════════════════════════════════════════════════════════════════
 #  Diagnostic accumulation helpers
 # ══════════════════════════════════════════════════════════════════════
+
+
+def _epoch_bookkeeping(steps: int, skipped: int, seconds: float) -> dict[str, float]:
+    """Host-side facts about the epoch: how many batches, how many dropped, how long.
+
+    No device work and no synchronisation — three Python numbers the loop
+    already had. They ride in the same ``log_scalars`` call as the measured
+    diagnostics so that a run's curves and its throughput share a step index.
+    """
+    return {
+        "train/steps": float(steps),
+        "train/skipped_batches": float(skipped),
+        "train/epoch_s": float(seconds),
+    }
+
+
+def _warn_on_skips(
+    tracker: ExperimentTracker, skipped: int, steps: int, current_ep: int, total_ep: int | None
+) -> None:
+    """Say it out loud when an epoch dropped batches to a non-finite loss.
+
+    Silent on the overwhelmingly common ``skipped == 0``. When it is not zero
+    the count belongs on the console: the returned epoch mean divides by
+    ``len(loader)`` regardless of how many batches actually contributed, so a
+    diverging run reads as a *falling* loss right up until it is all NaN.
+    """
+    if skipped <= 0:
+        return
+    tracker.log_message(
+        f"{epoch_tag(current_ep, total_ep)}{skipped}/{steps} batches skipped "
+        "(non-finite loss); the epoch mean is over all batches regardless",
+        level="warn",
+    )
 
 
 def _accumulate(sink: dict[str, torch.Tensor], values: dict[str, torch.Tensor]) -> None:

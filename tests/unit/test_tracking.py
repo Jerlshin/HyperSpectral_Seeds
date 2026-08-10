@@ -12,7 +12,11 @@ the stage orchestrators rely on:
 * :class:`MultiTracker` fans out and closes every child;
 * the console backend renders each channel, and stays quiet about scalars unless
   ``show_diagnostics`` is set — the property that keeps its output to one
-  line per epoch.
+  line per epoch;
+* that line is **append-only**: one line per epoch, carrying the stage, the
+  epoch, the clock and the metrics, with no carriage return, no line-clear and
+  no cursor motion on any stdout — the property the three target environments
+  (macOS terminal, piped SSH session, Kaggle/Colab cell) have in common.
 
 ``wandb``/``tensorboard`` are exercised through the factory's error paths only;
 instantiating them would open a real run directory or network session.
@@ -207,15 +211,112 @@ def test_console_renders_each_human_channel() -> None:
     assert "hardest" in out and "0.12" in out
 
 
-def test_console_row_emits_a_header_once_per_tag() -> None:
+def test_a_table_is_a_plain_aligned_block() -> None:
+    """The throttled diagnostics render as text whose width is set by the data.
+
+    Not ``rich.Table``: a rendered table is measured against a terminal width
+    that is 80 whenever stdout is not a TTY, so the same block came out
+    box-drawn in a terminal, squeezed in a pipe and HTML-rendered in a notebook.
+    """
+
     def emit(t: ConsoleTracker) -> None:
+        t.log_table(
+            "hardest_classes/S1",
+            [{"rank": 1, "class": 7, "f1": 0.1234}, {"rank": 2, "class": 41, "f1": 0.2}],
+            step=181,
+        )
+
+    lines = [line for line in _console_output({}, emit).splitlines() if line.strip()]
+    assert lines[0] == "hardest_classes/S1  (ep 181)"
+    assert lines[1].split() == ["rank", "class", "f1"]
+    assert set(lines[2].strip()) == {"─", " "}, "a rule under the header, not a box"
+    # Numeric columns are right-aligned and padded to a shared precision, so the
+    # rows are the same length and the decimal points sit under each other —
+    # `round(0.2, 4)` renders `0.2`, which right-aligned alone would put its `2`
+    # under the neighbouring row's third decimal.
+    assert len(lines[3]) == len(lines[4])
+    assert lines[3].endswith("0.1234") and lines[4].endswith("0.2000")
+
+
+def test_epoch_line_carries_the_whole_contract_on_one_line() -> None:
+    """One epoch is one line, and it says which stage, which epoch, and how long."""
+
+    def emit(t: ConsoleTracker) -> None:
+        t.progress_start("stage1", total=600, description="Stage 1")
+        t.log_row(
+            "stage1",
+            {
+                "Loss": "15.2508",
+                "F1 live/ema": "0.771/0.685",
+                "LR": "3.00e-04",
+                "Ph": "P2",
+                "m": "0.35",
+                "ckpt": "✓",
+            },
+            step=181,
+        )
+
+    lines = [line for line in _console_output({}, emit).splitlines() if line.strip()]
+    assert len(lines) == 1, "an epoch renders exactly one line"
+    (line,) = lines
+    assert line.startswith("[Stage 1 | Ep 181/600]")
+    for field in ("Loss: 15.2508", "F1 live/ema: 0.771/0.685", "LR: 3.00e-04", "Ph: P2", "m: 0.35"):
+        assert field in line
+    # A marker cell is a flag, not a measurement: no colon in front of the glyph.
+    assert "ckpt ✓" in line
+    # The clock and the extrapolation the removed progress bar used to own.
+    assert "Time: 00:00:0" in line
+    assert "ETA: " in line
+
+
+def test_epoch_lines_stream_without_a_header_or_a_rewind() -> None:
+    """Successive epochs append; nothing is redrawn and no header is repeated."""
+
+    def emit(t: ConsoleTracker) -> None:
+        t.progress_start("stage1", total=600, description="Stage 1")
         for ep in (1, 2, 3):
-            t.log_row("stage1", {"Ep": f"{ep:03d}/600", "Loss": f"{ep / 10:.4f}"}, step=ep)
+            t.log_row("stage1", {"Loss": f"{ep / 10:.4f}"}, step=ep)
 
     out = _console_output({}, emit)
-    assert out.count("Ep") == 1, "the header is emitted once, then rows stream"
+    assert len([line for line in out.splitlines() if line.strip()]) == 3
     for ep in (1, 2, 3):
-        assert f"{ep:03d}/600" in out
+        assert f"Ep {ep}/600" in out and f"Loss: {ep / 10:.4f}" in out
+    assert "\r" not in out
+
+
+def test_an_empty_cell_is_absent_rather_than_blank() -> None:
+    """``ckpt`` present means the epoch saved one — that is what makes it greppable."""
+
+    def emit(t: ConsoleTracker) -> None:
+        t.progress_start("stage1", total=600, description="Stage 1")
+        t.log_row("stage1", {"Loss": "1.0", "ckpt": "", "stale": "3/40"}, step=7)
+
+    out = _console_output({}, emit)
+    assert "ckpt" not in out
+    assert "stale: 3/40" in out
+
+
+def test_progress_off_suppresses_the_epoch_line_and_nothing_else() -> None:
+    def emit(t: ConsoleTracker) -> None:
+        t.progress_start("stage1", total=600, description="Stage 1")
+        t.log_row("stage1", {"Loss": "1.0"}, step=7)
+        t.log_message("still spoken for")
+
+    out = _console_output({"progress": "off"}, emit)
+    assert "Loss" not in out
+    assert "still spoken for" in out
+
+
+def test_span_close_reports_where_the_stage_actually_stopped() -> None:
+    """An early-stopped stage's last epoch is the number worth keeping."""
+
+    def emit(t: ConsoleTracker) -> None:
+        t.progress_start("stage1", total=600, description="Stage 1")
+        t.log_row("stage1", {"Loss": "1.0"}, step=340)
+        t.progress_stop("stage1")
+
+    out = _console_output({}, emit)
+    assert "[Stage 1] finished — 340/600 epochs in 00:00:0" in out
 
 
 def test_console_scalars_are_quiet_unless_diagnostics_are_shown() -> None:
@@ -288,34 +389,69 @@ def test_embedded_escapes_and_carriage_returns_are_stripped() -> None:
     assert "12/90 after" in out
 
 
-def test_a_row_is_styled_as_a_whole_line() -> None:
-    """The plain (row-stream) progress mode styles the entire epoch line at once."""
-    out = _coloured_output(lambda t: t.log_row("stage1", {"Ep": "181/600", "Ph": "P2"}, step=181))
-    row = [line for line in out.splitlines() if "181/600" in line][0]
+def test_an_epoch_line_is_styled_as_a_whole_line() -> None:
+    """The epoch line carries one colour run: opened once, reset once, at the end."""
+    out = _coloured_output(lambda t: t.log_row("stage1", {"Ph": "P2"}, step=181))
+    row = [line for line in out.splitlines() if "Ph: P2" in line][0]
     assert row.startswith("\x1b[36m") and row.endswith("\x1b[0m")
-    assert row.count("\x1b[0m") == 1, "one reset, at the end — not mid-row"
+    assert row.count("\x1b[0m") == 1, "one reset, at the end — not mid-line"
 
 
-def test_a_bar_is_refused_on_a_non_interactive_console() -> None:
-    """``progress=bar`` forced onto a dumb terminal degrades to rows, not to garbage.
+@pytest.mark.parametrize("interactive", [True, False])
+@pytest.mark.parametrize("progress", ["auto", "bar", "rows"])
+def test_no_cursor_control_reaches_any_console(interactive: bool, progress: str) -> None:
+    """No mode, on any terminal, emits a rewind or a line-clear.
 
-    ``rich`` only repositions the cursor around a live region when the console is
-    interactive; where it is not — a pipe, a dumb terminal, a web console that
-    reports a TTY it cannot drive — it appends every frame instead, interleaving
-    bar redraws with log lines. The row stream is the readable answer there.
+    ``force_terminal`` with ``force_interactive=False`` is the shape of the
+    environments this was reported from — a Kaggle cell and a dumb terminal both
+    claim a TTY they cannot drive, and a redrawing bar there appends every frame
+    instead of repainting one. ``force_interactive=True`` is the macOS terminal,
+    where a bar *would* have worked; it renders the same way, because one
+    rendering that is legible everywhere beats two that each fail somewhere.
+    ``bar``/``rows`` are legacy spellings and no longer select anything.
     """
     buffer = io.StringIO()
-    # `force_terminal` with `force_interactive=False` is exactly the shape of the
-    # environments in the bug report: it claims a terminal, it cannot drive one.
-    console = Console(file=buffer, width=200, force_terminal=True, force_interactive=False)
-    tracker = ConsoleTracker(console=console, progress="bar")
+    console = Console(file=buffer, width=200, force_terminal=True, force_interactive=interactive)
+    tracker = ConsoleTracker(console=console, progress=progress)
     tracker.progress_start("stage1", total=600, description="Stage 1")
-    tracker.log_row("stage1", {"Ep": "181/600", "Loss": "1.2345"}, step=181)
+    for ep in (180, 181):
+        tracker.log_row("stage1", {"Loss": "1.2345"}, step=ep)
     tracker.progress_stop("stage1")
 
     out = buffer.getvalue()
-    assert "181/600" in out, "the epoch line is rendered as a row"
-    assert "\r" not in out, "no cursor rewind reaches a console that cannot honour it"
+    assert "Ep 181/600" in out, "the epoch line is rendered"
+    assert "\r" not in out, "no cursor rewind"
+    assert "\x1b[2K" not in out, "no line clear"
+    assert "\x1b[?25l" not in out, "no hidden cursor — nothing owns a live region"
+
+
+def test_lines_are_mirrored_to_the_log(caplog: pytest.LogCaptureFixture) -> None:
+    """``training.log`` is the record of the run, so every human line reaches it."""
+    buffer = io.StringIO()
+    tracker = ConsoleTracker(console=Console(file=buffer, width=200, no_color=True))
+    with caplog.at_level("INFO", logger="spectralquadnet.console"):
+        tracker.progress_start("stage1", total=600, description="Stage 1")
+        tracker.log_message("EMA re-init at Phase 2")
+        tracker.log_row("stage1", {"Loss": "1.2345"}, step=181)
+
+    mirrored = [record.getMessage() for record in caplog.records]
+    assert any("EMA re-init at Phase 2" in m for m in mirrored)
+    assert any(m.startswith("[Stage 1 | Ep 181/600]") for m in mirrored)
+    assert all(m.strip() for m in mirrored), "blank spacing lines are not logged"
+
+
+def test_glyphs_degrade_on_a_stream_that_cannot_encode_them() -> None:
+    """A ``LANG=C`` SSH session gets ASCII, not ``UnicodeEncodeError`` or ``?``."""
+    raw = io.BytesIO()
+    stream = io.TextIOWrapper(raw, encoding="ascii", newline="")
+    tracker = ConsoleTracker(console=Console(file=stream, width=200, no_color=True))
+    tracker.progress_start("stage3", total=60, description="Stage 3")
+    tracker.log_row("stage3", {"κ": "0.850", "ckpt": "✓"}, step=30)
+    stream.flush()
+
+    out = raw.getvalue().decode("ascii")
+    assert "kappa: 0.850" in out
+    assert "ckpt ok" in out
 
 
 # ══════════════════════════════════════════════════════════════════════
