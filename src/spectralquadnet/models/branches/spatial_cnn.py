@@ -30,9 +30,17 @@ reconstructible from any other, and it was the one starved of capacity.
 The persisted mask (FE-2 / T3-7) is applied after every stage, so a padded
 region stays exactly zero however deep the stack goes and the CNN can never
 learn the frame instead of the seed.
+
+The stem is also the model's single most expensive module on the Metal backend,
+for a reason that is a kernel-quality fact rather than an arithmetic one — see
+:func:`conv3d_as_conv2d`, which is the same operator routed through
+``Conv2d`` and is switched on per device by
+:func:`~spectralquadnet.utils.device.apply_runtime_optimisations`.
 """
 
 from __future__ import annotations
+
+from typing import cast
 
 import torch
 import torch.nn as nn
@@ -43,6 +51,69 @@ from spectralquadnet.models.blocks.conv_blocks import ResBlock2D
 from spectralquadnet.models.stats_ops import foreground_mask
 
 
+def conv3d_as_conv2d(
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    stride: tuple[int, ...],
+    padding: tuple[int, ...],
+    bias: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """The same 3-D convolution, evaluated as ``kd`` 2-D convolutions.
+
+    A ``Conv3d`` *is*, by definition, a sum over its depth taps::
+
+        out[b, o, d, y, x] = Σ_i  Conv2d( x[:, :, d·s_d − p_d + i],  W[:, :, i] )
+
+    so gathering the strided depth slice belonging to tap ``i``, folding it into
+    the batch axis and running one ``Conv2d`` per tap reproduces the operator
+    exactly: same weights, same multiply-accumulates, same result up to the
+    order in which the ``kd`` partial sums are added (measured at 1.9e-07
+    relative on the full model's logits, the same order as the ``fused``
+    AdamW/eager difference this pipeline already accepts).
+
+    Why bother reordering an operator into itself: it changes **which kernels
+    run**, and on Metal that is worth a factor of three. ``Conv3d``'s backward
+    is a poor kernel there — on this stem's shapes it takes 9.4× its own
+    forward, where the branch's own 2-D tail runs a healthy 2.2×, and a
+    ``Conv2d`` doing strictly *more* multiply-accumulates than the stage-2
+    ``Conv3d`` finishes its backward in 152 ms against the ``Conv3d``'s 358.
+    Over the three stages at batch 32 the decomposition is **3.12× faster**,
+    which is **2.12×** on the whole training step (2103 → 994 ms) because the
+    stem was that much of it.
+
+    The trade is activation memory: each tap's gathered slice is a real tensor,
+    so the stem holds ``kd`` depth-slices of its input where the fused kernel
+    held one (+370 MB at batch 32, against the 2.2 GB the Branch-A
+    checkpointing gives back). That, and the fact that cuDNN's 3-D kernels have
+    no such defect, is why this is a per-device decision rather than the only
+    path — see :func:`~spectralquadnet.utils.device.resolve_runtime`.
+    """
+    n_batch, in_ch, depth, height, width = x.shape
+    k_depth = weight.shape[2]
+    stride_d, stride_h, stride_w = stride
+    pad_d, pad_h, pad_w = padding
+
+    depth_out = (depth + 2 * pad_d - k_depth) // stride_d + 1
+    # Only the depth axis is padded here; the 2-D calls do their own H/W padding.
+    padded = F.pad(x, (0, 0, 0, 0, pad_d, pad_d))
+
+    acc: torch.Tensor | None = None
+    for tap in range(k_depth):
+        # The output positions this tap contributes to, gathered in one strided
+        # view, then folded into the batch so a single Conv2d covers all of them.
+        last = tap + stride_d * (depth_out - 1) + 1
+        sl = padded[:, :, tap:last:stride_d]
+        sl = sl.permute(0, 2, 1, 3, 4).reshape(n_batch * depth_out, in_ch, height, width)
+        out = F.conv2d(sl, weight[:, :, tap], stride=(stride_h, stride_w), padding=(pad_h, pad_w))
+        acc = out if acc is None else acc + out
+
+    assert acc is not None, "a convolution kernel cannot have zero depth taps"
+    out_ch, h_out, w_out = acc.shape[1], acc.shape[2], acc.shape[3]
+    folded = acc.reshape(n_batch, depth_out, out_ch, h_out, w_out).permute(0, 2, 1, 3, 4)
+    # Added once, after the sum -- passing it to each Conv2d would apply it kd times.
+    return folded if bias is None else folded + bias.view(1, -1, 1, 1, 1)
+
+
 class SpectralSpatialStem3D(nn.Module):
     """Three strided 3-D convolutions, then a 1×1 fold of the spectral axis.
 
@@ -51,6 +122,15 @@ class SpectralSpatialStem3D(nn.Module):
     the 64×64 spatial detail is still intact when the widest spectral kernel
     (``k = 7`` bands) passes over it.
     """
+
+    #: Route the three ``Conv3d`` stages through :func:`conv3d_as_conv2d`.
+    #: A pure execution choice — it holds no state, changes no parameter and is
+    #: not in the state dict, so a checkpoint written with it on loads with it
+    #: off. Left ``False`` here so constructing a stem directly (which every
+    #: unit test and ``scripts/capture_golden.py`` does) is unconditionally the
+    #: reference path; :func:`~spectralquadnet.utils.device.apply_runtime_optimisations`
+    #: is the one place that turns it on, once, from the resolved runtime plan.
+    decompose_conv3d: bool = False
 
     def __init__(self, num_bands: int = 40, out_channels: int = 192) -> None:
         super().__init__()
@@ -97,11 +177,32 @@ class SpectralSpatialStem3D(nn.Module):
         m = F.adaptive_avg_pool2d(mask, (int(h.shape[-2]), int(h.shape[-1])))
         return h * m.unsqueeze(2)
 
+    def _stage(self, stage: nn.Sequential, h: torch.Tensor) -> torch.Tensor:
+        """One ``Conv3d → GroupNorm → GELU`` stage, through whichever conv path is selected.
+
+        The decomposition replaces the *convolution* only; the normalisation and
+        activation are the same module objects either way, which is what keeps
+        the two paths a kernel choice rather than two architectures.
+
+        Applied in ``eval()`` as well as in training, deliberately: a stem that
+        decomposed only under autograd would make a model's own validation
+        logits disagree with its training ones at 1e-7, and chasing that later
+        would cost more than the forward pass it saves.
+        """
+        if not self.decompose_conv3d:
+            return stage(h)  # type: ignore[no-any-return]  # `nn.Module.__call__` -> Any
+        conv = cast(nn.Conv3d, stage[0])
+        # `padding` is `str | tuple` on `nn.Conv3d`; the stem only ever builds
+        # the numeric form, and `"same"` has no meaning at stride 2 anyway.
+        pad = cast("tuple[int, ...]", conv.padding)
+        h = conv3d_as_conv2d(h, conv.weight, conv.stride, pad, conv.bias)
+        return stage[2](stage[1](h))  # type: ignore[no-any-return]  # `nn.Module.__call__` -> Any
+
     def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
         """``(B, C, H, W) -> (B, out_channels, H // 4, W // 4)``."""
-        h = self._apply_mask(self.stage1(x.unsqueeze(1)), mask)
-        h = self._apply_mask(self.stage2(h), mask)
-        h = self._apply_mask(self.stage3(h), mask)
+        h = self._apply_mask(self._stage(self.stage1, x.unsqueeze(1)), mask)
+        h = self._apply_mask(self._stage(self.stage2, h), mask)
+        h = self._apply_mask(self._stage(self.stage3, h), mask)
         n_batch = h.shape[0]
         folded = h.reshape(n_batch, -1, h.shape[-2], h.shape[-1])
         return self.fold(folded)  # type: ignore[no-any-return]  # `nn.Module.__call__` -> Any

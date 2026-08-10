@@ -430,6 +430,24 @@ class RuntimeConfig:
     #: it accumulates in the same precision but not in the same order, so it is
     #: the one default here that is not bit-exact against eager AdamW.
     fused_optimizer: str = "auto"
+    #: Evaluate Branch C's three ``Conv3d`` stages as stacks of ``Conv2d``
+    #: calls. Identical arithmetic in a different summation order (1.9e-07 on
+    #: the logits) but a different *kernel*, and Metal's ``Conv3d`` backward is
+    #: a bad one: **3.12× on the stem, 2.12× on the whole step** (2103 → 994 ms
+    #: at batch 32), for 9% more activation memory. ``auto`` enables it on
+    #: Metal only — cuDNN's 3-D kernels have no such defect, and
+    #: ``torch.compile`` would rather be handed the fused operator.
+    decompose_conv3d: str = "auto"
+    #: Recompute Branch A's three towers in the backward pass instead of
+    #: storing their activations: **2.13× less activation memory** (4054 →
+    #: 1901 MB at batch 32) for 4.8% of step time, with bit-exact gradients —
+    #: the towers hold no dropout, no BatchNorm and nothing that reads the RNG.
+    #: ``auto`` enables it on Metal, where activations come from the same
+    #: unified pool as the host's RAM and the failure mode is silent swapping
+    #: rather than a clean OOM. Off by default on CUDA, where dedicated VRAM
+    #: makes the recompute a cost rather than a rescue — turn it ``on`` there
+    #: for a small card or a large ``stage1.batch``.
+    checkpoint_branch_a: str = "auto"
 
     # ── Device topology ───────────────────────────────────────────────
     #: ``auto`` uses every visible CUDA device when the process was launched by
