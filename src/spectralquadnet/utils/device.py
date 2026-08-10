@@ -27,6 +27,26 @@ and leaves alone the two that are not:
 * **channels_last** re-selects convolution kernels whose reduction order
   differs from the contiguous ones'. ``runtime.channels_last`` likewise.
 
+:func:`apply_runtime_optimisations` is the same idea one level down — the two
+knobs that are not a *backend* setting but a choice of path *inside* a module,
+both defaulting to "on for Metal, off elsewhere" and both measured rather than
+assumed. On an M5, batch 32, against a **2103 ms / 4054 MB** step:
+
+* **Branch C's 3-D stem** is 1318 ms of that, and 1240 ms of the 1318 is the
+  backward of three convolutions whose forward costs 133. That is a bad kernel,
+  not expensive arithmetic — the same branch's 2-D tail runs a normal 2.2×
+  backward-to-forward ratio, and a ``Conv2d`` doing *more* work than the
+  stage-2 ``Conv3d`` beats its backward 152 ms to 358. Writing the operator as
+  the sum of ``kd`` ``Conv2d`` calls it is defined to be: **994 ms, 2.12×**.
+* **Branch A holds 2935 MB of the 4054**, 72%, because ``grid_size_a=8``
+  flattens a batch of 32 into 2048 independent sequences. Recomputing its three
+  towers in the backward pass: **1901 MB, 2.13× less**, bit-exactly, for 4.8%
+  of step time.
+
+Together, **1077 ms and 2272 MB — 1.95× faster on 1.78× less memory**, which is
+also what makes ``stage1.batch`` a choice again: batch 64 now runs at 31.2 ms
+per sample against batch 32's 33.7.
+
 :func:`maybe_compile` wraps ``torch.compile``. It is on by default for CUDA and
 **off for Metal**, which is a measurement rather than a preference: on this
 model at batch 32 the Metal inductor backend produced 983 ms per forward
@@ -120,6 +140,8 @@ class RuntimePlan:
     compile_mode: str
     channels_last: bool
     fused_optimizer: bool
+    decompose_conv3d: bool
+    checkpoint_branch_a: bool
     empty_cache_interval: int
     diagnostics_interval: int
     progress: str
@@ -232,6 +254,17 @@ def resolve_runtime(
         device.type == "cuda" if fused_str == "auto" else fused_str in ("on", "true", "1", "yes")
     )
 
+    # Both default to "Metal only", for the two different reasons in
+    # `RuntimeConfig`: one is a kernel-quality defect specific to this backend,
+    # the other is unified memory making an activation peak the host's problem.
+    decomp_str = str(getattr(cfg, "decompose_conv3d", "auto")).lower()
+    decompose = (
+        device.type == "mps" if decomp_str == "auto" else decomp_str in ("on", "true", "1", "yes")
+    )
+
+    ckpt_str = str(getattr(cfg, "checkpoint_branch_a", "auto")).lower()
+    ckpt_a = device.type == "mps" if ckpt_str == "auto" else ckpt_str in ("on", "true", "1", "yes")
+
     return RuntimePlan(
         device=device,
         num_workers=workers,
@@ -244,6 +277,8 @@ def resolve_runtime(
         compile_mode=str(getattr(cfg, "compile_mode", "default")),
         channels_last=bool(getattr(cfg, "channels_last", False)),
         fused_optimizer=fused,
+        decompose_conv3d=decompose,
+        checkpoint_branch_a=ckpt_a,
         empty_cache_interval=int(getattr(cfg, "empty_cache_interval", 0)),
         diagnostics_interval=max(1, int(getattr(cfg, "diagnostics_interval", 50))),
         progress=str(getattr(cfg, "progress", "auto")),
@@ -304,6 +339,58 @@ def configure_backend(device: torch.device, cfg: RuntimeConfig | Any) -> list[st
         os.environ.setdefault("PYTORCH_MPS_LOW_WATERMARK_RATIO", "0.8")
         notes.append("MPS watermark=unbounded/0.8")
 
+    return notes
+
+
+def apply_runtime_optimisations(model: nn.Module, plan: RuntimePlan) -> list[str]:
+    """Select the per-device execution paths inside the model; return what was set.
+
+    The companion to :func:`configure_backend`, one level down: that function
+    tunes the *backend*, this one tunes the two modules whose default path is
+    wrong on some accelerator. Both settings are execution choices and nothing
+    else — no parameter, no buffer, no state-dict key, no draw from the RNG —
+    so a checkpoint written under either loads under the other, and a resumed
+    run may legitimately switch device and switch paths with it.
+
+    Call this **before** ``wrap_for_training`` and ``maybe_compile``, and before
+    the EMA shadow is deep-copied, so every later copy of the module inherits
+    the same paths. Idempotent; safe on a model that has neither module.
+
+    Args:
+        model: The eager :class:`~spectralquadnet.models.spectral_quadnet.SpectralQuadNet`.
+        plan: The resolved plan; only its two path flags are read.
+
+    Returns:
+        Banner lines, or an empty list when both flags are off — so a run's log
+        records which kernels it actually ran, the same contract
+        :func:`configure_backend` has.
+    """
+    # Imported here rather than at module scope: `utils.device` is imported by
+    # config and data code that has no business dragging the model in.
+    from spectralquadnet.models.branches.spatial_cnn import SpectralSpatialStem3D
+    from spectralquadnet.models.branches.spectral_profile import SpectralProfileBranch
+
+    notes: list[str] = []
+    root = unwrap_model(model)
+
+    stems = [m for m in root.modules() if isinstance(m, SpectralSpatialStem3D)]
+    for stem in stems:
+        stem.decompose_conv3d = plan.decompose_conv3d
+    if plan.decompose_conv3d and stems:
+        notes.append(f"Conv3d→Conv2d stem×{len(stems)}")
+
+    branches = [m for m in root.modules() if isinstance(m, SpectralProfileBranch)]
+    for branch in branches:
+        branch.grad_checkpoint = plan.checkpoint_branch_a
+    if plan.checkpoint_branch_a and branches:
+        notes.append(f"branch-A recompute×{len(branches)}")
+
+    if (plan.decompose_conv3d and not stems) or (plan.checkpoint_branch_a and not branches):
+        _log.warning(
+            "runtime path flags were set but the modules they target are absent — "
+            "apply_runtime_optimisations was given %s, not a SpectralQuadNet",
+            type(root).__name__,
+        )
     return notes
 
 

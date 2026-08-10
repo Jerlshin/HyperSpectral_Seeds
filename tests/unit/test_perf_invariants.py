@@ -388,6 +388,8 @@ def _plan(workers: int) -> RuntimePlan:
         compile_mode="default",
         channels_last=False,
         fused_optimizer=False,
+        decompose_conv3d=False,
+        checkpoint_branch_a=False,
         empty_cache_interval=0,
         diagnostics_interval=50,
         progress="off",

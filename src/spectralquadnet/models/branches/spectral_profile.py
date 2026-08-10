@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
+from torch.utils.checkpoint import checkpoint
 
 from spectralquadnet.models.blocks.conv_blocks import LargeKernelBlock1D
 from spectralquadnet.models.front_end import LambdaConv1d, SpectralDerivatives, snv
@@ -45,7 +46,32 @@ class SpectralProfileBranch(nn.Module):
     Three ``LargeKernelBlock1D`` towers with kernel sizes 3/5/7 read the same
     stem output at different receptive fields, are concatenated, fused back
     down to ``tower_ch``, and attention-pooled across the band axis.
+
+    This is the model's **largest activation consumer**, and BR-2's grid change
+    is why. The branch processes cells independently, so ``grid_size_a = 8``
+    turns a batch of 32 into ``32 × 64 = 2048`` sequences; each
+    ``LargeKernelBlock1D`` then expands those to ``tower_ch × 4`` channels and
+    the autograd graph retains that widened tensor *twice* — once for GELU's
+    backward and once for ``pw2``'s. Six blocks over three towers is 2.9 GB of
+    the 4.05 GB a batch-32 step holds, which is what puts ``stage1.batch = 128``
+    at ≈ 16 GB and inside a hair of a 16 GB machine's whole address space.
+    :attr:`grad_checkpoint` is the lever for it.
     """
+
+    #: Recompute the three towers during the backward pass instead of keeping
+    #: their activations alive — a batch-32 step goes from 4054 MB to 1901 MB,
+    #: **2.13× less**, for 4.8% more time.
+    #:
+    #: Bit-exact, not approximately so: the towers are ``GroupNorm``/``GELU``/SE
+    #: only, with no dropout, no BatchNorm and no other running state, so the
+    #: recomputed forward is the identical function of identical inputs and the
+    #: gradients that come out are the ones the stored activations would have
+    #: produced. Nothing here reads the RNG, so the global stream is untouched
+    #: too and the golden Stage-1 weight hashes hold either way.
+    #:
+    #: Set once from the runtime plan by
+    #: :func:`~spectralquadnet.utils.device.apply_runtime_optimisations`.
+    grad_checkpoint: bool = False
 
     def __init__(
         self,
@@ -140,7 +166,19 @@ class SpectralProfileBranch(nn.Module):
         if self.wl_pe_module is not None:
             x = self.wl_pe_module(x)
 
-        x_fused = self.fusion(torch.cat([self.tower_s(x), self.tower_m(x), self.tower_l(x)], dim=1))
+        towers = (self.tower_s, self.tower_m, self.tower_l)
+        if self.grad_checkpoint and torch.is_grad_enabled():
+            # `use_reentrant=False` is not optional: the reentrant implementation
+            # needs an input that requires grad (`x` does, but only by accident of
+            # the stem having parameters) and it breaks DDP's one-mark-per-variable
+            # rule. Guarded on `is_grad_enabled` so an inference pass -- the EMA
+            # shadow's, every validation epoch's -- takes the plain path instead of
+            # paying for a recompute that will never happen.
+            scales = [checkpoint(t, x, use_reentrant=False) for t in towers]
+        else:
+            scales = [t(x) for t in towers]
+
+        x_fused = self.fusion(torch.cat(scales, dim=1))
 
         w = torch.softmax(self.attn_pool(x_fused), dim=2)
         return self.proj(torch.sum(x_fused * w, dim=2))  # type: ignore[no-any-return]  # `nn.Module.__call__` -> Any

@@ -88,6 +88,7 @@ from spectralquadnet.models.spectral_quadnet import SpectralQuadNet
 from spectralquadnet.tracking import build_tracker
 from spectralquadnet.tracking.base import ExperimentTracker, NullTracker
 from spectralquadnet.utils.device import (
+    apply_runtime_optimisations,
     configure_backend,
     describe_hardware,
     empty_cache,
@@ -212,6 +213,11 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker, dist: DistContext) -> None
         wl_embed_dim=cfg.model.wl_embed_dim,
     ).to(device)
 
+    # Before the EMA deep-copy and before any wrapper, so the shadow, the DDP
+    # replica, the compiled graph and Stage 3's two SWA copies all run the same
+    # paths. Sets no parameter and no buffer — see the function's docstring.
+    path_notes = apply_runtime_optimisations(model, plan)
+
     ema = ModelEMA(model, decay=cfg.ema_decay)
 
     tracker.log_message(
@@ -226,6 +232,8 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker, dist: DistContext) -> None
         tracker.log_message(line, level="plain")
     if backend_notes:
         tracker.log_message("Kernels: " + "  ".join(backend_notes), level="plain")
+    if path_notes:
+        tracker.log_message("Paths  : " + "  ".join(path_notes), level="plain")
     if dist.enabled:
         tracker.log_message(
             f"[DDP]  world_size={dist.world_size}  rank={dist.rank}  "
