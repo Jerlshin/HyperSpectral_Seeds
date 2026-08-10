@@ -68,6 +68,7 @@ from spectralquadnet.data.samplers import (
     HardClassOversampledSampler,
 )
 from spectralquadnet.utils.distributed import DistContext
+from spectralquadnet.utils.warning_filters import silence_known_warnings
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from spectralquadnet.config.schema import ExperimentConfig
@@ -571,10 +572,17 @@ def seed_worker(worker_id: int) -> None:
     ``random.uniform`` — are not, and under ``spawn`` a worker's ``random``
     module starts from OS entropy. Deriving both from ``torch.initial_seed()``
     puts every stream in the worker back under ``cfg.seed``.
+
+    The warning filters are re-installed here for the same ``spawn`` reason: a
+    worker starts with a fresh ``warnings`` registry, so the ones ``train.py``
+    installed in the parent do not reach it — and a worker's ``warnings.warn``
+    goes to the *shared* stderr, landing in the middle of the parent's epoch
+    line. See :mod:`spectralquadnet.utils.warning_filters`.
     """
     seed = torch.initial_seed() % 2**32
     np.random.seed(seed)
     random.seed(seed)
+    silence_known_warnings()
 
 
 def loader_options(plan: RuntimePlan | None = None, *, evaluation: bool = False) -> dict[str, Any]:

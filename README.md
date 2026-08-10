@@ -185,8 +185,8 @@ a config that never mentions them is not under-specified. `-1` means "decide fro
 | `allow_tf32` | `false` | Off on purpose: TF32 cuts a matmul's mantissa from 24 bits to 11. It is a precision change, and Turing (the T4) has no TF32 path anyway. |
 | `channels_last` | `false` | Off on purpose: NHWC re-selects convolution kernels whose reduction order differs. |
 | `multi_gpu`, `sync_batchnorm` | `auto`, `true` | See above. |
-| `progress` | `auto` | A redrawing bar on a TTY, the append-only row stream when stdout is a pipe — a bar written into `training.log` is unreadable, and that file is the record of the run. |
-| `diagnostics_interval` | `50` | Epoch stride for the hardest-class table and the branch-influence ablation behind it (five forward passes). The numbers training consumes — per-class F1, the CDWS weights — are still computed every time; only the rendering is throttled. |
+| `progress` | `auto` | Whether the per-epoch line is rendered at all (`off` suppresses it). There is no choice of *rendering*: one appended line per epoch, on every stdout. A redrawing bar is legible only on a real terminal, and the two environments that cannot drive one — a piped SSH session, a Kaggle/Colab cell — turn it into an unreadable log rather than a degraded one. |
+| `diagnostics_interval` | `50` | Epoch stride for the hardest-class block and the branch-influence ablation behind it (five forward passes). A new best checkpoint also renders them, off-stride, since that is the epoch the saved weights describe. The numbers training consumes — per-class F1, the CDWS weights — are computed whenever a checkpoint needs them; only the rendering and the ablation are throttled. |
 | `empty_cache_interval` | `0` | Periodic allocator sweep. Stage boundaries always sweep regardless, since that is where Stage 3's two extra model copies are freed. |
 
 Configuration is Hydra-composed from `configs/`, with dataclass schemas in
@@ -219,17 +219,63 @@ The checkpoint the final evaluation runs on is chosen by validation F1, not by s
 
 ### Experiment tracking
 
-The default `console` backend renders the same information the original script printed, via `rich`,
-with no external service. `wandb` and `tensorboard` implement the same `ExperimentTracker` protocol
-and are machine-channel only, so pair them with the console renderer to keep terminal output:
+The default `console` backend renders the same information the original script printed, with no
+external service, as **append-only lines** — one per epoch, written once and never redrawn:
+
+```
+[Stage 1 | Ep 181/600]  Time: 00:12:45  ETA: 00:41:12  dt: 42.1s  Loss: 15.2508  Tr: 61.2%  F1 live/ema: 0.771/0.685  Acc live/ema: 78.1%/72.0%  Best: 0.780  LR: 3.00e-04  LS: 0.084  auxW: 0.42  τ: 0.35  Ph: P2  m: 0.00  ckpt ✓
+```
+
+The same lines are mirrored into `output_dir/training.log`, so the file is the record of the run
+rather than a file of crashes, and they render identically in a macOS terminal, an SSH session
+piped to a file and a Kaggle/Colab cell. `wandb` and `tensorboard` implement the same
+`ExperimentTracker` protocol and are machine-channel only, so pair them with the console renderer
+to keep terminal output:
 
 ```bash
 python train.py tracking.backend=multi tracking.backends=[console,wandb]
 ```
 
 Beyond scalar losses and metrics, the trackers receive per-branch auxiliary losses, per-branch
-gradient norms sampled before clipping, leave-one-branch-out influence percentages, and a
-bottom-K hardest-classes table.
+gradient norms sampled before clipping, leave-one-branch-out influence percentages, a bottom-K
+hardest-classes table, and per-epoch bookkeeping (`train/steps`, `train/skipped_batches`,
+`train/epoch_s`). The last of those is also raised as a `[WARN]` line whenever it is non-zero: a
+batch dropped for a non-finite loss contributes nothing, but the epoch mean divides by the loader's
+length regardless, so a diverging run otherwise reads as a *falling* loss.
+
+Third-party warning noise (pynvml's deprecation, torch's `use_reentrant` checkpoint notice, …) is
+filtered in `utils/warning_filters.py`, entry by entry with a reason each; anything not filtered is
+routed through `logging` so it lands on its own line instead of inside an epoch line.
+
+### Running on a rented GPU (e.g. vast.ai) with W&B online
+
+A rented instance is headless and ephemeral, so authenticate with an environment variable instead
+of the interactive `wandb login` prompt — there is no terminal left to answer it after the shell
+disconnects, and an unattended `wandb.init()` with no key on the box will otherwise block startup
+waiting for one.
+
+```bash
+git clone <this-repo> && cd Code
+pip install -e ".[tracking]"        # pulls in wandb (and tensorboard)
+
+export WANDB_API_KEY=...            # from https://wandb.ai/authorize — never put this in a config
+                                     # file or commit it; export it in the shell each session, or
+                                     # source it from a local .env that stays out of git
+
+python train.py \
+  tracking.backend=multi tracking.backends=[console,wandb] \
+  tracking.project=spectralquadnet run_name=vastai_run
+```
+
+`WandbTracker` (`tracking/wandb_tracker.py`) calls `wandb.init()` with no `mode=` argument, so it
+follows wandb's own resolution: a `WANDB_API_KEY` in the environment (or a prior `wandb login`)
+makes the run **online**, streaming to wandb.ai as it trains; without one, `wandb.init()` is left to
+prompt for a login it cannot get from a non-interactive shell. Exporting the key before
+`python train.py` is what makes the run land online rather than stalling at startup. `wandb` alone
+is machine-channel only and prints nothing to stdout by design (see the module docstring), so pair
+it with `console` — as above — to keep the per-epoch line in your SSH session while W&B records the
+run; `tracking.entity=<your-team-or-username>` selects the destination if the API key's default
+account isn't it.
 
 ---
 

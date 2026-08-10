@@ -21,3 +21,7 @@ outputs/
 # ── Hydra ────────────────────────────────────────────────────────────
 multirun/
 .hydra/
+
+# ── Experiment tracking secrets & local run artifacts ─────────────────
+.env
+wandb/

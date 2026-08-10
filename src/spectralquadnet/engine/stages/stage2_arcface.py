@@ -12,6 +12,12 @@ Orchestration only. Two details that read as arbitrary but are load-bearing:
 Mixup is off for the whole stage — ``train_one_epoch`` raises if a non-zero
 margin and mixup are combined.
 
+Reporting follows Stage 1's exactly: ``progress_start`` opens the ``Stage 2``
+span the console prefix and ETA are built from, each epoch emits one appended
+``log_row`` line, and the hardest-class block plus the branch-influence
+percentages render on a new best checkpoint or on the
+``runtime.diagnostics_interval`` stride.
+
 The per-class margins are calibrated once at stage entry by HD-3's **signed**
 rule (T2-8): ``M(c) = clip(m + m_delta (R_c - P_c), 0.20, 0.50)``, plus the
 row-normalised confusion matrix that aims a pairwise term at the classes each
@@ -29,6 +35,7 @@ recalibrating every epoch would multiply that leak rather than reduce it.
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -183,7 +190,8 @@ def run_stage2(
 
     trk.progress_start("stage2", ep_total, "Stage 2")
     for ep in range(1, ep_total + 1):
-        detail = should_render_details(ep, detail_every)
+        ep_started = time.perf_counter()
+        on_stride = should_render_details(ep, detail_every)
         warmup_done = (ep - 1) >= cfg.stage2.margin_warmup_ep
         m_now = (
             cfg.stage2.arcface_m
@@ -239,11 +247,13 @@ def run_stage2(
         best_ep_source = "ema" if f1_ema >= f1_live else "live"
         head_lr = optimizer.param_groups[0]["lr"]
         back_lr = optimizer.param_groups[2]["lr"]
-        saved = ""
+        improved = best_ep_f1 > best_f1
 
-        if best_ep_f1 > best_f1:
-            best_f1, no_improve = best_ep_f1, 0
-            _cf1_s2, _cdws_s2 = compute_class_difficulty(
+        # Improvement or stride, one call for both — see `run_stage1`.
+        class_f1_now: dict[int, float] = {}
+        cdws_now: dict[int, float] = {}
+        if improved or on_stride:
+            class_f1_now, cdws_now = compute_class_difficulty(
                 cfg,
                 ema.shadow,
                 fit_ldr,
@@ -251,9 +261,12 @@ def run_stage2(
                 "S2",
                 tracker=trk,
                 step=ep,
-                detail=detail,
+                detail=True,
                 total_steps=ep_total,
             )
+
+        if improved:
+            best_f1, no_improve = best_ep_f1, 0
             save_ckpt(
                 cfg,
                 best_ckpt,
@@ -265,28 +278,33 @@ def run_stage2(
                 val_acc=best_ep_acc,
                 dist=dist,
                 best_source=best_ep_source,
-                class_f1=_cf1_s2,
-                cdws_weights=_cdws_s2,
+                class_f1=class_f1_now,
+                cdws_weights=cdws_now,
                 s2_val_f1=best_ep_f1,
             )
-            saved = "✓"  # rendered as its own row cell now, so no padding
         else:
             no_improve += 1
 
+        # `m` is the *global* margin only while it is warming up; once the
+        # per-class adaptive margins take over the call site passes `arc_m=None`
+        # and the cell reports the plateau value the vector is scaled around.
         rf = "↻R1" if ep == r1 else ("↻R2" if ep == r2 else "")
         trk.log_row(
             "stage2",
             {
-                "Ep": f"{ep:03d}/{ep_total}",
+                "dt": f"{time.perf_counter() - ep_started:.1f}s",
                 "Loss": f"{tl:.4f}",
                 "Tr": f"{ta:.1%}",
                 "F1 live/ema": f"{f1_live:.3f}/{f1_ema:.3f}",
                 "Acc live/ema": f"{acc_live:.1%}/{acc_ema:.1%}",
+                "Best": f"{best_f1:.3f}",
                 "hLR": f"{head_lr:.1e}",
                 "bLR": f"{back_lr:.1e}",
-                "m": f"{m_now:.3f}",
-                "ckpt": saved,
+                "m": f"{m_now:.3f}{'' if warmup_done else ' (warm)'}",
+                "τ": f"{tau_now:.2f}",
                 "sgdr": rf,
+                "ckpt": "✓" if improved else "",
+                "stale": "" if improved else f"{no_improve}/{cfg.stage2.patience}",
             },
             step=ep,
         )

@@ -281,32 +281,58 @@ failing backend cannot strand another's file handle or leave a W&B run unfinishe
 **inside** their constructor, so `import spectralquadnet` never requires `wandb` or
 `tensorboard`.
 
-### Rich console rendering
+### Append-only console rendering
 
-Deliberate design points in `ConsoleTracker`, governed by `runtime.progress`
-(`auto`/`bar`/`rows`/`off`):
+`ConsoleTracker` emits **one line per epoch**, written once and never redrawn:
 
-1. **Text is never wrapped or cropped** — every emitting method passes `soft_wrap=True`,
-   because `rich` otherwise wraps at the detected terminal width and falls back to 80 columns
-   whenever stdout is not a TTY, i.e. exactly when a run is piped to a log file.
-2. **A single redrawing progress bar is the default on a real terminal.** `_wants_bar()`
-   resolves `auto` to `console.is_terminal and sys.stdout.isatty()`; on a TTY, `progress_start`/
-   `log_row`/`progress_stop` drive one `rich.progress.Progress` bar whose description suffix
-   carries the row's numbers (`_BAR_FIELDS = (Loss, F1 live/ema, LR, Ph, κ, swa, ckpt)`), because
-   per-epoch full-row rendering — especially the hardest-class table, printed on every
-   improving checkpoint, which early in a run means every epoch — is expensive relative to
-   updating one line. `mode="rows"` (or a non-TTY destination, e.g. `training.log`) falls back
-   to the append-only stream instead: the first row of each `tag` emits a header, freezes column
-   widths from it (minimum 5 characters), and every later row pads to match — a redrawn bar's
-   ANSI cursor moves would otherwise turn a piped log file into control characters. `mode="off"`
-   suppresses per-epoch rendering entirely. Every number not promoted into the bar's suffix
-   remains available in `training.log` and as a curve in any structured backend.
-3. **Scalars are quiet by default** — the epoch summary arrives via `log_row`; per-branch
+```
+[Stage 1 | Ep 181/600]  Time: 00:12:45  ETA: 00:41:12  dt: 42.1s  Loss: 15.2508  Tr: 61.2%  F1 live/ema: 0.771/0.685  Acc live/ema: 78.1%/72.0%  Best: 0.780  LR: 3.00e-04  LS: 0.084  auxW: 0.42  τ: 0.35  Ph: P2  m: 0.00  ckpt ✓
+```
+
+Deliberate design points:
+
+1. **No live region, on any stdout.** There is no `rich.progress` bar, no `\r`, no `\033[2K`
+   and no cursor motion. A redrawing bar is legible only where the console is *interactive*;
+   an SSH session piped to a file gets thousands of overwritten half-lines, and a Kaggle/Colab
+   cell reports a TTY it cannot drive, so `rich` appends every frame instead of repainting one.
+   Rendering per environment meant three renderings of one run and three sets of bugs.
+   `runtime.progress` therefore no longer selects a rendering — only `off` (suppress the epoch
+   line) is distinguishable; `bar`/`rows` are accepted as legacy spellings and both render the
+   line.
+2. **The prefix and the clocks belong to the tracker, not the caller.** `progress_start(tag,
+   total, description)` opens a *span* — the stage's label and epoch budget — and `log_row`
+   builds `[Stage 1 | Ep 181/600]`, `Time` (elapsed since the tracker was built, continuous
+   across stages) and `ETA` (extrapolated from the current span alone) from it. `progress_stop`
+   reports where the stage actually ended, which for an early-stopped stage is the number the
+   old bar threw away by completing itself to its total.
+3. **Cells are `key: value`, markers are `key value`, and empty cells are absent.** `ckpt ✓`
+   appears only on epochs that saved one — that is what makes `grep ckpt training.log` the list
+   of improvements — and `stale: 3/40` is its complement. Column widths are remembered per span
+   and grow monotonically, so the columns line up down the log without any value being truncated
+   into a frozen width.
+4. **Blocks are plain text, not `rich` renderables.** Banners and the hardest-class table are
+   drawn as aligned text whose width comes from the data; a `Panel`/`Table` is measured against a
+   terminal width that is 80 whenever stdout is not a TTY, which is how one diagnostic came out
+   box-drawn in a terminal, squeezed in a pipe and HTML-rendered in a notebook. Numeric columns
+   share a decimal count, so the points line up. Glyphs (`✓ ★ κ τ ─`) degrade to ASCII on a
+   stream whose encoding cannot carry them.
+5. **Every line is mirrored into `training.log`** via the `spectralquadnet.console` logger,
+   which `train.py` points at the file handler alone (`propagate=False`), so the file is the
+   record of the run and the terminal still gets exactly one copy. Before this the file held
+   only crashes: the tracker wrote to stdout, and the file handler only ever saw `logging`
+   records.
+6. **Scalars are quiet by default** — the epoch summary arrives via `log_row`; per-branch
    diagnostics arrive via `log_scalars` and are meant to be read as curves. Rendering both
    would print every epoch twice. `tracking.show_diagnostics=true` echoes them.
 
-`banner` renders a `rich.Panel`; `watch` has no console equivalent of gradient histograms, so
-it prints the trainable parameter count instead (`Params : 5.19M`).
+`watch` has no console equivalent of gradient histograms, so it prints the trainable parameter
+count instead (`Params : 5.19M`).
+
+Third-party warning noise is filtered in `utils/warning_filters.py` — entry by entry, by category
+and message, each with a reason — and installed as an *import side effect* so it is in place
+before `import torch` emits pynvml's deprecation. Warnings that survive the filters are routed
+through `logging`, so they arrive as their own formatted line in both sinks instead of splicing
+themselves into an epoch line from `stderr`.
 
 ### Scalar key catalogue
 
@@ -314,7 +340,7 @@ Every key any backend receives, by producer:
 
 | Producer | Keys |
 |---|---|
-| `train_one_epoch` / `_sam` | `loss/branch_{a,b,c,d}`, `grad_norm/{branch_a,branch_b,branch_c,branch_d,cross_interaction,arcface_head}` |
+| `train_one_epoch` / `_sam` | `loss/branch_{a,b,c,d}`, `grad_norm/{branch_a,branch_b,branch_c,branch_d,cross_interaction,arcface_head}`, `train/{steps,skipped_batches,epoch_s}` |
 | Stage 1 | `train/{loss,acc}`, `val/{f1_live,acc_live,f1_ema,acc_ema,f1_best}`, `sched/{lr,label_smooth,aux_weight,phase}` |
 | Stage 2 | `train/{loss,acc}`, `val/{…}`, `sched/{head_lr,back_lr,arcface_margin,supcon_weight,proto_weight}` |
 | Stage 3 | `train/{loss,acc}`, `val/{f1_live,acc_live,f1_best}`, `sched/{lr,arcface_margin}`, `swa/{n_snapshots,n_rejected}`, then `swa/{f1,acc}` |

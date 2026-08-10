@@ -180,8 +180,8 @@ concrete value once, producing a frozen `RuntimePlan`. `-1` means "decide from t
 | `sync_batchnorm` | `true` | Converts every BatchNorm to SyncBatchNorm under DDP — the numerical-equivalence invariant (§6.4). |
 | `dist_timeout_s` | `1800` | NCCL/gloo rendezvous timeout. |
 | `empty_cache_interval` | `0` | Periodic allocator sweep every N epochs; `0` disables it. Stage boundaries always sweep regardless, since that is where Stage 3's two extra model copies are freed. |
-| `progress` | `auto` | `auto` → a redrawing bar on a real TTY, the append-only row stream when piped (§5.3). |
-| `diagnostics_interval` | `50` | Epoch stride for the *rendering* of the hardest-class table and branch-influence ablation — the underlying numbers (per-class F1, CDWS weights) are still computed on the schedule training needs; only display is throttled. |
+| `progress` | `auto` | Whether the per-epoch line is rendered; `off` suppresses it. One appended line per epoch on every stdout — there is no redrawing mode to select, and `bar`/`rows` are legacy spellings that both render the line (§5.3). |
+| `diagnostics_interval` | `50` | Epoch stride for the *rendering* of the hardest-class block and the branch-influence ablation; a new best checkpoint renders them off-stride too. The underlying numbers (per-class F1, CDWS weights) are computed whenever a checkpoint needs them; only the display and the ablation are throttled. |
 
 `eval_loader_kwargs` hardcodes `persistent_workers=False` regardless of the plan's own value —
 eval loaders are built and dropped repeatedly, and a persistent pool outliving its loader is a
@@ -318,5 +318,6 @@ their tracker's constructor, so `import spectralquadnet` never requires either.
 (`stage1.max_lr → 0.0005`) for W&B/TensorBoard, stringifying lists since `hparams` accepts only
 scalars.
 
-Console rendering (progress bar vs. append-only rows, scalar quieting) is covered alongside the
-diagnostics it renders in §5.3, since the two are read together.
+Console rendering (the append-only per-epoch line, its span-derived prefix and clocks, the
+`training.log` mirror, scalar quieting) is covered alongside the diagnostics it renders in §5.3,
+since the two are read together.

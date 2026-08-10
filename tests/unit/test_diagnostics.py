@@ -139,6 +139,45 @@ def test_class_difficulty_stamps_its_summary_with_the_epoch(monkeypatch) -> None
         cfg, None, None, torch.device("cpu"), "S1", tracker, step=181, detail=False, total_steps=600
     )
     assert messages[0].startswith("[ep 181/600] S1 class difficulty — macro F1=")
+    assert len(messages) == 1, "no ablation, no second line"
+
+
+def test_branch_influence_is_its_own_line(monkeypatch) -> None:
+    """The throttled ablation does not change the width of the line above it.
+
+    The influence percentages used to be appended to the class-difficulty
+    summary, which made the same diagnostic two different shapes on alternating
+    epochs and pushed the hard-class count off the right edge of a narrow
+    terminal. They are a second line now, carrying the same epoch stamp.
+    """
+    from types import SimpleNamespace
+
+    from spectralquadnet.engine import diagnostics
+
+    monkeypatch.setattr(diagnostics, "evaluate_per_class", lambda *a, **k: {0: 0.9, 1: 0.2})
+    monkeypatch.setattr(
+        diagnostics,
+        "compute_branch_influence",
+        lambda *a, **k: {"A": 31.2, "B": 24.9, "C": 22.0, "D": 21.9},
+    )
+    cfg = SimpleNamespace(
+        data=SimpleNamespace(num_classes=2),
+        stage2=SimpleNamespace(cdws_max_weight=3.0, cdws_eps=0.05),
+    )
+    messages: list[str] = []
+    tracker = SimpleNamespace(
+        log_message=lambda text, level="info": messages.append(text),
+        log_scalars=lambda tags, step: None,
+        log_table=lambda tag, rows, step: None,
+    )
+
+    diagnostics.compute_class_difficulty(
+        cfg, None, None, torch.device("cpu"), "S1", tracker, step=181, detail=True, total_steps=600
+    )
+    assert len(messages) == 2
+    assert "influence" not in messages[0]
+    assert messages[1].startswith("[ep 181/600] S1 branch influence % (leave-one-out KL) —")
+    assert "A:  31.2" in messages[1] and "D:  21.9" in messages[1]
 
 
 # ══════════════════════════════════════════════════════════════════════

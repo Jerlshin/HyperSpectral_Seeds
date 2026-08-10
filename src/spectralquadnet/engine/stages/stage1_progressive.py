@@ -9,7 +9,18 @@ schedule is independently testable — see ``tests/unit/test_schedulers.py``.
 All progress reporting goes through the injected ``tracker``: the banner
 block calls :meth:`~spectralquadnet.tracking.base.ExperimentTracker.banner`,
 status notices call ``log_message``, and the per-epoch line is a
-``log_row``/``log_scalars`` pair.
+``log_row``/``log_scalars`` pair. ``progress_start`` opens the stage's *span* —
+the label ``Stage 1`` and the epoch budget — from which the console backend
+builds the ``[Stage 1 | Ep 181/600]`` prefix, the elapsed clock and the ETA on
+every epoch line; nothing here draws or redraws anything.
+
+The expensive diagnostics (the hardest-class block and the leave-one-branch-out
+influence percentages) render on a new best checkpoint **or** on the
+``runtime.diagnostics_interval`` stride — see
+:func:`~spectralquadnet.engine.diagnostics.should_render_details`. On a stride
+epoch with no improvement the stage pays one extra per-class evaluation for a
+diagnostic nothing else needs, which is the price of the run reporting its class
+breakdown at a fixed cadence rather than only when it happens to improve.
 
 Since HD-1 (T2-10) this stage trains the **same** sub-centre cosine head as
 Stages 2-3, at ``cfg.stage1.arcface_m = 0``. There is no head to select and
@@ -27,6 +38,7 @@ not) is what that costs.
 
 from __future__ import annotations
 
+import time
 import warnings
 from typing import TYPE_CHECKING, Any
 
@@ -178,7 +190,8 @@ def run_stage1(
 
     trk.progress_start("stage1", ep_total, "Stage 1")
     for ep in range(1, ep_total + 1):
-        detail = should_render_details(ep, detail_every)
+        ep_started = time.perf_counter()
+        on_stride = should_render_details(ep, detail_every)
         # ── Phase assignment ──────────────────────────────────────────
         if ep <= p1_end:
             phase = 1
@@ -315,12 +328,17 @@ def run_stage1(
         best_ep_source = "ema" if f1_ema >= f1_live else "live"
         lr_now = optimizer.param_groups[0]["lr"]
         aux_w_now = _aux_loss_weight(cfg, ep, ep_total)
-        saved = ""
+        improved = best_ep_f1 > best_f1
 
-        # ── Checkpoint on F1 improvement ─────────────────────────────
-        if best_ep_f1 > best_f1:
-            best_f1, no_improve = best_ep_f1, 0
-            _cf1, _cdws = compute_class_difficulty(
+        # ── Diagnostics: on an improvement, or on the stride ──────────
+        # One call covers both jobs. The per-class F1 and the CDWS weights it
+        # returns are what `save_ckpt` stores below; the block it prints is the
+        # throttled part, and `detail=True` here is not a widening of the
+        # throttle — this branch *is* the throttle.
+        class_f1_now: dict[int, float] = {}
+        cdws_now: dict[int, float] = {}
+        if improved or on_stride:
+            class_f1_now, cdws_now = compute_class_difficulty(
                 cfg,
                 ema.shadow,
                 fit_ldr,
@@ -328,9 +346,13 @@ def run_stage1(
                 "S1",
                 tracker=trk,
                 step=ep,
-                detail=detail,
+                detail=True,
                 total_steps=ep_total,
             )
+
+        # ── Checkpoint on F1 improvement ─────────────────────────────
+        if improved:
+            best_f1, no_improve = best_ep_f1, 0
             save_ckpt(
                 cfg,
                 best_ckpt,
@@ -342,28 +364,36 @@ def run_stage1(
                 val_acc=best_ep_acc,
                 dist=dist,
                 best_source=best_ep_source,
-                class_f1=_cf1,
-                cdws_weights=_cdws,
+                class_f1=class_f1_now,
+                cdws_weights=cdws_now,
                 arcface_init_done=False,
                 phase3_class_f1=class_f1_phase2,  # store phase-2 hard-class info
             )
-            saved = "✓"  # rendered as its own row cell now, so no padding
         else:
             no_improve += 1
 
+        # One line, appended, never redrawn. `Ep` is not a cell: the console
+        # backend builds `[Stage 1 | Ep 181/600]` from the span opened above, so
+        # the three stages cannot drift into three different epoch stamps.
+        # `ckpt` and `stale` are complementary — exactly one of them is present,
+        # which is what makes `grep 'ckpt'` the list of improvements.
         trk.log_row(
             "stage1",
             {
-                "Ep": f"{ep:03d}/{ep_total}",
+                "dt": f"{time.perf_counter() - ep_started:.1f}s",
                 "Loss": f"{tl:.4f}",
                 "Tr": f"{ta:.1%}",
                 "F1 live/ema": f"{f1_live:.3f}/{f1_ema:.3f}",
                 "Acc live/ema": f"{acc_live:.1%}/{acc_ema:.1%}",
+                "Best": f"{best_f1:.3f}",
                 "LR": f"{lr_now:.2e}",
                 "LS": f"{ls_now:.3f}",
                 "auxW": f"{aux_w_now:.2f}",
+                "τ": f"{tau_now:.2f}",
                 "Ph": f"P{phase}",
-                "ckpt": saved,
+                "m": f"{cfg.stage1.arcface_m:.2f}",
+                "ckpt": "✓" if improved else "",
+                "stale": "" if improved else f"{no_improve}/{cfg.stage1.patience}",
             },
             step=ep,
         )

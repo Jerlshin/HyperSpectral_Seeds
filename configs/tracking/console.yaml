@@ -1,4 +1,5 @@
-# Default backend: Rich console rendering of the run's progress.
+# Default backend: append-only terminal lines — one per epoch, never redrawn,
+# and mirrored into `output_dir/training.log`.
 # Zero external services, works offline.
 defaults:
   - base_tracking
