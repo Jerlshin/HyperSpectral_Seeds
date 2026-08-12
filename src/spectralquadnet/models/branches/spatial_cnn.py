@@ -35,7 +35,33 @@ The stem is also the model's single most expensive module on the Metal backend,
 for a reason that is a kernel-quality fact rather than an arithmetic one — see
 :func:`conv3d_as_conv2d`, which is the same operator routed through
 ``Conv2d`` and is switched on per device by
-:func:`~spectralquadnet.utils.device.apply_runtime_optimisations`.
+:func:`~spectralquadnet.utils.device.apply_runtime_optimisations`. Branch C is
+**59 % of the forward pass** at batch 128 on an M5 (1363 ms of 2323 ms), with
+Branch A second at 29 %.
+
+Recomputing the stem does not pay, and has been measured
+──────────────────────────────────────────────────────
+Branch A gives back 2.13× its activation memory for 4.8 % of step time
+(``checkpoint_branch_a``), so the same treatment for the stem is the obvious
+next move. It is a loss, at every batch size tried — full training step on an
+M5, plain vs ``torch.utils.checkpoint`` around the stem:
+
+======  =====================  =====================
+batch   plain                  recomputed
+======  =====================  =====================
+32      32.3 ms/sample          39.7 ms/sample
+64      34.3 ms/sample          47.5 ms/sample
+128     90.4 ms/sample         173.8 ms/sample
+======  =====================  =====================
+
+and the allocator's high-water mark went **up** in each case rather than down
+(4041 → 4268 MB at batch 32). The reason is :func:`conv3d_as_conv2d`: the
+decomposition's ``kd`` gathered depth-slices are transient within the forward,
+but a recompute rebuilds all of them *during* the backward, while the rest of
+the backward's buffers are live — so the peak the checkpoint was meant to lower
+is the one it raises. The gradients are bit-identical either way (the stem is
+Conv3d/GroupNorm/GELU only), so this is purely a cost question, and the answer
+is no. Do not re-add it without re-measuring against the fused path.
 """
 
 from __future__ import annotations

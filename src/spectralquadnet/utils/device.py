@@ -101,10 +101,18 @@ _log = logging.getLogger(__name__)
 #: another process holding another mapping of the 5.6 GB cube.
 MAX_AUTO_WORKERS: int = 8
 
-#: Auto worker count off CUDA. Metal and CPU runs are accelerator-bound (the
-#: forward is ~340 ms at batch 32 against ~16 ms of host-side augmentation), so
-#: two workers already hide the feed, and macOS starts workers with ``spawn``,
-#: which re-imports torch in every one of them.
+#: Auto worker count off CUDA. Metal and CPU runs are accelerator-bound by a
+#: wide margin, so two workers already hide the feed and a third would only add
+#: a process — which is not free on a unified-memory machine, where a worker's
+#: pages and the activations come out of the same pool.
+#:
+#: Measured on an M5 at ``stage1.batch = 128``, ``heavy`` profile: the loader
+#: delivers a batch every 187 ms at two workers (87 ms at eight) against a
+#: **9.9 s** training step, so the feed is hidden roughly fifty times over and
+#: buying more of it buys nothing. The per-sample host cost is 1.86 ms, of which
+#: 1.41 ms is the mmap page-in and only ~0.45 ms is augmentation — so this is an
+#: I/O number, not a CPU one, and raising the worker count trades RAM for
+#: latency that is already invisible.
 NON_CUDA_AUTO_WORKERS: int = 2
 
 
@@ -319,15 +327,49 @@ class RuntimePlan:
 
     @property
     def eval_loader_kwargs(self) -> dict[str, Any]:
-        """The same, for an evaluation loader.
+        """The same, for a **throwaway** evaluation loader.
 
-        Evaluation loaders are built and dropped repeatedly (``build_loaders``
-        is called once per stage, ``build_natural_prior_loader`` once more), so
-        they never keep workers resident: a persistent worker pool that outlives
-        its loader is a process leak, and under ``spawn`` re-creating one costs
-        seconds.
+        The default is no resident workers, because a pool that outlives its
+        loader is a process leak — and most evaluation loaders here are built
+        for exactly one pass (``build_natural_prior_loader``, the k-means
+        seeding loader, the final test loader).
+
+        The loaders that are *not* throwaway ask for
+        :meth:`eval_loader_kwargs_for` instead; see it for why the distinction
+        is worth drawing.
         """
-        return _loader_kwargs(self.eval_num_workers, self.pin_memory, False, self.prefetch_factor)
+        return self.eval_loader_kwargs_for(persistent=False)
+
+    def eval_loader_kwargs_for(self, *, persistent: bool) -> dict[str, Any]:
+        """Evaluation loader keywords, with worker residency the caller's choice.
+
+        "Built and dropped repeatedly" is true of most evaluation loaders and
+        false of the two that matter most: a stage's **validation** loader is
+        constructed once and then iterated *twice per epoch* — the live model
+        and the EMA shadow — for up to ``stage1.epochs`` epochs, and the
+        **calibration** loader outlives all three stages. At
+        ``persistent_workers=False`` every one of those passes builds a worker
+        pool and then tears it down again, and on macOS building one is a
+        ``spawn``: a fresh interpreter that re-imports torch before it can read
+        its first patch. Over 600 epochs the val loader alone does that 1,200
+        times.
+
+        Measured on an M5 over the 1,294-patch validation split — six batches of
+        actual work — **11.47 s per pass** non-persistent against **0.08 s**
+        persistent. The teardown is the larger half: the same pool costs 1.37 s
+        to build on the persistent loader's first pass, so most of the 11.47 s
+        is the shutdown join at the *end* of every pass, which is pure waste
+        when the next epoch immediately wants the pool back.
+
+        Residency does not raise the peak process count, which is what makes
+        this free rather than a trade: the training loader's own persistent
+        workers are idle-but-resident during evaluation either way, so the
+        four-process peak is the same — persistence only stops the two
+        evaluation workers being torn down and rebuilt between epochs.
+        """
+        return _loader_kwargs(
+            self.eval_num_workers, self.pin_memory, persistent, self.prefetch_factor
+        )
 
 
 def _loader_kwargs(
@@ -587,8 +629,116 @@ def describe_hardware(device: torch.device) -> list[str]:
             )
         return lines
     if device.type == "mps":
-        return ["[GPU] Apple Silicon (Metal / MPS)"]
+        budget = memory_budget(device)
+        # The working-set ceiling belongs in the banner next to the batch size,
+        # because on Metal it is the number that decides whether a configured
+        # batch runs at full speed or pages — and unlike a CUDA OOM, crossing it
+        # produces no error at all. See :func:`warn_if_over_budget`.
+        note = f"  |  {budget / 1e9:.1f} GB recommended working set" if budget else ""
+        return [f"[GPU] Apple Silicon (Metal / MPS){note}"]
     return ["[CPU] no accelerator"]
+
+
+def memory_budget(device: torch.device) -> float | None:
+    """Bytes this device is willing to hold before it starts paging, if it says.
+
+    ``None`` off CUDA/Metal, and on a torch too old to expose the query.
+    """
+    if device.type == "mps":
+        recommended = getattr(torch.mps, "recommended_max_memory", None)
+        if recommended is not None:
+            return float(recommended())
+        return None
+    if device.type == "cuda" and torch.cuda.is_available():
+        return float(torch.cuda.get_device_properties(device).total_memory)
+    return None
+
+
+def memory_allocated(device: torch.device) -> float | None:
+    """Bytes the caching allocator currently holds from the driver, if measurable."""
+    if device.type == "mps":
+        driver = getattr(torch.mps, "driver_allocated_memory", None)
+        return float(driver()) if driver is not None else None
+    if device.type == "cuda" and torch.cuda.is_available():
+        return float(torch.cuda.memory_reserved(device))
+    return None
+
+
+#: Fraction of :func:`memory_budget` above which :func:`report_memory_use`
+#: escalates from a note to a warning. At or above this the allocator is
+#: unambiguously near the ceiling; **below it proves nothing**, which is the
+#: whole reason this function reports rather than adjudicates — see there.
+MEMORY_WARN_FRACTION: float = 0.90
+
+#: Latch, so the figure is stated once and not repeated every epoch.
+_reported_memory = False
+
+
+def report_memory_use(device: torch.device) -> str | None:
+    """Put the allocator's high-water mark next to the device's budget, once.
+
+    This exists because on Metal a memory overrun is **silent**.
+    :func:`configure_backend` deliberately sets
+    ``PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0``, which removes the allocator's
+    refusal so a large ``stage1.batch`` cannot abort a multi-hour stage — and
+    what it converts that abort into is paging. A run in that state looks
+    entirely healthy: the loss falls, the epoch line prints, nothing complains.
+    It is simply several times slower per sample than the same run one batch
+    size down, and nothing in the log lets a reader attribute that.
+
+    Measured on an M5 (16 GB, 12.7 GB recommended working set) at
+    ``stage1.batch``: 32 → 32.3 ms/sample holding 4.0 GB, 64 → 34.3 ms/sample
+    holding 7.9 GB, 128 → **90.4 ms/sample** holding 9.6 GB. The arithmetic per
+    sample is identical at all three; the knee is entirely a memory effect.
+
+    Why this reports instead of deciding
+    ────────────────────────────────────
+    Note where the batch-128 figure sits: 9.6 GB is **76 %** of the 12.7 GB
+    budget. The run was paging badly and was still nowhere near the ceiling, so
+    a threshold tuned to catch it would have to fire well below the budget — and
+    would then fire on a larger machine where the same allocation is fine. The
+    reason allocation understates the pressure is that on unified memory the
+    budget is not the process's alone: the host's page cache competes for it,
+    and this pipeline memory-maps a 5.6 GB patch cube it reads randomly.
+
+    So there is no honest threshold here, and inventing one would be worse than
+    useless. What is honest, and what a reader diagnosing a slow run actually
+    needs, is the number itself — the peak the allocator reached and the budget
+    it reached it against — logged where the epoch lines are. Compare
+    ``train/epoch_s`` between two batch sizes to confirm a suspected knee; this
+    line is what tells you the suspicion is worth testing.
+
+    Returns:
+        The line, the first time it is called with a measurable device, and
+        ``None`` afterwards and on any device that reports no budget.
+    """
+    global _reported_memory
+    if _reported_memory:
+        return None
+    budget = memory_budget(device)
+    allocated = memory_allocated(device)
+    if not budget or allocated is None:
+        return None
+    _reported_memory = True
+    share = allocated / budget
+    message = (
+        f"[MEM] peak {allocated / 1e9:.1f} GB of a {budget / 1e9:.1f} GB working set "
+        f"({share:.0%}) on {device}. The allocator pages rather than failing here, so if this "
+        "run is slower per sample than a smaller stage*.batch, this is why — the share need "
+        "not approach 100% for that to be happening, since the host's page cache for the "
+        "mmapped cube competes for the same memory."
+    )
+    if share >= MEMORY_WARN_FRACTION:
+        _log.warning(message)
+    else:
+        _log.info(message)
+    return message
+
+
+def reset_memory_report() -> None:
+    """Re-arm :func:`report_memory_use`. For tests, and for a fresh run in-process."""
+    global _reported_memory
+    _reported_memory = False
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -706,6 +856,12 @@ def release_memory(device: torch.device | str | None = None, *, collect: bool = 
         collect: Run the cycle collector first. Left on everywhere it matters;
             the flag exists for a caller that has just collected.
     """
+    # Read **before** the sweep, deliberately: this runs at the epoch and phase
+    # boundaries, so the allocation standing here is the closest thing to the
+    # epoch's high-water mark that can be sampled without a per-step probe.
+    # Afterwards it is the floor, which would say nothing.
+    if device is not None:
+        report_memory_use(torch.device(device))
     if collect:
         gc.collect()
     empty_cache(device)
