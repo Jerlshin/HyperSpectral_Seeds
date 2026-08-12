@@ -50,6 +50,31 @@ from spectralquadnet.models.blocks.attention import CBAM
 from spectralquadnet.models.blocks.conv_blocks import ResBlock2D
 from spectralquadnet.models.stats_ops import foreground_mask
 
+#: Floor under the signed square root in :meth:`SpectralSpatialCNN._pn`.
+#:
+#: ``d/dx sqrt(x)`` is ``1 / (2 sqrt(x))``, which is **unbounded at zero** — so
+#: this constant is not cosmetic, it is the only thing standing between a dead
+#: pooled channel (``amax`` of an all-negative feature map, exactly 0 after the
+#: activation) and an infinite gradient. At 1e-8 the bound is 5,000.
+#:
+#: :func:`_pn_floor` is what makes it survive autocast. Applied at fp16 width
+#: the literal rounds to **zero** — 1e-8 is below fp16's smallest subnormal,
+#: 5.96e-8 — so the clamp becomes a no-op, ``sqrt(0)`` backpropagates ``inf``,
+#: and the loss is ``NaN`` from a guard that looks present in the source. bf16
+#: carries fp32's exponent range and represents it exactly.
+PN_EPS: float = 1e-8
+
+
+def _pn_floor(dtype: torch.dtype) -> float:
+    """:data:`PN_EPS`, raised to the smallest value ``dtype`` can actually hold.
+
+    fp32 and bf16 both represent 1e-8, so this returns it unchanged and the
+    arithmetic is bit-identical to what it always was. fp16 cannot, so it gets
+    its own smallest normal (6.1e-5) instead — a weaker floor, but a real one,
+    where the literal would have silently been no floor at all.
+    """
+    return max(PN_EPS, torch.finfo(dtype).smallest_normal) if dtype.is_floating_point else PN_EPS
+
 
 def conv3d_as_conv2d(
     x: torch.Tensor,
@@ -236,7 +261,7 @@ class SpatialCNNBranch(nn.Module):
 
     @staticmethod
     def _pn(x: torch.Tensor) -> torch.Tensor:
-        return x.sign() * x.abs().clamp(1e-8).sqrt()
+        return x.sign() * x.abs().clamp(_pn_floor(x.dtype)).sqrt()
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
         h = self.stages(self.stem(x, foreground_mask(x, mask)))

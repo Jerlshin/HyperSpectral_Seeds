@@ -27,6 +27,16 @@ Stages 2-3, at ``cfg.stage1.arcface_m = 0``. There is no head to select and
 none to freeze; the transition to Stage 2 turns a margin on and changes
 nothing else, which is what §2.4.6's six-way discontinuity was about.
 
+This is the only stage that trains under autocast, and it now does so in
+**bfloat16** rather than torch's per-device fp16 default, with the
+``GradScaler`` built to match by
+:func:`~spectralquadnet.utils.device.make_grad_scaler` — disabled, because bf16
+has fp32's exponent range and loss scaling exists only to lift fp16 gradients
+off their underflow floor. The resolved precision is printed in the stage
+banner. See :mod:`spectralquadnet.utils.device` for the fp16 failure this
+replaces, and :mod:`spectralquadnet.models.heads` for the head arithmetic that
+stays fp32 under either dtype.
+
 Since P-5 (T4-5) the stage reads **two** evaluation loaders and keeps their
 jobs apart: ``val_ldr`` decides which epoch is checkpointed, and ``calib_ldr``
 is where the CDWS weights and the Phase-3 oversampling weights are measured.
@@ -45,7 +55,6 @@ from typing import TYPE_CHECKING, Any
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.amp import GradScaler
 from torch.utils.data import DataLoader
 
 from spectralquadnet.data.loaders import build_phase3_loader
@@ -64,7 +73,13 @@ from spectralquadnet.models.ema import ModelEMA
 from spectralquadnet.optim.param_groups import build_optimizer_s1
 from spectralquadnet.optim.schedulers import phase_aware_lr, subcentre_tau
 from spectralquadnet.tracking.base import ExperimentTracker, NullTracker
-from spectralquadnet.utils.device import RuntimePlan, release_memory
+from spectralquadnet.utils.device import (
+    RuntimePlan,
+    describe_amp,
+    make_grad_scaler,
+    release_memory,
+    resolve_amp_dtype,
+)
 from spectralquadnet.utils.distributed import DistContext
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -145,11 +160,16 @@ def run_stage1(
         warnings.simplefilter("ignore")
         scheduler = optim.lr_scheduler.LambdaLR(optimizer, phase_aware_lr(cfg, p1_end, p2_end))
 
-    # `device=` is what makes AMP real: a bare `GradScaler()` binds to CUDA, so on
-    # any other accelerator it prints "CUDA is not available. Disabling." and
-    # every scale/step call becomes a pass-through. Metal autocasts to fp16,
-    # which needs the loss scaling this performs.
-    scaler = GradScaler(device=device.type)
+    # ── Mixed precision ───────────────────────────────────────────────
+    # bf16 by default, and the scaler is built to match: enabled under fp16,
+    # which needs loss scaling to keep gradients off its 6.1e-5 underflow
+    # floor, and disabled under bf16, which has fp32's exponent range and
+    # nothing for a scaler to rescue. This stage ran on torch's per-device
+    # fp16 default before, and that is what produced the non-finite losses —
+    # see `utils/device.py`'s module docstring for the full chain, including
+    # why one `inf` gradient norm used to poison every later epoch.
+    amp_dtype = plan.amp_dtype if plan is not None else resolve_amp_dtype(device)
+    scaler = make_grad_scaler(amp_dtype, device)
     ls_hi = cfg.stage1.label_smooth_hi
     ls_lo = cfg.stage1.label_smooth_lo
     best_f1 = 0.0
@@ -185,6 +205,8 @@ def run_stage1(
             f"{cfg.model.subcenter_tau_init} → {cfg.model.subcenter_tau_final}",
             f"Fitted on: {fit_split} ({len(fit_ldr.dataset)} patches)  |  "  # type: ignore[arg-type]
             f"Selected on: val ({len(val_ldr.dataset)} patches)",  # type: ignore[arg-type]
+            f"Precision: {describe_amp(amp_dtype, device)}  |  "
+            "ArcFace head always fp32  |  Phase 3 (SupCon) runs fp32 throughout",
         ],
     )
 
@@ -307,6 +329,10 @@ def run_stage1(
             total_ep=ep_total,
             tracker=trk,
             aux_weights=aux_weights,
+            # `None` means AMP is off, in which case `scaler` is None too and
+            # the dtype is never read; a real dtype is passed rather than
+            # `None` so the parameter stays one.
+            amp_dtype=amp_dtype if amp_dtype is not None else torch.bfloat16,
         )
         scheduler.step()
 

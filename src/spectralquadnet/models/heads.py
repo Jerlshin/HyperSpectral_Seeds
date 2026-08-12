@@ -19,6 +19,44 @@ Three Tier-2 items live here.
   ``R_c - P_c`` rather than by ``F1_c``, a pairwise confusion term targets the
   margin at the classes actually confused with ``y``, and ``theta + m`` is
   capped below ``pi/2``.
+
+Precision
+─────────
+**Every arithmetic path in this module runs in fp32, whatever autocast is
+doing around it** — :func:`_fp32_region` is entered by each public method and
+the incoming embedding is upcast on the way in. This is not defensive
+tidiness; the head is the one place in the network where reduced precision is
+structurally unsafe, for three separate reasons:
+
+* ``sqrt(1 - cos^2)`` at ``cos = 1 - 1e-3`` is catastrophic cancellation. fp16
+  resolves ~4.9e-4 near 1.0 and bf16 only ~3.9e-3 — *coarser than the clamp
+  itself*, so the sine feeding the margin would be noise, and under bf16
+  ``1 - cos^2`` can round to exactly zero.
+* ``logsumexp(cos / tau)`` divides a bounded cosine by a temperature annealed
+  to 0.02, so the exponent argument reaches ±50 at the shipped schedule and
+  ±1/``TAU_FLOOR`` in the limit. fp16 saturates at 65 504.
+* :meth:`balance_loss` takes ``log`` of a probability floored at 1e-8 — which
+  is *below fp16's smallest subnormal* (6e-8), so the floor would flush to
+  zero and ``0 * log 0`` would put a ``NaN`` straight into the loss.
+
+Running the head in fp32 costs one ``(B, 256) x (256, C*K)`` matmul at full
+width — 90 classes times 3 sub-centres is a 270-row weight — against a
+four-branch backbone. It is the cheapest part of the forward pass and the only
+part that cannot be traded down.
+
+What it buys, measured on a sample sitting exactly at the cosine clamp with
+``m = 0.35``: the target logit is **44.309** in fp32, and the head *without*
+this region returns **45.073** under bf16, because the sine vanished and
+``cos(theta + m)`` silently degraded to ``cos(theta) cos(m)``. The margin does
+not disappear when that happens — it stays a plausible-looking logit that no
+longer implements the schedule. ``tests/unit/test_amp_precision.py`` asserts
+the exact identity for that reason rather than an inequality.
+
+The fp32 region is exact for callers that were already in fp32: entering
+``autocast(enabled=False)`` outside an autocast region is a no-op, and
+``.float()`` on an fp32 tensor returns it unchanged. Nothing here changes a
+number a pre-AMP run produced — the golden Stage-1 loss and forward-logit
+digests are unmoved.
 """
 
 from __future__ import annotations
@@ -26,6 +64,7 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Mapping
+from contextlib import AbstractContextManager
 
 import torch
 import torch.nn as nn
@@ -52,6 +91,38 @@ COS_CLAMP_EPS: float = 1e-3
 #: The cap removes that regime entirely and subsumes the ``phi = cos - mm``
 #: easy-margin guard it replaces, which only became active past ``pi - m``.
 HALF_PI: float = math.pi / 2.0
+
+#: Floor on the sub-centre pooling temperature, which bounds the log-sum-exp's
+#: exponent argument at ``1/TAU_FLOOR = 1000`` — an ``exp`` input fp32 handles
+#: with three orders of magnitude to spare, and one fp16 would overflow at
+#: ``tau < 1.6e-5``.
+#:
+#: It costs nothing to impose. The pooled cosine exceeds the hard ``max_k`` by
+#: at most ``tau * log K``, so at this floor the two agree to 1.1e-3 — inside
+#: :data:`COS_CLAMP_EPS`, i.e. below the resolution the head keeps anyway. Any
+#: schedule that asks for less is asking for the ``tau <= 0`` hard max, which
+#: :meth:`AdaptiveSubcenterArcFaceHead.pool_subcentres` provides exactly.
+TAU_FLOOR: float = 1e-3
+
+#: Floor on the probability entering ``log`` in :meth:`balance_loss`.
+#:
+#: ``pi`` is a softmax output, so it is non-negative and can legitimately be
+#: zero — a hard ``tau <= 0`` assignment produces exact zeros by construction.
+#: ``0 * log 0`` is 0 in the limit and ``NaN`` in floating point, which is why
+#: the term is written with :func:`torch.xlogy`; this floor is the second
+#: guard, bounding the ``log`` itself at -18.4 so no single dead sub-centre can
+#: dominate the batch's gradient.
+BALANCE_EPS: float = 1e-8
+
+
+def _fp32_region(device: torch.device) -> AbstractContextManager[None]:
+    """Suspend autocast for the head's arithmetic. See the module docstring.
+
+    A no-op — not merely a cheap one — outside an autocast region: torch's
+    context manager records the current state on entry and restores it on exit,
+    so a caller already in fp32 gets bit-identical results.
+    """
+    return torch.autocast(device_type=device.type, enabled=False)
 
 
 def _spherical_kmeans(
@@ -290,11 +361,23 @@ class AdaptiveSubcenterArcFaceHead(nn.Module):
     # ── Forward ───────────────────────────────────────────────────────
 
     def subcentre_cosines(self, x: torch.Tensor) -> torch.Tensor:
-        """``(B, C, K)`` clamped cosines between the embedding and every sub-centre."""
-        x_n = F.normalize(x, dim=1)
-        w_n = F.normalize(self.weight, dim=1)
-        eps = COS_CLAMP_EPS
-        return F.linear(x_n, w_n).clamp(-1 + eps, 1 - eps).view(-1, self.C, self.K)
+        """``(B, C, K)`` clamped cosines between the embedding and every sub-centre.
+
+        The embedding is upcast **before** it is normalised, not after: an
+        embedding whose squared norm overflows the autocast dtype normalises to
+        zero (fp16 saturates at 65 504, and a 256-dimensional vector reaches
+        that at a per-component magnitude of 16), and a zero embedding has no
+        angle to any sub-centre. Upcasting first makes the reduction fp32's.
+        """
+        with _fp32_region(x.device):
+            x_n = F.normalize(x.float(), dim=1)
+            w_n = F.normalize(self.weight.float(), dim=1)
+            eps = COS_CLAMP_EPS
+            return F.linear(x_n, w_n).clamp(-1 + eps, 1 - eps).view(-1, self.C, self.K)
+
+    def _pooling_temperature(self) -> float:
+        """The active temperature, floored at :data:`TAU_FLOOR`. ``0.0`` selects the max."""
+        return max(self.tau, TAU_FLOOR) if self.tau > 0.0 else 0.0
 
     def pool_subcentres(self, sub: torch.Tensor) -> torch.Tensor:
         """Pool ``(B, C, K)`` sub-centre cosines to ``(B, C)``.
@@ -304,14 +387,29 @@ class AdaptiveSubcenterArcFaceHead(nn.Module):
         ``tau = 0.2``, ``K = 3``), which can leave the valid cosine range, so
         the result is re-clamped — the margin algebra below needs
         ``sqrt(1 - c^2)`` to be real.
+
+        Two bounds stand between the temperature schedule and an overflow, and
+        they are deliberately at different levels. ``sub`` is clamped into
+        ``[-1, 1]`` first: these are cosines, anything outside is numerical
+        error from upstream, and the clamp is inactive on every value
+        :meth:`subcentre_cosines` can produce, so it removes no gradient. The
+        temperature is then floored at :data:`TAU_FLOOR`, which together bound
+        the exponent argument at 1000 for *any* schedule. Inside those bounds
+        ``torch.logsumexp`` is already overflow-proof — it subtracts the row
+        max before exponentiating, so ``exp`` only ever sees arguments in
+        ``[-2000, 0]`` — which is why the guard is on its input rather than a
+        hand-rolled replacement for it.
         """
-        pooled = (
-            self.tau * torch.logsumexp(sub / self.tau, dim=2)
-            if self.tau > 0.0
-            else sub.max(dim=2).values
-        )
-        eps = COS_CLAMP_EPS
-        return pooled.clamp(-1 + eps, 1 - eps)
+        tau = self._pooling_temperature()
+        with _fp32_region(sub.device):
+            bounded = sub.float().clamp(-1.0, 1.0)
+            pooled = (
+                tau * torch.logsumexp(bounded / tau, dim=2)
+                if tau > 0.0
+                else bounded.max(dim=2).values
+            )
+            eps = COS_CLAMP_EPS
+            return pooled.clamp(-1 + eps, 1 - eps)
 
     def assignment(self, sub: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         """``(B, K)`` soft assignment of each sample to **its own class's** sub-centres.
@@ -319,11 +417,17 @@ class AdaptiveSubcenterArcFaceHead(nn.Module):
         This is the ``pi`` of HD-2(ii). At ``tau <= 0`` the assignment is the
         hard one-hot, which carries no gradient — correct, because there is
         nothing left to balance once the pooling is a max.
+
+        ``own / tau`` is bounded exactly as in :meth:`pool_subcentres`, and for
+        the same reason: ``softmax`` subtracts the row max internally, so the
+        bound is what keeps the *division* finite, not the exponential.
         """
-        own = sub.gather(1, labels.view(-1, 1, 1).expand(-1, 1, self.K)).squeeze(1)
-        if self.tau > 0.0:
-            return torch.softmax(own / self.tau, dim=1)
-        return F.one_hot(own.argmax(dim=1), self.K).to(own.dtype)
+        tau = self._pooling_temperature()
+        with _fp32_region(sub.device):
+            own = sub.float().gather(1, labels.view(-1, 1, 1).expand(-1, 1, self.K)).squeeze(1)
+            if tau > 0.0:
+                return torch.softmax(own.clamp(-1.0, 1.0) / tau, dim=1)
+            return F.one_hot(own.argmax(dim=1), self.K).to(own.dtype)
 
     def balance_loss(self, assign: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         """``sum_c KL(pi_c || uniform)`` over the classes present in the batch (HD-2(ii)).
@@ -336,15 +440,26 @@ class AdaptiveSubcenterArcFaceHead(nn.Module):
         Classes with no sample in the batch are skipped rather than counted as
         balanced — ``pi`` is undefined for them, and with a 16×8 balanced batch
         that is 74 of the 90 classes on every step.
+
+        ``pi log(pi K)`` is written as :func:`torch.xlogy`, which is ``0``
+        wherever ``pi`` is — the limit, and the value the KL divergence
+        actually takes at a dead sub-centre. Spelled as a plain product it is
+        ``0 * -inf = NaN`` instead, and a hard ``tau <= 0`` assignment produces
+        exact zeros by construction, so this is a reachable state rather than a
+        hypothetical one. The :data:`BALANCE_EPS` floor then bounds the
+        surviving logarithm; under autocast it would not have survived at all,
+        since 1e-8 is below fp16's smallest subnormal and flushes to zero.
         """
-        onehot = F.one_hot(labels, self.C).to(assign.dtype)  # (B, C)
-        counts = onehot.sum(dim=0)  # (C,)
-        present = counts > 0
-        if not bool(present.any()):
-            return assign.new_zeros(())
-        pi = (onehot.t() @ assign) / counts.clamp_min(1.0).unsqueeze(1)  # (C, K)
-        pi = pi[present].clamp_min(1e-8)
-        return (pi * (pi * self.K).log()).sum(dim=1).sum()
+        with _fp32_region(assign.device):
+            assign = assign.float()
+            onehot = F.one_hot(labels, self.C).to(assign.dtype)  # (B, C)
+            counts = onehot.sum(dim=0)  # (C,)
+            present = counts > 0
+            if not bool(present.any()):
+                return assign.new_zeros(())
+            pi = (onehot.t() @ assign) / counts.clamp_min(1.0).unsqueeze(1)  # (C, K)
+            pi = pi[present].clamp_min(0.0)
+            return torch.xlogy(pi, (pi * self.K).clamp_min(BALANCE_EPS)).sum(dim=1).sum()
 
     def _margined_target(
         self, cosine: torch.Tensor, labels: torch.Tensor, global_m: float | None
@@ -360,7 +475,15 @@ class AdaptiveSubcenterArcFaceHead(nn.Module):
             # decision about *which* margin applies, not a term to differentiate
             # through, and `acos`'s derivative would otherwise re-introduce the
             # 1/sqrt(1-c^2) factor HD-4 exists to bound.
-            theta_y = torch.acos(cosine.gather(1, labels.view(-1, 1)).squeeze(1))
+            #
+            # `acos` returns NaN — not a saturated value — for an argument even
+            # a fraction of an ulp outside [-1, 1], and a NaN margin propagates
+            # into every logit through `torch.minimum`. Its input is clamped
+            # rather than trusted: `pool_subcentres` already holds the cosine
+            # inside [-1 + eps, 1 - eps], so this cannot bind, which is exactly
+            # the property that makes it free to assert.
+            tgt = cosine.gather(1, labels.view(-1, 1)).squeeze(1)
+            theta_y = torch.acos(tgt.clamp(-1.0, 1.0))
             m_per = torch.minimum(m_per, (HALF_PI - theta_y).clamp_min(0.0))
 
         tgt_c = cosine.gather(1, labels.view(-1, 1)).squeeze(1)
@@ -389,34 +512,39 @@ class AdaptiveSubcenterArcFaceHead(nn.Module):
 
         Returns:
             Logits scaled by ``self.s``, shape ``(B, num_classes)``; or
-            ``(logits, assignment)`` when ``return_assign`` is set.
+            ``(logits, assignment)`` when ``return_assign`` is set. **Always
+            fp32**, including inside an autocast region — see the module
+            docstring. Downstream that is free: ``cross_entropy`` is on
+            autocast's fp32 promotion list either way, so the loss was going to
+            be computed at this width regardless of what the head handed it.
         """
-        sub = self.subcentre_cosines(x)
-        cosine = self.pool_subcentres(sub)
+        with _fp32_region(x.device):
+            sub = self.subcentre_cosines(x)
+            cosine = self.pool_subcentres(sub)
 
-        if labels is None or not self.training:
-            logits = cosine
-        else:
-            if global_m is None or global_m > 0.0:
-                phi = self._margined_target(cosine, labels, global_m)
-                logits = cosine.scatter(1, labels.view(-1, 1), phi.unsqueeze(1))
-            else:
-                # A zero global margin is exactly `cos(theta_y + 0)`; taking the
-                # algebra above would be the same float at 10x the work.
+            if labels is None or not self.training:
                 logits = cosine
-            if self.pairwise_delta > 0.0:
-                omega = self.confusion[labels].scatter(1, labels.view(-1, 1), 0.0)
-                logits = logits - self.pairwise_delta * omega
+            else:
+                if global_m is None or global_m > 0.0:
+                    phi = self._margined_target(cosine, labels, global_m)
+                    logits = cosine.scatter(1, labels.view(-1, 1), phi.unsqueeze(1))
+                else:
+                    # A zero global margin is exactly `cos(theta_y + 0)`; taking
+                    # the algebra above would be the same float at 10x the work.
+                    logits = cosine
+                if self.pairwise_delta > 0.0:
+                    omega = self.confusion[labels].scatter(1, labels.view(-1, 1), 0.0)
+                    logits = logits - self.pairwise_delta * omega
 
-        out = logits * self.s
-        if return_assign:
-            assign = (
-                self.assignment(sub, labels)
-                if labels is not None
-                else sub.new_zeros((sub.shape[0], self.K))
-            )
-            return out, assign
-        return out
+            out = logits * self.s
+            if return_assign:
+                assign = (
+                    self.assignment(sub, labels)
+                    if labels is not None
+                    else sub.new_zeros((sub.shape[0], self.K))
+                )
+                return out, assign
+            return out
 
 
 class AuxiliaryHead(nn.Module):

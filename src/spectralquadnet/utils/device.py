@@ -10,9 +10,24 @@ Silicon uses the GPU rather than falling through to CPU. An explicit
 ``torchrun`` the local rank pins the device (``cuda:${LOCAL_RANK}``) before this
 precedence is consulted at all — see :mod:`spectralquadnet.utils.distributed`.
 
-The autocast **dtype** is deliberately left at torch's per-device default
-(fp16 on both Metal and CUDA) rather than promoted to bf16 on capable CUDA
-hardware, to keep training numerics consistent across accelerators.
+The autocast **dtype** is resolved here rather than left at torch's per-device
+default, and the default is now **bfloat16** — see :func:`resolve_amp_dtype`.
+fp16 carries a 5-bit exponent, so its largest finite value is 65 504 and its
+smallest normal is 6.1e-5; bf16 carries fp32's 8-bit exponent and therefore
+fp32's range, trading 13 mantissa bits for it. Stage 1 ran on the fp16 default
+and diverged: an activation or a gradient leaves fp16's range, the loss comes
+back ``inf``/``NaN``, ``train_one_epoch`` skips the batch, and once the epoch's
+mean per-branch gradient norm is ``inf`` the GradNorm feedback loop in
+``losses/auxiliary.py`` writes a non-finite auxiliary weight — after which
+*every* subsequent batch is non-finite and the run silently trains on nothing.
+bf16 removes the overflow, and :func:`make_grad_scaler` disables the loss
+scaler with it, because loss scaling exists purely to drag fp16 gradients out
+of that 6.1e-5 underflow floor and has nothing to do under bf16.
+
+The precision bf16 gives up is bought back where it actually matters: the
+ArcFace head's margin algebra runs in fp32 regardless of the autocast dtype
+(see :mod:`spectralquadnet.models.heads`), since ``sqrt(1 - cos^2)`` at
+``cos ~ 0.999`` is pure cancellation and bf16 has 8 mantissa bits to lose.
 
 What is tuned here, and what is refused
 ───────────────────────────────────────
@@ -74,6 +89,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import torch
 import torch.nn as nn
+from torch.amp import GradScaler
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from spectralquadnet.config.schema import RuntimeConfig
@@ -116,6 +132,144 @@ def resolve_device(strategy: str | torch.device = "auto") -> torch.device:
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  Mixed precision
+# ══════════════════════════════════════════════════════════════════════
+
+#: What ``runtime.amp_dtype`` accepts, besides ``auto`` (resolve from the
+#: hardware) and ``off``/``fp32`` (no autocast at all).
+AMP_DTYPES: dict[str, torch.dtype] = {
+    "bf16": torch.bfloat16,
+    "bfloat16": torch.bfloat16,
+    "fp16": torch.float16,
+    "float16": torch.float16,
+    "half": torch.float16,
+}
+
+#: ``runtime.amp_dtype`` values that disable autocast outright.
+AMP_OFF: frozenset[str] = frozenset({"off", "none", "no", "0", "false", "fp32", "float32"})
+
+
+def supports_bfloat16(device: torch.device) -> bool:
+    """Whether ``autocast(device_type=device.type, dtype=torch.bfloat16)`` runs here.
+
+    Every accelerator this pipeline targets can *execute* bf16 — the question
+    each backend answers differently is whether it does so natively or by
+    conversion, which :func:`bfloat16_is_native` reports separately. CPU
+    autocast is bf16-only upstream, so it is unconditionally true there.
+    """
+    if device.type == "cuda":
+        if not torch.cuda.is_available():
+            return False
+        is_supported = getattr(torch.cuda, "is_bf16_supported", None)
+        if is_supported is None:  # pragma: no cover - torch < 1.10
+            return torch.cuda.get_device_capability(device)[0] >= 8
+        return bool(is_supported())
+    if device.type == "mps":
+        # bf16 on Metal needs macOS 14; torch raises rather than degrading.
+        newer = getattr(torch.backends.mps, "is_macos_or_newer", None)
+        return bool(newer(14, 0)) if newer is not None else False
+    return device.type == "cpu"
+
+
+def bfloat16_is_native(device: torch.device) -> bool:
+    """Whether bf16 arithmetic has hardware behind it, rather than being converted.
+
+    Only used for the banner note. On a Turing card (sm_75 — the T4) bf16 has
+    no Tensor Core path, so torch emulates it and the run is *correct but
+    slower* than the fp16 it replaces. That is a trade this pipeline makes
+    deliberately — a slow run beats a run whose loss is ``NaN`` from epoch 50 —
+    but it is not a trade that should happen silently.
+    """
+    if device.type == "cuda":
+        is_supported = getattr(torch.cuda, "is_bf16_supported", None)
+        if is_supported is None:  # pragma: no cover - torch < 1.10
+            return torch.cuda.get_device_capability(device)[0] >= 8
+        try:
+            return bool(is_supported(including_emulation=False))
+        except TypeError:  # pragma: no cover - torch < 2.4 has no such keyword
+            return torch.cuda.get_device_capability(device)[0] >= 8
+    return supports_bfloat16(device)
+
+
+def resolve_amp_dtype(device: torch.device, requested: str = "auto") -> torch.dtype | None:
+    """The autocast dtype for this device, or ``None`` for "train in fp32".
+
+    ``auto`` picks **bf16 wherever the device can run it** and falls back to
+    fp16 only where it cannot. That is a stability choice, not a speed one: see
+    the module docstring for the fp16 divergence it exists to prevent. An
+    explicit ``fp16`` is honoured — the fp16 path is still supported, and
+    :func:`make_grad_scaler` still gives it its loss scaler — but it is no
+    longer what an unconfigured run gets.
+
+    Args:
+        device: The device this rank owns.
+        requested: ``auto``, ``bf16``/``fp16`` (and their aliases), or one of
+            :data:`AMP_OFF`.
+
+    Raises:
+        ValueError: On an unrecognised value, rather than silently training in
+            a precision nobody asked for.
+    """
+    key = str(requested).strip().lower()
+    if key in AMP_OFF:
+        return None
+    if key != "auto":
+        if key not in AMP_DTYPES:
+            raise ValueError(
+                f"runtime.amp_dtype={requested!r} is not one of "
+                f"{sorted(AMP_DTYPES) + sorted(AMP_OFF) + ['auto']}"
+            )
+        dtype = AMP_DTYPES[key]
+        if dtype is torch.bfloat16 and not supports_bfloat16(device):
+            _log.warning(
+                "runtime.amp_dtype=bf16 requested but %s cannot autocast to it — "
+                "falling back to fp16 with a loss scaler",
+                device,
+            )
+            return torch.float16
+        return dtype
+    return torch.bfloat16 if supports_bfloat16(device) else torch.float16
+
+
+def make_grad_scaler(amp_dtype: torch.dtype | None, device: torch.device) -> GradScaler | None:
+    """The loss scaler that goes with ``amp_dtype``, or ``None`` when AMP is off.
+
+    Three cases, and the middle one is the whole point:
+
+    * **fp16** — an *enabled* scaler. fp16's smallest normal is 6.1e-5, and a
+      backbone gradient below that flushes to zero; scaling the loss up before
+      the backward and unscaling before the step is what keeps it representable.
+    * **bf16** — a *disabled* scaler. bf16 has fp32's exponent range, so there
+      is nothing to rescue and nothing to overflow; a scaler here would search
+      for an inf that never arrives and multiply/divide every gradient twice
+      per step for it. Disabled rather than ``None`` so the loops keep one code
+      path: every ``GradScaler`` method is a documented pass-through when
+      ``enabled=False`` (``scale`` returns its argument, ``unscale_`` returns
+      immediately, ``step`` calls ``optimizer.step()``).
+    * **AMP off** — ``None``, which is what ``train_one_epoch`` reads as "run
+      the fp32 path".
+
+    ``device=`` is what makes any of it real: a bare ``GradScaler()`` binds to
+    CUDA, so on any other accelerator it prints "CUDA is not available.
+    Disabling." and every call becomes a pass-through whether or not that was
+    wanted.
+    """
+    if amp_dtype is None:
+        return None
+    return GradScaler(device=device.type, enabled=amp_dtype is torch.float16)
+
+
+def describe_amp(amp_dtype: torch.dtype | None, device: torch.device) -> str:
+    """The banner line for the resolved precision, so a run's log records it."""
+    if amp_dtype is None:
+        return "AMP=off (fp32)"
+    if amp_dtype is torch.float16:
+        return "AMP=fp16 + GradScaler"
+    native = "" if bfloat16_is_native(device) else " (emulated — no bf16 Tensor Core path)"
+    return f"AMP=bf16, no loss scaler{native}"
+
+
+# ══════════════════════════════════════════════════════════════════════
 #  The resolved runtime plan
 # ══════════════════════════════════════════════════════════════════════
 
@@ -145,6 +299,11 @@ class RuntimePlan:
     empty_cache_interval: int
     diagnostics_interval: int
     progress: str
+    #: Autocast dtype for the stages that train under AMP, or ``None`` for
+    #: fp32. Defaulted — rather than required like every field above — so a
+    #: plan built by hand (a benchmark, a test) opts *out* of mixed precision
+    #: instead of silently into it. :func:`resolve_runtime` always sets it.
+    amp_dtype: torch.dtype | None = None
 
     @property
     def loader_kwargs(self) -> dict[str, Any]:
@@ -282,6 +441,7 @@ def resolve_runtime(
         empty_cache_interval=int(getattr(cfg, "empty_cache_interval", 0)),
         diagnostics_interval=max(1, int(getattr(cfg, "diagnostics_interval", 50))),
         progress=str(getattr(cfg, "progress", "auto")),
+        amp_dtype=resolve_amp_dtype(device, str(getattr(cfg, "amp_dtype", "auto"))),
     )
 
 
