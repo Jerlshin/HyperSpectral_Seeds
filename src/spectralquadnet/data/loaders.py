@@ -585,17 +585,26 @@ def seed_worker(worker_id: int) -> None:
     silence_known_warnings()
 
 
-def loader_options(plan: RuntimePlan | None = None, *, evaluation: bool = False) -> dict[str, Any]:
+def loader_options(
+    plan: RuntimePlan | None = None, *, evaluation: bool = False, persistent: bool = False
+) -> dict[str, Any]:
     """The performance keywords for a ``DataLoader``, or the pre-refactor defaults.
 
     ``plan=None`` yields ``num_workers=0, pin_memory=False`` — a synchronous,
     single-process feed, which is what every loader in this module used to be
     unconditionally. Passing a plan is what turns on worker processes, page-locked
     staging and prefetch; see :class:`~spectralquadnet.utils.device.RuntimePlan`.
+
+    ``persistent`` applies to evaluation loaders only — training loaders take
+    their residency from the plan — and says that this particular loader is
+    iterated many times rather than once, so its workers are worth keeping. See
+    :meth:`~spectralquadnet.utils.device.RuntimePlan.eval_loader_kwargs_for`.
     """
     if plan is None:
         return {"num_workers": 0, "pin_memory": False}
-    return plan.eval_loader_kwargs if evaluation else plan.loader_kwargs
+    if not evaluation:
+        return plan.loader_kwargs
+    return plan.eval_loader_kwargs_for(persistent=persistent)
 
 
 def _make_loader(
@@ -604,6 +613,7 @@ def _make_loader(
     plan: RuntimePlan | None,
     evaluation: bool,
     seed: int | None = None,
+    persistent: bool = False,
     **kwargs: Any,
 ) -> DataLoader[Any]:
     """One place that knows how a loader is configured on this hardware.
@@ -613,7 +623,7 @@ def _make_loader(
     between the seven construction sites that used to hardcode
     ``num_workers=0``.
     """
-    options = loader_options(plan, evaluation=evaluation)
+    options = loader_options(plan, evaluation=evaluation, persistent=persistent)
     if options["num_workers"] > 0:
         kwargs["worker_init_fn"] = seed_worker
         if seed is not None:
@@ -739,7 +749,11 @@ def build_loaders(
             drop_last=True,
         )
 
-    va_ldr = build_eval_loader(RiceSeedDataset(val_idx, **kw), plan=plan, dist=dist)
+    # The val loader is the one evaluation loader in the package that is not
+    # throwaway: every stage iterates it twice an epoch, for as many epochs as
+    # the stage runs. The test loader beside it genuinely is scored once, so it
+    # keeps the default and its workers are gone the moment the pass ends.
+    va_ldr = build_eval_loader(RiceSeedDataset(val_idx, **kw), plan=plan, dist=dist, persistent=True)
     te_ldr = build_eval_loader(RiceSeedDataset(test_idx, **kw), plan=plan, dist=dist)
     return tr_ldr, va_ldr, te_ldr
 
@@ -792,6 +806,7 @@ def build_eval_loader(
     plan: RuntimePlan | None = None,
     dist: DistContext | None = None,
     batch_size: int = EVAL_BATCH,
+    persistent: bool = False,
 ) -> DataLoader[Any]:
     """An unshuffled loader over an evaluation split, sharded across ranks under DDP.
 
@@ -801,6 +816,15 @@ def build_eval_loader(
     :func:`~spectralquadnet.utils.distributed.gather_concat`, which trims the
     padding ``DistributedSampler`` adds — so a val set whose size does not
     divide by the world size is still scored on its true size.
+
+    Args:
+        persistent: Keep this loader's workers resident between passes. The
+            default, ``False``, suits a loader iterated once. Pass ``True`` for
+            one that is iterated every epoch — see
+            :meth:`~spectralquadnet.utils.device.RuntimePlan.eval_loader_kwargs_for`.
+            Nothing about the data changes either way: an evaluation dataset
+            runs the ``none`` augmentation profile, so ``__getitem__`` draws no
+            randomness and the worker count cannot move a single value.
     """
     dist = dist or DistContext()
     sampler: Sampler[int] | None = (
@@ -814,6 +838,7 @@ def build_eval_loader(
         dataset,
         plan=plan,
         evaluation=True,
+        persistent=persistent,
         batch_size=batch_size,
         shuffle=False,
         sampler=sampler,
@@ -875,6 +900,9 @@ def build_calib_loader(
         plan=plan,
         dist=dist,
         batch_size=batch_size,
+        # Built once in `train.py` and read by every stage's per-class F1 and
+        # CDWS fit — the longest-lived loader in the run.
+        persistent=True,
     )
 
 

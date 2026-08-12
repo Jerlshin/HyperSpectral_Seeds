@@ -387,6 +387,15 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker, dist: DistContext) -> None
         # A stage boundary drops the stage's optimiser state, its scheduler, its
         # phase loaders and their prefetch queues all at once, and the reload
         # above has just materialised a checkpoint's worth of tensors on top.
+        #
+        # The `del` is what makes the sentence above true. `run_stage1` returning
+        # does not free its loaders: these names still hold them, and a loader
+        # holds `persistent_workers`' pool for exactly as long as something holds
+        # the loader. Without this the Stage-1 phase and validation workers stay
+        # resident through Stages 2 and 3 — processes that will never serve
+        # another batch, each with torch imported and its own mapping of the
+        # cube, on an accelerator whose memory is the host's.
+        del phase_loaders, val_ldr1
         release_memory(device)
     else:
         tracker.log_message("[SKIP] Stage 1 → loading checkpoint", level="plain")
@@ -495,7 +504,8 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker, dist: DistContext) -> None
         )
         tracker.log_message("Reloading best Stage 2 checkpoint ...")
         load_ckpt(ckpt_s2, model, ema, device)
-        release_memory(device)  # see the Stage 1 boundary above
+        del tr2, va2  # see the Stage 1 boundary above
+        release_memory(device)
     else:
         tracker.log_message("[SKIP] Stage 2 → loading checkpoint", level="plain")
         load_ckpt(ckpt_s2, model, ema, device)
@@ -555,6 +565,7 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker, dist: DistContext) -> None
             dist=dist,
             train_module=train_model,
         )
+        del tr3, va3  # see the Stage 1 boundary above
     else:
         tracker.log_message("[SKIP] Stage 3 → loading checkpoint", level="plain")
         load_ckpt(ckpt_s3, model, ema, device)

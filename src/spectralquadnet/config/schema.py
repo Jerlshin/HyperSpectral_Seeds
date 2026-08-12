@@ -463,6 +463,15 @@ class RuntimeConfig:
     #: rather than a clean OOM. Off by default on CUDA, where dedicated VRAM
     #: makes the recompute a cost rather than a rescue — turn it ``on`` there
     #: for a small card or a large ``stage1.batch``.
+    #:
+    #: Those figures are batch 32's, and they undersell it badly at the batch
+    #: this config actually trains at. Measured on an M5 (16 GB, 12.7 GB working
+    #: set) at ``stage1.batch = 128``: **49.6 ms/sample holding 9.4 GB with it
+    #: on, against 780.1 ms/sample holding 14.6 GB with it off** — 15.7× slower,
+    #: because without the recompute the step's working set clears the ceiling
+    #: and the run pages. At this batch size the flag is not a memory
+    #: optimisation, it is the thing that makes the batch runnable; treat
+    #: turning it off on Metal as a decision to lower the batch too.
     checkpoint_branch_a: str = "auto"
 
     # ── Device topology ───────────────────────────────────────────────

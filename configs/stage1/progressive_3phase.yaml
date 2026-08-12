@@ -3,7 +3,7 @@ defaults:
   - base_stage1
   - _self_
 
-epochs: 600
+epochs: 400
 phase1_frac: 0.30
 phase2_frac: 0.38
 
@@ -13,7 +13,7 @@ mid_lr: 2.5e-4
 min_lr: 5.0e-6
 dropout: 0.15
 mixup: 0.35
-patience: 160
+patience: 50
 accum: 1
 focal_gamma: 1.5
 label_smooth_hi: 0.10

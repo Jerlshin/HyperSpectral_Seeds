@@ -12,7 +12,7 @@ warmup_ep: 3
 sgdr_T0: 25
 sgdr_Tmult: 2
 dropout: 0.10
-patience: 80
+patience: 30
 
 # ── Sub-centre ArcFace (arcface_s / arcface_m are also read at model build) ──
 arcface_s: 48.0

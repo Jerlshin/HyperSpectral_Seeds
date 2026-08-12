@@ -88,6 +88,37 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from spectralquadnet.models.spectral_quadnet import SpectralQuadNet
 
 
+def _release_stale_phase_loaders(
+    loaders_by_phase: dict[int, DataLoader[Any]], phase: int, device: torch.device
+) -> list[int]:
+    """Drop the loaders for phases the curriculum has already left behind.
+
+    ``loaders_by_phase`` is mutated in place, and that is deliberate: the dict
+    the caller built is the *only* thing holding those ``DataLoader`` objects,
+    so removing an entry here drops the last reference and torch shuts the
+    loader's worker processes down. Copying the dict first would leave the
+    caller's references alive and free nothing.
+
+    Only strictly-earlier phases are removed. Phase 3 keeps its entry even once
+    :func:`~spectralquadnet.data.loaders.build_phase3_loader` has replaced it,
+    because the oversampled loader is built *over that entry's dataset* — and it
+    costs nothing to keep, since the Phase-3 entry is never iterated and so
+    never spawns a worker at all.
+
+    Returns:
+        The phases released, so the caller can say so in the log. Empty on every
+        epoch but the two phase boundaries.
+    """
+    stale = [p for p in loaders_by_phase if p < phase]
+    for p in stale:
+        del loaders_by_phase[p]
+    if stale:
+        # The worker shutdown is what this is for; the sweep is the same one
+        # every other phase-boundary transition takes.
+        release_memory(device)
+    return stale
+
+
 def run_stage1(
     cfg: ExperimentConfig | Any,
     store: DataStore,
@@ -282,6 +313,17 @@ def run_stage1(
         else:
             # Never None here: the block above builds it on the first Phase-3 epoch.
             cur_ldr = phase3_ldr  # type: ignore[assignment]  # oversampled Phase-3 loader
+
+        # A phase's loader is never iterated again once the curriculum has moved
+        # past it, but `persistent_workers=True` means its worker processes stay
+        # alive until the loader itself is dropped — that is what "persistent"
+        # buys, and here it is pure cost. Left alone, Phase 3 runs with the
+        # Phase-1 and Phase-2 pools still resident: four idle processes, each a
+        # `spawn`-ed interpreter with torch imported and its own mapping of the
+        # patch cube. On Metal those pages come out of the same pool the
+        # activations do, so they are not free even though they are idle.
+        for released in _release_stale_phase_loaders(loaders_by_phase, phase, device):
+            trk.log_message(f"{tag}Released Phase {released} loader and its workers")
 
         # ── Loss function ─────────────────────────────────────────────
         t = (ep - 1) / max(ep_total - 1, 1)
