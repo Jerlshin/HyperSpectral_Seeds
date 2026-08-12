@@ -49,6 +49,14 @@ Behaviour worth keeping in mind when reading these loops:
 * **AMP is silently disabled whenever a SupCon loss is passed** (``use_amp =
   (supcon is None) and (scaler is not None)``), so Stage 1 Phase 3 and all of
   Stage 2 train in full fp32.
+* **The autocast dtype is the caller's**, and defaults to ``torch.bfloat16``
+  rather than to torch's per-device default of fp16. It is passed to
+  ``autocast`` explicitly, so what the loop runs in is a decision
+  :func:`~spectralquadnet.utils.device.resolve_amp_dtype` made against the
+  hardware and wrote into the log, not a per-backend accident. fp16 is still
+  reachable (``runtime.amp_dtype=fp16``) and still gets its loss scaler; it is
+  no longer the default, because it is what produced the non-finite Stage-1
+  losses this parameter exists to fix.
 * **Non-finite losses skip the batch**, zeroing grads rather than raising, in
   both loops.
 * **The optimiser steps on the accumulation boundary only**, and the EMA is
@@ -154,6 +162,7 @@ def train_one_epoch(
     total_ep: int = 100,
     tracker: ExperimentTracker | None = None,
     aux_weights: GradNormAuxWeights | None = None,
+    amp_dtype: torch.dtype = torch.bfloat16,
 ) -> tuple[float, float]:
     """Run one AdamW training epoch (Stage 1 or Stage 2).
 
@@ -168,6 +177,11 @@ def train_one_epoch(
             per-branch auxiliary weights come from it instead of the fixed
             ``A/B = 2x`` vector, and it is updated once at the end of the epoch
             from that epoch's mean per-branch gradient norms.
+        amp_dtype: Autocast dtype, used only when ``scaler`` is given and no
+            SupCon loss is. Defaults to ``torch.bfloat16``; pair fp16 with an
+            *enabled* scaler and bf16 with a disabled one —
+            :func:`~spectralquadnet.utils.device.make_grad_scaler` builds the
+            matching pair.
 
     Returns:
         ``(mean_loss, mean_accuracy)`` over the epoch.
@@ -220,7 +234,7 @@ def train_one_epoch(
         side = side_inputs(*mix_side_inputs(mask, morph, perm, lam))
         aux_parts: dict[str, torch.Tensor] = {}
 
-        with autocast(device_type=device.type, enabled=use_amp):
+        with autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
             # ── SupCon / ProtoNCE path ─────────────────────────────────
             if supcon is not None:
                 out = model(x_in, ya, return_embed=True, arc_m=arc_m, **side)

@@ -379,6 +379,13 @@ class RuntimeConfig:
     :attr:`channels_last` re-selects convolution algorithms whose reduction
     order differs. Both are one flag away for anyone who wants them.
 
+    :attr:`amp_dtype` is the one field here that admits to changing numerics
+    rather than defaulting away from it, because the alternative was worse:
+    Stage 1 trains under autocast either way, and the fp16 this group used to
+    inherit from torch's per-device default is what put ``NaN`` in the loss.
+    The knob exists so the choice is *recorded and overridable* instead of
+    implicit — which is the same reason the two fields above exist.
+
     ``-1`` means "decide from the hardware" wherever a count is expected;
     :func:`~spectralquadnet.utils.device.resolve_runtime` is the one place that
     resolution happens.
@@ -422,6 +429,15 @@ class RuntimeConfig:
     #: TF32 matmuls on Ampere and later. **Off by default**: it is a precision
     #: change, and Turing (sm_75, the T4) has no TF32 path at all.
     allow_tf32: bool = False
+    #: Autocast dtype for the AMP stages. ``auto`` resolves to **bf16** on any
+    #: device that can run it and fp16 only where none can; ``bf16``/``fp16``
+    #: force one; ``off`` trains in fp32. bf16 spends 13 mantissa bits to buy
+    #: fp32's exponent range, which is the trade that matters here — fp16
+    #: overflows at 65 504 and underflows at 6.1e-5, and Stage 1 hit both.
+    #: Under bf16 the ``GradScaler`` is constructed disabled, since loss
+    #: scaling only ever existed to keep fp16 gradients above that floor. See
+    #: :func:`~spectralquadnet.utils.device.resolve_amp_dtype`.
+    amp_dtype: str = "auto"
     #: cuDNN convolution autotuning. Already what ``set_seed`` leaves set; here
     #: so it is visible and overridable.
     cudnn_benchmark: bool = True

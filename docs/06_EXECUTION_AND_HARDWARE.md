@@ -106,18 +106,51 @@ Under `torchrun`, this function is not consulted for the choice at all — `init
 resolves `cuda:${LOCAL_RANK}` itself and hands the device down before `resolve_device` would
 matter.
 
-### `GradScaler` device binding
+### Mixed precision: dtype, scaler, and the one module that opts out
 
 ```python
-scaler = GradScaler(device=device.type)
+amp_dtype = resolve_amp_dtype(device, cfg.runtime.amp_dtype)   # bf16 by default
+scaler    = make_grad_scaler(amp_dtype, device)                 # paired with it
 ```
 
-The explicit `device=` argument is what makes AMP real on non-CUDA accelerators. A bare
-`GradScaler()` binds to CUDA internally; on Metal (or CPU) it silently disables itself and every
-`.scale()`/`.step()`/`.update()` call becomes a pass-through — AMP would *appear* enabled
-(autocast still runs in fp16) while the loss-scaling protection against fp16 underflow is
-completely absent, with no error raised. This matters only for Stage 1 Phases 1–2, the one place
-AMP is actually used (§4.5's `use_amp` rule).
+Stage 1 Phases 1–2 are the only place AMP is used at all (§4.5's `use_amp` rule — a SupCon loss
+disables it, so Phase 3 and every later stage are fp32 throughout). That one place used to run at
+torch's per-device autocast default, **fp16**, and diverged: fp16 carries a 5-bit exponent, so it
+saturates at 65 504 and its smallest normal is $6.1\times10^{-5}$, and once an activation or a
+gradient leaves that window the loss comes back non-finite and `train_one_epoch` skips the batch.
+
+Three things had to change, and only the first is the dtype:
+
+1. **`resolve_amp_dtype` picks bf16** wherever the device can run it. bf16 has fp32's 8-bit
+   exponent — neither bound exists — and pays for it in mantissa bits. `runtime.amp_dtype`
+   accepts `auto` / `bf16` / `fp16` / `off`, and the resolved value is printed in the startup
+   block and the Stage-1 banner, because it is part of what a reported number means. On Turing
+   (sm_75, the T4) bf16 has no Tensor Core path and torch converts instead, so the banner says
+   `emulated` — a slower run, chosen deliberately over a `NaN` one.
+2. **`make_grad_scaler` pairs the scaler to the dtype.** Loss scaling exists only to lift fp16
+   gradients off that underflow floor, so it is *enabled* under fp16 and constructed **disabled**
+   under bf16 — a documented pass-through on `scale`/`unscale_`/`step`/`update`, which lets both
+   dtypes share one code path in the epoch loop. The explicit `device=` is still what makes any of
+   it real: a bare `GradScaler()` binds to CUDA and silently disables itself everywhere else, so
+   an fp16 run on Metal would have had autocast without the protection it requires.
+3. **The ArcFace head opts out entirely.** Every path in `models/heads.py` runs under
+   `autocast(enabled=False)` on an upcast embedding, whatever the ambient dtype (the objectives
+   themselves are `04_CURRICULUM_AND_LOSSES.md` §4.4). It is a `(B,256)×(256,270)` matmul
+   against a four-branch backbone, the cheapest part of
+   the forward and the only part that cannot be traded down: `sqrt(1-\cos^2)` at the $10^{-3}$
+   cosine clamp is cancellation that bf16's 8 mantissa bits (resolution $3.9\times10^{-3}$ near
+   1.0) cannot represent, `cos/\tau` at $\tau=0.02$ reaches ±50, and the balance term's $10^{-8}$
+   probability floor is *below fp16's smallest subnormal*, so it flushed to zero and put
+   $0\log 0 = \texttt{NaN}$ straight into the loss.
+
+A fourth change is what turned a transient failure into a permanent one. `GradNormAuxWeights`
+reads each epoch's **mean per-branch gradient norm**, which the loop accumulates *before*
+`GradScaler` vetoes the step — so a routine fp16 overflow put `inf` in the mean,
+$(\infty/\infty)^{\alpha}$ put `NaN` in an auxiliary weight, and `min`/`max` bounds do not catch a
+`NaN` (every comparison with it is false). From that epoch on, every loss was `NaN` and every
+batch was skipped, while the epoch line kept reporting a mean over `len(loader)`. Non-finite norms
+are now filtered out and the branch holds its weight for that epoch. Pinned by
+`tests/unit/test_amp_precision.py`.
 
 ### Metal-specific handling
 
@@ -174,6 +207,7 @@ concrete value once, producing a frozen `RuntimePlan`. `-1` means "decide from t
 | `compile_backend` / `compile_mode` | `inductor` / `default` | Passed straight to `torch.compile`; `dynamic=False` is hardcoded. |
 | `channels_last` | `false` | **Not auto-resolved** — a hard opt-in, since NHWC re-selects convolution kernels with a different reduction order (a precision-adjacent change the runtime group is not allowed to make silently). |
 | `allow_tf32` | `false` | Off on purpose: cuts a matmul's mantissa from 24 bits to 11, and Turing (the T4) has no TF32 path at all. |
+| `amp_dtype` | `auto` | `auto` → **bf16** on any device that can autocast to it, fp16 only where none can; `bf16`/`fp16` force one, `off` trains in fp32. The one field in this group that admits to changing numerics rather than defaulting away from it — Stage 1 trains under autocast either way, and the fp16 this group used to inherit from torch is what produced the non-finite losses (§6.2). An unrecognised value raises at resolution time. |
 | `cudnn_benchmark` | `true` | Autotuned convolution algorithm selection — already what `set_seed` leaves set. |
 | `fused_optimizer` | `auto` | `auto` → CUDA only. AdamW's fused multi-tensor kernel folds the whole step into one launch; it accumulates in the same precision but **not the same order** — the one runtime default here that is not bit-exact against eager AdamW. |
 | `multi_gpu` | `auto` | `auto`/`ddp`/`off` — full semantics in §6.4. |

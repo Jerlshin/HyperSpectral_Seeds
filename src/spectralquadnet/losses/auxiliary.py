@@ -23,6 +23,8 @@ which turns the balance from an assertion into a measurement.
 
 from __future__ import annotations
 
+import logging
+import math
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Literal, overload
 
@@ -33,6 +35,8 @@ from spectralquadnet.losses.mixup import mixed_loss
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from spectralquadnet.config.schema import ExperimentConfig
+
+_log = logging.getLogger(__name__)
 
 #: The fixed per-branch auxiliary weights, and the starting point of the
 #: GradNorm feedback loop. Spectral branches A/B get 2×, spatial C/D get 1×.
@@ -80,18 +84,44 @@ class GradNormAuxWeights:
     def update(self, grad_norms: Mapping[str, float]) -> dict[str, float]:
         """Apply one GradNorm update from ``{"branch_a": norm, …}``.
 
-        Branches absent from ``grad_norms``, or reporting a non-positive norm,
-        keep their current weight — a branch that produced no gradient this
-        epoch carries no information about the balance.
+        Branches absent from ``grad_norms``, or reporting a norm that is not
+        finite and positive, keep their current weight — a branch that produced
+        no gradient this epoch, or produced one that overflowed, carries no
+        information about the balance.
+
+        **The ``isfinite`` half of that test is load-bearing under AMP**, and it
+        is where a skipped batch used to become a dead run. An fp16 gradient
+        that overflows is *routine* — catching it and skipping the optimiser
+        step is the entire job of ``GradScaler`` — but the epoch's mean
+        per-branch norm is accumulated before the scaler gets a say, so one
+        such step makes the mean ``inf``. Left unfiltered, ``inf`` passes the
+        ``> 0`` test, ``mean`` becomes ``inf``, ``(inf/inf) ** alpha`` is
+        ``NaN``, and the bounds below do not catch it: ``min``/``max`` against
+        ``NaN`` in Python return the ``NaN``. The weight is then ``NaN``
+        forever, every subsequent loss is ``NaN``, every batch is skipped, and
+        the epoch line still reports a mean over ``len(loader)`` as though the
+        epoch had trained. bf16 makes the overflow itself unreachable; this
+        keeps the *consequence* unreachable on the fp16 path too.
 
         Returns:
             The updated weights, keyed ``aux_a``…``aux_d``.
         """
-        observed = {
-            key: float(grad_norms[key.replace("aux_", "branch_")])
-            for key in self.weights
-            if grad_norms.get(key.replace("aux_", "branch_"), 0.0) > 0.0
-        }
+        observed: dict[str, float] = {}
+        for key in self.weights:
+            norm = grad_norms.get(key.replace("aux_", "branch_"))
+            if norm is None:
+                continue
+            norm = float(norm)
+            if math.isfinite(norm) and norm > 0.0:
+                observed[key] = norm
+            elif not math.isfinite(norm):
+                _log.warning(
+                    "GradNorm ignoring a non-finite gradient norm for %s (%s); "
+                    "its auxiliary weight is held at %.3f",
+                    key,
+                    norm,
+                    self.weights[key],
+                )
         if self.alpha == 0.0 or len(observed) < 2:
             return dict(self.weights)
 

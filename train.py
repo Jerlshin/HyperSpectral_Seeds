@@ -24,6 +24,10 @@ per-epoch line is rendered at all, the diagnostics stride — live under
 ``cfg.runtime`` and are resolved once here into a
 :class:`~spectralquadnet.utils.device.RuntimePlan`. None of them may change a
 reported number; the two that would (TF32, channels_last) are off by default.
+The exception is ``runtime.amp_dtype``, which is a precision choice by
+construction — Stage 1 trains under autocast whatever it says. Its default is
+now bf16 rather than torch's per-device fp16, and the resolved value is printed
+in the startup block precisely because it *is* part of what a number means.
 
 Console output is append-only: one line per epoch, written once, mirrored into
 ``output_dir/training.log`` — see :func:`_setup_logging` and
@@ -102,6 +106,7 @@ from spectralquadnet.tracking.base import ExperimentTracker, NullTracker
 from spectralquadnet.utils.device import (
     apply_runtime_optimisations,
     configure_backend,
+    describe_amp,
     describe_hardware,
     empty_cache,
     maybe_compile,
@@ -293,6 +298,10 @@ def _run(cfg: DictConfig, tracker: ExperimentTracker, dist: DistContext) -> None
         f"fused AdamW={plan.fused_optimizer}  |  channels_last={plan.channels_last}",
         level="plain",
     )
+    # Stage 1 is the only stage that trains under autocast, but the precision it
+    # resolved belongs in the startup block with the other execution facts: a
+    # non-finite loss reported without it is not reproducible.
+    tracker.log_message(f"Precis : {describe_amp(plan.amp_dtype, device)}", level="plain")
 
     # ── Hardware dispatch ─────────────────────────────────────────────
     # Order matters: SyncBatchNorm conversion and the DDP wrap must happen
