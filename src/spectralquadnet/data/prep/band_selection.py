@@ -7,6 +7,16 @@ The CLI entry point is ``scripts/select_bands.py``.
 This pipeline produces reduced-band patch arrays (e.g. a 40-band SPA subset)
 that a training config can point ``cfg.data.patches_data`` at.
 
+This module is a **build step**: it materialises one cube at one band count,
+taking the method pair and the elbow rule below as given. The experiment that
+decides *whether* those are the right choices — twelve methods including two
+nulls, budgets to the full 256, selection stability, redundancy and a
+recommendation — is :mod:`spectralquadnet.bandstudy`
+(``python -m spectralquadnet.bandstudy.cli list``, ``docs/07_BAND_STUDY.md``).
+Run that first if k is meant to be an experimental result rather than an
+inherited one; run this when k is already settled and a materialised cube is
+wanted.
+
 Why mRMR + SPA for this task
 ------------------------------
 • CARS is a regression method (PLS-R); it requires a continuous scalar
