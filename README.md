@@ -49,7 +49,9 @@ pip install -e ".[tracking,figures]"
 pip install -e ".[prep]"
 python scripts/prepare_dataset.py
 
-# 3. Reduce 256 bands to 40, INSIDE each fold (see "Band selection" below)
+# 3. Reduce 256 bands, INSIDE each fold. `select_bands.py` is a build step and
+#    takes k as given; run the band study first if you want k decided by an
+#    experiment rather than inherited (see "How many bands" below).
 python scripts/select_bands.py --per-fold
 
 # 4. Train the default experiment
@@ -96,6 +98,7 @@ src/spectralquadnet/
   losses/, optim/           objectives, param groups, schedules
   reporting/                metrics + CIs, results tree, figures, tables
   experiments/              the ablation grid, protocol sweep, baselines, A9
+  bandstudy/                how many bands? which? which method?  (docs/07)
   tracking/                 console | wandb | tensorboard | multi
 
 scripts/                    thin CLI wrappers over the package
@@ -165,6 +168,37 @@ publishing) or **segmentation failure** (a fixable bug that would explain the wh
 ```bash
 python -m spectralquadnet.experiments.cli analyse --run outputs/seednet_grouped_f0_s42
 ```
+
+### How many bands does this actually need? (no GPU)
+
+Both shipped band selections — the 40-band SPA subset and the per-fold 100-band mRMR one —
+record `"demonstrable": false` in their own elbow files: each curve terminates at its own chosen
+k, so the 98 %-of-peak criterion is satisfied vacuously (CHANGES M-14). Neither number was
+chosen by an experiment that could have returned a different answer.
+
+```bash
+python -m spectralquadnet.bandstudy.cli list    # the plan and its cost; runs nothing
+python -m spectralquadnet.bandstudy.cli all     # the complete analysis, ~2-3 h, resumable
+```
+
+Twelve selection methods — including **evenly spaced** and **random** subsets as nulls — across
+twenty band budgets **up to the full 256**, on three classical proxy families, under the same
+grouped protocol and the same split builder the training runs use. Selectors see training rows
+only; every decision reads `calib`; `val ∪ test` is reachable only from the opt-in `confirm`
+stage, which refuses to run before a recommendation exists.
+
+Produces `outputs/band_study/REPORT.md` with a budget recommendation, its uncertainty, the
+consistently-selected wavelengths, the automated checks that fired, and the arms for the neural
+confirmation:
+
+```bash
+python -m spectralquadnet.bandstudy.cli neural            # print the plan, spend nothing
+python -m spectralquadnet.bandstudy.cli neural --execute  # run it
+```
+
+Neural arms read the **full** cube plus a `data.band_indices_path` index file, so a k-band
+experiment costs a config change rather than one 14 GB reduced cube per cell.
+See [`docs/07_BAND_STUDY.md`](docs/07_BAND_STUDY.md).
 
 ### Baselines and the leakage probe
 
@@ -327,4 +361,5 @@ one that can afford the whole grid.
 | [`docs/04_CURRICULUM_AND_LOSSES.md`](docs/04_CURRICULUM_AND_LOSSES.md) | Objectives and schedules |
 | [`docs/05_EXPERIMENTS_AND_ABLATIONS.md`](docs/05_EXPERIMENTS_AND_ABLATIONS.md) | Diagnostics and logging |
 | [`docs/06_EXECUTION_AND_HARDWARE.md`](docs/06_EXECUTION_AND_HARDWARE.md) | Runtime, DDP, profiling |
+| [`docs/07_BAND_STUDY.md`](docs/07_BAND_STUDY.md) | Spectral dimensionality and band selection |
 | [`docs/config_rename_table.md`](docs/config_rename_table.md) | Config field reference |

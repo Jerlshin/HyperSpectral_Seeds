@@ -54,6 +54,7 @@ Set ``runtime.num_workers=0`` to keep augmentation single-streamed.
 from __future__ import annotations
 
 import random
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -72,6 +73,55 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: so ``engine/batch.py`` can tell "absent" from "all zeros" — and an all-zero
 #: mask is a real and very different thing.
 ABSENT = torch.zeros(0)
+
+
+def _band_selection(data_cfg: DataConfig | Any) -> npt.NDArray[Any] | None:
+    """The band indices ``data.band_indices_path`` names, or ``None``.
+
+    ``None`` — the default — means every band in the stored cube is read, which
+    is the behaviour every configuration had before the band study existed and
+    is what the golden regression gates reproduce.
+
+    When a path *is* given, the indices are validated against
+    ``data.num_bands`` here rather than at the first forward pass. A subset
+    whose length disagrees with the configured band count builds a model with
+    the wrong input width, and a subset paired with the full 256-row wavelength
+    CSV builds one whose λ-aware operators describe bands the input does not
+    contain — both fail late, deep inside a branch, with a shape error that
+    names neither cause.
+
+    Raises:
+        FileNotFoundError: The path is set but the file does not exist.
+        ValueError: The array is not 1-D integer indices, has a length other
+            than ``data.num_bands``, contains duplicates, or is empty.
+    """
+    raw = str(getattr(data_cfg, "band_indices_path", "") or "")
+    if not raw:
+        return None
+
+    path = Path(raw)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"data.band_indices_path={path} does not exist. It is written by "
+            "`python -m spectralquadnet.bandstudy.cli select`; without it the run would "
+            "silently train on all stored bands under a config that says otherwise."
+        )
+
+    idx = np.asarray(np.load(path)).reshape(-1)
+    if not np.issubdtype(idx.dtype, np.integer):
+        raise ValueError(f"{path} must hold integer band indices, got dtype {idx.dtype}")
+    if idx.size == 0:
+        raise ValueError(f"{path} is empty — a zero-band input is not a configuration")
+    if np.unique(idx).size != idx.size:
+        raise ValueError(f"{path} contains duplicate band indices; each band may appear once")
+
+    want = int(getattr(data_cfg, "num_bands", idx.size))
+    if idx.size != want:
+        raise ValueError(
+            f"{path} selects {idx.size} bands but data.num_bands={want}. These must agree: "
+            "num_bands sets the model's input width and the length of the wavelength vector."
+        )
+    return idx.astype(np.int64, copy=False)
 
 
 # `Dataset[tuple[Tensor, Tensor]]` would be the more precise base, but
@@ -156,6 +206,9 @@ class RiceSeedDataset(Dataset):  # type: ignore[type-arg]
         self._masks_path = getattr(store, "masks_path", None)
         self.morph = morph
         self.indices = indices
+        # BS-1. `None` unless `data.band_indices_path` names an array, in which
+        # case every read is sliced to those bands — see `_band_selection`.
+        self._band_idx = _band_selection(data_cfg)
         # The split's labels, resolved once. `__getitem__` needed this value
         # twice per call and `_index_by_class` walked the whole split in a
         # Python loop to rebuild it; one vectorised gather at construction
@@ -266,10 +319,26 @@ class RiceSeedDataset(Dataset):  # type: ignore[type-arg]
         pick = int(torch.randint(0, pool.size - 1, (1,)).item())
         pos = int(pool[pick + 1 if pick >= anchor else pick])
         row = self.indices[pos]
-        partner = torch.from_numpy(np.array(self.patches[row]))
+        partner = torch.from_numpy(self._load_patch(row))
         if not with_mask:
             return partner
         return torch.cat([partner, self._load_mask(row)], dim=0)
+
+    def _load_patch(self, row: int) -> npt.NDArray[Any]:
+        """One patch off the mmap, band-sliced if this dataset is subsetting.
+
+        ``self.patches[row]`` is a *view* — a basic slice of a memmap pages
+        nothing in on its own. The materialising copy is the second index: with
+        no selection that is ``np.array(...)`` over the whole ``(C, H, W)``
+        patch, and with one it is a fancy index that touches only the selected
+        bands' pages. So a 40-of-256 run reads ~16% of the bytes a full read
+        would, which is what makes band subsetting off the 36 GB cube practical
+        rather than merely possible.
+        """
+        view = self.patches[row]
+        if self._band_idx is None:
+            return np.array(view)
+        return np.asarray(view[self._band_idx])
 
     def _load_mask(self, row: int) -> torch.Tensor:
         """The ``(1, H, W)`` fill map for store row ``row``, as float32."""
@@ -392,10 +461,9 @@ class RiceSeedDataset(Dataset):  # type: ignore[type-arg]
         ri = self.indices[idx]
         row_label = int(self.split_labels[idx])
 
-        # np.array(...) copies exactly one patch off the mmap. Do not replace
-        # with a slice or a batched copy — that is what bounds RAM.
-        patch_np = np.array(self.patches[ri])
-        patch = torch.from_numpy(patch_np)
+        # Copies exactly one patch off the mmap. Do not replace with a batched
+        # copy — that is what bounds RAM.
+        patch = torch.from_numpy(self._load_patch(ri))
         label = torch.tensor(row_label, dtype=torch.long)
         n_bands = patch.shape[0]
         mask = self._load_mask(ri) if self.masks is not None else None

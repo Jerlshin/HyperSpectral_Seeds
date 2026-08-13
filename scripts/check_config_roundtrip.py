@@ -211,6 +211,12 @@ INTENDED_ADDITIONS: dict[str, str] = {
         "the ArcFace head is, so a raw-space budget has no meaning there."
     ),
     # ── Tier 4 (IMPROVEMENT_PLAN §4.2) ────────────────────────────────
+    "data.band_indices_path": (
+        "BS-1 — an optional `.npy` of band indices the dataset slices each read "
+        "down to, so a band-budget sweep costs config changes rather than one "
+        "14 GB reduced cube per cell. Empty by default, which reads the stored "
+        "cube unchanged and is what the golden gates reproduce."
+    ),
     "data.groups_path": (
         "T4-1 / P-1 — the per-patch scan id `scripts/prepare_dataset.py` now "
         "writes. Required by the grouped scheme; read under `stratified` too, "

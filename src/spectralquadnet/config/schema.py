@@ -54,6 +54,20 @@ class DataConfig:
     #: FU-4 / P-4. ``(N, 8)`` morphometrics. Consumed by Branch B's descriptor
     #: and by the fifth fusion token. Empty substitutes zeros.
     morphology_path: str = MISSING
+    #: BS-1 / `spectralquadnet.bandstudy`. Path to a ``.npy`` array of int band
+    #: indices into ``patches_data``'s spectral axis. When set, every patch is
+    #: sliced to those bands **as it is read off the mmap**, so a k-band
+    #: experiment costs no new copy of the 36 GB cube — the difference between a
+    #: 20-cell band sweep being a disk-space problem and being a config change.
+    #: Empty (the default) reads the cube exactly as stored, which is the
+    #: pre-band-study behaviour byte for byte.
+    #:
+    #: The array's length must equal :attr:`num_bands`, and
+    #: :attr:`wavelength_path` must name the matching k-row CSV — the dataset
+    #: refuses to run otherwise, because a model whose λ vector describes
+    #: different bands from its input is silently wrong rather than loudly
+    #: broken.
+    band_indices_path: str = ""
     num_bands: int = MISSING
     num_classes: int = MISSING
     max_cutout_bands: int = MISSING
