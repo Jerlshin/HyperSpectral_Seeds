@@ -1,6 +1,15 @@
-"""Training/evaluation engine: epoch loops, TTA, checkpointing, diagnostics."""
+"""Training/evaluation engine: epoch loops, TTA, checkpointing, diagnostics.
+
+:mod:`spectralquadnet.engine.pipelines` is the layer above this one — it builds
+a :class:`~spectralquadnet.engine.pipelines.context.RunContext` and dispatches
+on ``cfg.pipeline``. It is deliberately *not* re-exported here: importing it
+pulls in the model registry and the data layer, and ``engine`` is imported by
+things (the diagnostics, the tests) that need neither.
+"""
 
 from spectralquadnet.engine.checkpoint import (
+    ArchitectureMismatchError,
+    SchemaTooOldError,
     latest_completed_stage,
     load_ckpt,
     load_stage_meta,
@@ -16,6 +25,8 @@ from spectralquadnet.engine.train_epoch import train_one_epoch, train_one_epoch_
 from spectralquadnet.engine.tta import tta_predict
 
 __all__ = [
+    "ArchitectureMismatchError",
+    "SchemaTooOldError",
     "compute_branch_influence",
     "compute_class_difficulty",
     "evaluate",

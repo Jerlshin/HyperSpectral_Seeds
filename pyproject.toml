@@ -32,6 +32,10 @@ dependencies = [
 # Optional experiment-tracking backends (REFACTOR_PLAN.md §4.1). The default
 # `console` tracker needs nothing beyond `rich`, which is a core dependency.
 tracking = ["wandb>=0.16", "tensorboard>=2.14"]
+# Figure rendering for `spectralquadnet.reporting.figures`. Optional because
+# training must not require a plotting stack: every entry point there degrades
+# to "wrote no figures" rather than raising when matplotlib is absent.
+figures = ["matplotlib>=3.7"]
 # Offline dataset preparation only (`spectralquadnet.data.prep.*`): ENVI cube
 # reading, seed segmentation and mRMR/SPA band selection. Training and evaluation
 # never import these, so they stay out of the core dependency set.
@@ -125,3 +129,7 @@ markers = [
     "requires_dataset: needs the real dataset/ or outputs/ artifacts, not run in CI",
     "slow: runs a real multi-epoch stage on synthetic data; minutes, not seconds",
 ]
+
+[tool.pytest]
+# `tests/smoke/` holds the end-to-end tier — see tests/smoke/test_end_to_end.py.
+# It is marked `slow` and therefore opt-in, like the other two heavy tiers.

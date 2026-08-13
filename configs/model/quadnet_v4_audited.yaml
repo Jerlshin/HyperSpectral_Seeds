@@ -1,14 +1,45 @@
-# SpectralQuadNet v4 — 4 branches + morphology token + bilinear fusion + 4 auxiliary heads.
+# SpectralQuadNet v4 — the AUDITED baseline. 4 branches + morphology token +
+# bilinear fusion + 4 auxiliary heads, 5.19 M parameters, ≈4.06 GFLOP/sample.
+#
+# ══════════════════════════════════════════════════════════════════════
+#  This file reproduces the architecture of run `stratified_benchmark_rtx3060`
+#  exactly, and it is kept for one reason: it is the CONTROL ARM.
+#
+#  CHANGES §14 removes Branch A, Branch D, the bilinear fusion term, the
+#  sub-centres and the asymmetric branch dropout. Ablations A3 (is the
+#  four-branch design justified?) and A8 (do Stages 2-3 add anything?) are the
+#  experiments that decide whether those removals were right. Deleting the
+#  thing an ablation exists to falsify would make every removal unfalsifiable,
+#  which is the exact defect this revision is correcting — so nothing here is
+#  tuned, softened or "improved". Point `model=seed_net` at the replacement.
+# ══════════════════════════════════════════════════════════════════════
 defaults:
   - base_model
   - _self_
 
+arch: spectral_quadnet
+
 # ── Global architecture ───────────────────────────────────────────────
-# BR-3 / T3-2 inverted the branch-drop profile: the strength stays here, the
-# per-branch ratio moved to `models/spectral_quadnet.py::BRANCH_DROP_PROFILE`.
-# At 0.20 the realised rates are (0.15, 0.15, 0.0, 0.15) — drop the branches
-# another branch can reconstruct, never the one that sees the full cube.
+# The audited asymmetric profile, stated explicitly rather than inherited from
+# a module default. At 0.20 the realised rates are (0.15, 0.15, 0.0, 0.15):
+# Branch C is never dropped and the other three are absent 15% of the time.
+#
+# CHANGES §5.2 is why this is now written down instead of assumed. The policy
+# taught the fusion gate to route onto the one branch that never vanishes, so
+# Branch C's 87.4% end-state influence is CONFOUNDED and cannot be read as
+# "C is intrinsically best". A3 re-runs this comparison with
+# `branch_drop_profile: [1, 1, 1, 1]`, which is what makes it a measurement of
+# the branches rather than of the dropout policy.
 branch_drop_prob: 0.20
+branch_drop_profile: [0.75, 0.75, 0.0, 0.75]
+enabled_branches: [a, b, c, d]
+fusion_mode: bilinear_gate
+
+# Sub-centres. The log records `worst within-class sub-centre cosine 0.987` at
+# Stage-2 entry: spherical k-means over real embeddings could not find three
+# separated modes, so K=3 triples the head's parameters and adds a KL term
+# whose job is to keep degenerate structure alive (~22 samples per sub-centre).
+# Kept at 3 here because this is the audited arm; the replacement uses K=1.
 subcenter_K: 3
 
 # ── Sub-centre assignment (HD-2 / T2-9) ───────────────────────────────
@@ -71,3 +102,21 @@ specf_drop: 0.15
 fusion_rank: 128
 fusion_gate_hidden: 128
 fusion_drop: 0.10
+
+# ── Keys this architecture does not read ──────────────────────────────
+# Present because the schema is shared with `seed_net`. `spatial_width_mult`
+# does apply here (it scales Branch C's tail, which is A10's lever on either
+# architecture); `spectral_hidden` and `aux_head_weight` belong to
+# SpectralSeedNet's spectral path and single auxiliary head.
+spatial_width_mult: 1.0
+spectral_hidden: 256
+aux_head_weight: 0.2
+
+# ── Head elaborations — ON here, because this is the audited arm ──────
+# Both were active in the run under audit and both are UNJUSTIFIED by it
+# (CHANGES §5.4): the per-class margin vector took over at Stage-2 epoch 21 and
+# the selected checkpoint was epoch 19, so it was never active at the model
+# that was reported; the pairwise penalty was fitted on the same split that
+# selected the checkpoint. A7 measures each in isolation.
+per_class_margin: true
+pairwise_penalty: true

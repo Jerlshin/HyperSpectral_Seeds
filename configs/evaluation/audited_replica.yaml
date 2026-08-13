@@ -1,0 +1,20 @@
+# The audited run's reporting protocol, reproduced so it can be COMPARED
+# rather than argued about.
+#
+# Selection and reporting on `val`, which is also where the per-class margins,
+# the confusion matrix Omega, the CDWS weights and the Phase-3 oversampling
+# weights were fitted (`calib_frac: 0.0`). CHANGES §4.4: one 1,294-patch split
+# carrying 270+ fitted parameters, the checkpoint decision AND the headline
+# number.
+#
+# Use this only for the A1/A8 replication arms. It is not a defensible
+# reporting protocol and the run banner says so.
+defaults:
+  - base_evaluation
+  - _self_
+
+select_split: val
+report_split: test
+tta: true
+bootstrap_samples: 2000
+save_artifacts: true

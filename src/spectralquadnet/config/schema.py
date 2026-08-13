@@ -81,6 +81,21 @@ class DataConfig:
     #: split that also selects the checkpoint (C-9). The plan's 60/10/15/15
     #: is ``split_eval_frac=0.30`` with ``calib_frac ≈ 0.143``.
     calib_frac: float = MISSING
+    #: IC-3 / CHANGES §19.1. What ``grouped`` does about a class captured in a
+    #: single scan: ``error`` refuses and names them, ``patch_split`` accepts a
+    #: patch-level split for those classes and records the leak in the report.
+    #: The protocol section of the paper specifies ``error`` — "refuse to
+    #: silently accept a leak".
+    single_group_policy: str = MISSING
+    #: IC-14. ``(N, 2, S, S)`` per-pixel ``(mean, sd)`` along λ, written by
+    #: ``scripts/prepare_dataset.py``. **Never an input to any model**, and that
+    #: is deliberate rather than an oversight: it is the per-pixel brightness
+    #: the SNV divided out, which is also the strongest single carrier of
+    #: acquisition-bundle identity (CHANGES §3.3). It is consumed by
+    #: ``spectralquadnet.experiments.leakage``, which uses it to *measure* how
+    #: much bundle identity the pipeline could exploit. Empty disables that
+    #: probe; nothing else reads the key.
+    gain_path: str = MISSING
 
     # ── Same-class CutMix geometry (OP-6 / T2-7) ──────────────────────
     #: Width, in bands, of the contiguous wavelength window swapped between
@@ -99,15 +114,48 @@ class DataConfig:
 
 @dataclass
 class ModelConfig:
-    """Architecture knobs consumed by ``SpectralQuadNet.__init__``.
+    """Architecture knobs consumed by the model constructors.
 
     Every key here is read on the forward path and
     ``tests/unit/test_config_wiring.py`` proves it by perturbing each one and
     watching the model react — the §4.3 gate that would have caught all five
     dead paths of §2.7 automatically.
+
+    Since CHANGES IC-10 this group serves **two** architectures, selected by
+    :attr:`arch`. Keys belonging to a branch the selected architecture does not
+    have are simply unread by it; the wiring test excuses them per-architecture
+    rather than globally, so a key that is dead in *both* is still caught.
     """
 
+    #: IC-10. Which network :func:`~spectralquadnet.models.registry.build_model`
+    #: constructs.
+    #:
+    #: * ``spectral_quadnet`` — the audited four-branch v4 model (5.19 M
+    #:   parameters). Retained unchanged because ablations A3 and A8 need it as
+    #:   the control arm; removing it would make the removals unfalsifiable.
+    #: * ``spectral_seed_net`` — CHANGES §16.2. Two pathways, concat + MLP,
+    #:   K=1 head, one auxiliary head. ≈2.8 M parameters, ≈1.4 GFLOP.
+    arch: str = MISSING
+
     branch_drop_prob: float = MISSING
+    #: A3 / CHANGES §5.2. Per-branch drop *ratio* for ``(A, B, C, D)``, scaled
+    #: by :attr:`branch_drop_prob`. The audited run used ``(0.75, 0.75, 0, 0.75)``
+    #: — Branch C never dropped, the other three absent 15% of the time — which
+    #: did not regularise the fusion gate so much as teach it that three of its
+    #: four inputs were unreliable. Branch C's 87% influence is therefore
+    #: confounded and cannot be read as "C is intrinsically best". The default
+    #: is now **symmetric**, so A3 measures the branches rather than the policy.
+    branch_drop_profile: list[float] = field(default_factory=lambda: [1.0, 1.0, 1.0, 1.0])
+    #: A3. Which of the four branches are constructed at all. Dropping a branch
+    #: here removes its parameters, its auxiliary head and its fusion modality,
+    #: so a ``["b", "c"]`` arm is genuinely the smaller model rather than the
+    #: full one with a tensor multiplied by zero.
+    enabled_branches: list[str] = field(default_factory=lambda: ["a", "b", "c", "d"])
+    #: A5 / CHANGES §5.3. How the modality tokens are combined.
+    #: ``bilinear_gate`` is the audited rank-128 second-order pool over all ten
+    #: pairs; ``gate`` keeps the sigmoid gate and drops the bilinear term;
+    #: ``concat_mlp`` is the §16.2 replacement.
+    fusion_mode: str = MISSING
     subcenter_K: int = MISSING
     #: Soft-to-hard sub-centre assignment temperature (HD-2(i) / T2-9). The
     #: class cosine is ``tau * logsumexp(cos_k / tau)``, annealed from
@@ -165,6 +213,33 @@ class ModelConfig:
     #: FU-1(b)/FU-2. Hidden width of the gate MLP, which reads the five
     #: normalised tokens *and* the five pre-normalisation log-norms.
     fusion_gate_hidden: int = MISSING
+
+    # ── SpectralSeedNet (IC-10 / CHANGES §16.2) ───────────────────────
+    #: A10. Multiplier on the spatial path's ResBlock widths. 1.0 is the
+    #: §16.2 network; A10 sweeps {0.5, 0.75, 1.0, 1.5} to answer "is 5.19 M too
+    #: big" with data instead of intuition.
+    spatial_width_mult: float = MISSING
+    #: Hidden width of the spectral path's MLP over
+    #: ``[index bank ‖ continuum depths ‖ SNV(x̄) ‖ D₁ ‖ D₂ ‖ morph]``.
+    spectral_hidden: int = MISSING
+    #: IC-5 / CHANGES §7.1. Fixed weight on the single auxiliary head attached
+    #: to the spatial path. Fixed, not scheduled and not GradNorm-controlled:
+    #: four heads under a saturating controller made the auxiliary term ≈7.8×
+    #: the main classification loss at epoch 20, so the fused head — the only
+    #: path that produces an evaluation logit — was ≈11% of the gradient.
+    aux_head_weight: float = MISSING
+
+    # ── Head elaborations, off by default (IC-9, gated by A7) ─────────
+    #: Whether ``update_margins_from_pr`` is called at all. The signed rule is
+    #: better reasoned than the usual F1-driven one, but Stage 2's best epoch
+    #: was 19 and the per-class vector took over at 21 — it was never active at
+    #: the selected checkpoint (CHANGES §5.4). Kept in code, off by default,
+    #: measured by A7.
+    per_class_margin: bool = MISSING
+    #: Whether the pairwise confusion penalty ``-δ·Ω[y, c]`` is fitted and
+    #: applied. Fitted on the selection split in the audited run, never
+    #: ablated, aimed at hard classes that never moved. A7 arm 4.
+    pairwise_penalty: bool = MISSING
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -323,6 +398,128 @@ class Stage3Config:
     #: raw-space budget is spent flattening the classifier rather than the
     #: representation.
     sam_adaptive: bool = MISSING
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  SINGLE STAGE — the collapsed curriculum (IC-11 / CHANGES §17)
+# ══════════════════════════════════════════════════════════════════════
+
+
+@dataclass
+class SingleStageConfig:
+    """One stage, one objective, one schedule.
+
+    Stages 2 and 3 consumed 65% of the audited run's 18.7-hour wall clock and
+    moved validation macro-F1 by +0.005 — 6.5 samples of a 1,294-sample split,
+    against a ±0.020 sampling CI (CHANGES §9.3). The *only* thing Stage 2 did
+    that Stage 1 did not was introduce a non-zero angular margin, and a margin
+    is incompatible with mixup, which is why they were separated in the first
+    place.
+
+    This group achieves the same transition inside one stage: mixup runs to
+    :attr:`mixup_epochs`, then a single global margin warms in over
+    :attr:`margin_warmup_start`…:attr:`margin_warmup_end`. One optimiser state,
+    one schedule, no EMA re-initialisation, ~45 min/run instead of 19 h — which
+    is the real prize, because it converts a project that can afford one run
+    into one that can afford forty.
+
+    The three-stage modules are **not** deleted; ``pipeline=three_stage``
+    still reaches them, because A8 is the experiment that decides whether this
+    collapse was correct.
+    """
+
+    epochs: int = MISSING
+    batch: int = MISSING
+    accum: int = MISSING
+    patience: int = MISSING
+
+    # ── Optimiser ─────────────────────────────────────────────────────
+    max_lr: float = MISSING
+    min_lr: float = MISSING
+    warmup_ep: int = MISSING
+    dropout: float = MISSING
+
+    # ── Objective ─────────────────────────────────────────────────────
+    label_smooth_hi: float = MISSING
+    label_smooth_lo: float = MISSING
+    #: 0.0 is plain CE. CHANGES §7.4: focal γ addresses 1000:1 foreground/
+    #: background imbalance; here the imbalance is 96:91, so γ>0 is
+    #: down-weighting easy examples rather than correcting anything. Ablate
+    #: (A11-adjacent) before re-adding.
+    focal_gamma: float = MISSING
+    aux_loss_weight: float = MISSING
+
+    # ── Regularisation ────────────────────────────────────────────────
+    #: Mixup α. The one demonstrably load-bearing regulariser in the audited
+    #: run: switching it off moved training accuracy 42% → 96.6% in a single
+    #: epoch while validation did not move at all (CHANGES §5.5).
+    mixup: float = MISSING
+    #: Last epoch mixup is active. Mixup and a non-zero margin are mutually
+    #: exclusive by construction, so this is also when the margin may start.
+    mixup_epochs: int = MISSING
+    #: Single augmentation profile for the whole run. The three-phase
+    #: curriculum's profiles differed by 2–4 percentage points of trigger
+    #: probability; the only real transition it encoded was the mixup switch.
+    aug_profile: str = MISSING
+
+    # ── Head schedule ─────────────────────────────────────────────────
+    #: Target global margin. Warmed 0 → this over the window below. At 0 the
+    #: head is NormFace, which is what Stage 1 already ran.
+    arcface_m: float = MISSING
+    arcface_s: float = MISSING
+    margin_warmup_start: int = MISSING
+    margin_warmup_end: int = MISSING
+
+    # ── Optional Phase B — only if A6 earns it (CHANGES §17) ──────────
+    #: Epochs of ``CE + supcon_weight · SupCon`` appended after the main run,
+    #: with a class-balanced sampler. 0 disables it, which is the default until
+    #: A6 reports a gain exceeding run-to-run variance.
+    supcon_epochs: int = MISSING
+    supcon_weight: float = MISSING
+    supcon_temp: float = MISSING
+    #: Class-balanced batch composition for the SupCon phase: ``n_cls × n_spc``.
+    bal_n_cls: int = MISSING
+    bal_n_spc: int = MISSING
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  EVALUATION — what is selected on, and what is reported (CHANGES §19)
+# ══════════════════════════════════════════════════════════════════════
+
+
+@dataclass
+class EvaluationConfig:
+    """Which split selects the checkpoint and which one is scored at the end.
+
+    This group exists because the audited run's single largest statistical
+    defect was that these were the same split. ``calib_frac=0.0`` put the
+    per-class margins, the confusion matrix, the CDWS weights *and* the Phase-3
+    oversampling weights on ``val``, then selected the checkpoint on ``val``,
+    then reported the number from ``val`` (CHANGES §4.4). With ~472 epochs ×
+    {live, EMA} that is a maximum over ~944 correlated draws, worth an expected
+    +0.042 macro-F1 of pure selection bias — an order of magnitude more than
+    everything Stages 2 and 3 produced.
+    """
+
+    #: Split the per-epoch checkpoint decision reads. ``calib`` is the protocol
+    #: CHANGES §19.1 specifies; ``val`` reproduces the audited behaviour and is
+    #: kept so the two can be compared rather than argued about.
+    select_split: str = "calib"
+    #: Split scored once, after every design decision is frozen. ``val_test``
+    #: is §19.1's rule for the grouped protocol, where val and test are two
+    #: halves of one held-out bundle and are therefore *not* independent of
+    #: each other: they must be treated as one held-out set. ``test`` is the
+    #: stratified arm's convention.
+    report_split: str = "val_test"
+    #: Score with and without the 12-view TTA, reporting both separately.
+    tta: bool = True
+    #: Bootstrap resamples behind the reported metric's confidence interval.
+    #: 0 disables. Sampling noise on a ~1,300-patch split is ±0.020 at 95%, and
+    #: a delta quoted without it is not interpretable (CHANGES §4.5).
+    bootstrap_samples: int = 2000
+    #: Write the 90×90 confusion matrix, the per-class table and the run's
+    #: metric JSON under ``output_dir/results/``.
+    save_artifacts: bool = True
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -544,16 +741,29 @@ class ExperimentConfig:
     stage1: Stage1Config = MISSING
     stage2: Stage2Config = MISSING
     stage3: Stage3Config = MISSING
+    single: SingleStageConfig = MISSING
     tracking: TrackingConfig = MISSING
     #: Execution knobs. Defaulted rather than MISSING so a config written
     #: before this group existed still composes — and still runs the same
     #: numbers, since nothing here is allowed to change one.
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
+    #: Selection/reporting protocol. Defaulted for the same reason
+    #: :class:`RuntimeConfig` is: a config that never mentions it is not
+    #: under-specified, it is asking for CHANGES §19's rules.
+    evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
 
     # ── Run identity & output location ────────────────────────────────
     run_name: str = MISSING
     output_root: str = MISSING
     output_dir: str = MISSING
+
+    # ── Curriculum selection (IC-11) ──────────────────────────────────
+    #: ``single`` runs :mod:`~spectralquadnet.engine.stages.single_stage`
+    #: (CHANGES §17); ``three_stage`` runs the audited Stage 1 → 2 → 3
+    #: pipeline, which A8 needs as its control arm. ``stage1_only`` and
+    #: ``stage1_stage2`` are A8's other two arms — the same three-stage driver,
+    #: stopped early, so the arms differ in exactly one thing.
+    pipeline: str = MISSING
 
     # ── Shared training knobs ─────────────────────────────────────────
     weight_decay: float = MISSING
@@ -593,6 +803,8 @@ def register_configs() -> None:
     cs.store(group="stage1", name="base_stage1", node=Stage1Config)
     cs.store(group="stage2", name="base_stage2", node=Stage2Config)
     cs.store(group="stage3", name="base_stage3", node=Stage3Config)
+    cs.store(group="single", name="base_single", node=SingleStageConfig)
     cs.store(group="tracking", name="base_tracking", node=TrackingConfig)
     cs.store(group="runtime", name="base_runtime", node=RuntimeConfig)
+    cs.store(group="evaluation", name="base_evaluation", node=EvaluationConfig)
     cs.store(name="base_experiment", node=ExperimentConfig)

@@ -1,0 +1,24 @@
+# The reporting protocol (CHANGES §19.1, §19.4).
+#
+# Select on `calib`. Score `val ∪ test` ONCE, after every design decision is
+# frozen. Never report a maximum.
+#
+# Under `grouped` the dataset gives two class-pure bundles per variety, so
+# three-way group disjointness is mathematically impossible: `val` and `test`
+# are two halves of the SAME held-out bundle and are therefore not independent
+# of each other. Selecting on `val` and reporting `test` would still be
+# partially self-fulfilling. Treating them as one held-out set scored once, with
+# selection on a calibration split carved from train, is the only arrangement
+# this dataset supports honestly.
+defaults:
+  - base_evaluation
+  - _self_
+
+select_split: calib
+report_split: val_test
+tta: true
+# Sampling noise on a ~1,300-patch split is ±0.020 at 95%. A delta quoted
+# without it is not interpretable, and every delta in the audited run was
+# smaller than the noise it was never compared against.
+bootstrap_samples: 2000
+save_artifacts: true

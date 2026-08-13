@@ -20,7 +20,7 @@ truncated to the first $n_{\text{spatial}}$. At $n_{\text{spatial}} = 8$ this is
 symmetry group of the square — correct for this problem, since a segmented seed patch has no
 canonical orientation (§2.3 sorts regions by centroid, not by pose).
 
-### Spectral views — gain about the *foreground* mean, re-masked (T1-1)
+### Spectral views — gain about the *foreground* mean, re-masked
 
 $$
 s_j = 0.95 + \frac{0.10\,j}{n_{\text{spectral}} - 1},\quad j = 0,\dots,3
@@ -42,16 +42,12 @@ result is explicitly **re-masked** afterwards — the test-time analogue of the 
 identity spatial view; with $n_{\text{spectral}}=4$ no scale lands exactly on $1.0$, so all four
 survive.
 
-> **This is a correctness fix (T1-1), not a cosmetic change.** An earlier version of this
-> transform took the mean over the *whole* patch, including the zero background, and did not
-> re-mask afterward — which moved the background off exactly-zero (breaking every downstream
-> mask-by-testing-for-zero operator: `MaskedSpectralECA`, `extract_grid_spectra_multi`,
-> `masked_mean_spectrum`) and shifted the true foreground mean by a factor of the foreground area
-> fraction, putting the view off the training manifold. The corrected transform reads the mean
-> over foreground pixels only and re-masks the result, so all four spectral views stay
-> consistent with what every masked module in the model assumes about its input. The measured
-> effect of the fix on the recorded reference numbers is below; `tests/unit/test_tta.py` pins the
-> corrected transform.
+**Re-masking after the gain is applied is required, not cosmetic.** Taking the mean over the
+whole patch — including the zero background — would shift the effective mean by a factor of the
+foreground area fraction and put the view off the training manifold; skipping the re-mask
+afterward would move the background off exactly zero, breaking every downstream
+mask-by-testing-for-zero operator (`MaskedSpectralECA`, `extract_grid_spectra_multi`,
+`masked_mean_spectrum`). `tests/unit/test_tta.py` pins the foreground-only, re-masked transform.
 
 ### Ensembling rule
 
@@ -85,35 +81,19 @@ table, and writes three arrays to `cfg.output_dir`:
 Any reported metric is therefore recomputable from disk without re-running inference — which
 is exactly what `test_recorded_test_predictions_match_their_reported_metrics` does.
 
-### Recorded outcome (pre-Tier-3 reference checkpoint, re-scored through the corrected transform)
-
-| Protocol | Macro F1 | Weighted F1 | Accuracy | $\Delta$ Macro F1 |
-|---|---:|---:|---:|---:|
-| Single view | 0.8770 | 0.8776 | 0.8779 | — |
-| 12-view TTA (corrected spectral transform, T1-1) | **0.8889** | — | — | **+0.0119** |
-
-> **Provenance.** The `outputs/output_v12_spa40/` run was produced under the pre-Tier-3
-> architecture, and its checkpoints do not load into the current schema-v3 model (§3.8) — there is
-> currently no way to regenerate a TTA number against the architecture this document otherwise
-> describes. `outputs/` is git-ignored and the directory is not present in this tree (§5.4).
-> The original console log for this run reported **0.8933** macro-F1 under TTA; that number was
-> produced by the *pre-T1-1* spectral view (whole-patch mean, no re-mask — the bug described
-> above), which additionally left every masked module reading a filled frame rather than a
-> foreground-aware one. Re-scoring the identical checkpoint's recorded logits through the
-> corrected transform gives **0.8889**, $+0.0119$ over the single-view result rather than
-> $+0.0163$; the single-view row itself is unaffected by the fix. Paired bootstrap on the
-> before/after TTA difference: $-0.0046$, 95% CI $[-0.0151,+0.0056]$, $p=0.40$ — within noise, but
-> 0.8889 is what a fresh evaluation against this checkpoint under the current code actually
-> produces, and is the number to cite.
-
-Per-class outcome recorded against this checkpoint under TTA (as originally logged, precise
-per-class breakdown not re-run against the corrected transform): 23 of 90 classes at
-$F_1=1.000$, none below $0.50$, hardest five = 49 (0.519), 52 (0.533), 41 (0.538), 51 (0.629),
-37 (0.640).
-
 ---
 
 ## 5.2 Diagnostic metrics
+
+> **IC-2 — both series are now logged.** Emitting only the weighted term made
+> this panel unreadable: $\omega_b$ is non-stationary and spends most of
+> training pinned at a clip bound, so `loss/branch_a` collapsing from 11 to ~1
+> at epoch 10 was *the weight hitting its 0.25 floor*, not Branch A learning.
+> Cross-check: at epoch 10 overall training accuracy was 15.9%, and an aux CE
+> of 1.0 would imply that branch alone was at ~70% train accuracy — the two are
+> irreconcilable, and the weighted-quantity reading resolves it. See
+> CHANGES.md §10.2.
+
 
 All three diagnostics are deliberately *wrappers over quantities the training loop already
 computes*, not new statistics — `tests/unit/test_diagnostics.py` enforces that.
@@ -223,7 +203,9 @@ Both epoch loops accumulate diagnostics as on-device tensors and resolve them **
 epoch** in a single `torch.stack(...).cpu()`:
 
 $$
-\overline{\text{loss/branch}_b} = \frac{1}{n_{\text{aux}}}\sum_{\text{steps}} \omega_b\mathcal{L}_b,
+\overline{\text{loss/branch}_b\text{\_weighted}} = \frac{1}{n_{\text{aux}}}\sum_{\text{steps}} \omega_b\mathcal{L}_b,
+\qquad
+\overline{\text{loss/branch}_b\text{\_raw}} = \frac{1}{n_{\text{aux}}}\sum_{\text{steps}} \mathcal{L}_b,
 \qquad
 \overline{\text{grad\_norm/}\cdot} = \frac{1}{n_{\text{clip}}}\sum_{\text{opt steps}} g_{\cdot}
 $$
@@ -296,16 +278,14 @@ Deliberate design points:
    and no cursor motion. A redrawing bar is legible only where the console is *interactive*;
    an SSH session piped to a file gets thousands of overwritten half-lines, and a Kaggle/Colab
    cell reports a TTY it cannot drive, so `rich` appends every frame instead of repainting one.
-   Rendering per environment meant three renderings of one run and three sets of bugs.
-   `runtime.progress` therefore no longer selects a rendering — only `off` (suppress the epoch
-   line) is distinguishable; `bar`/`rows` are accepted as legacy spellings and both render the
-   line.
+   `runtime.progress` therefore does not select a rendering — only `off` (suppress the epoch
+   line) is distinguishable; `bar`/`rows` are accepted spellings and both render the line.
 2. **The prefix and the clocks belong to the tracker, not the caller.** `progress_start(tag,
    total, description)` opens a *span* — the stage's label and epoch budget — and `log_row`
    builds `[Stage 1 | Ep 181/400]`, `Time` (elapsed since the tracker was built, continuous
    across stages) and `ETA` (extrapolated from the current span alone) from it. `progress_stop`
-   reports where the stage actually ended, which for an early-stopped stage is the number the
-   old bar threw away by completing itself to its total.
+   reports where the stage actually ended, which for an early-stopped stage is the number that
+   completing the stage to its configured total would otherwise discard.
 3. **Cells are `key: value`, markers are `key value`, and empty cells are absent.** `ckpt ✓`
    appears only on epochs that saved one — that is what makes `grep ckpt training.log` the list
    of improvements — and `stale: 3/50` (epochs without improvement, against `stage1.patience`)
@@ -319,9 +299,7 @@ Deliberate design points:
    stream whose encoding cannot carry them.
 5. **Every line is mirrored into `training.log`** via the `spectralquadnet.console` logger,
    which `train.py` points at the file handler alone (`propagate=False`), so the file is the
-   record of the run and the terminal still gets exactly one copy. Before this the file held
-   only crashes: the tracker wrote to stdout, and the file handler only ever saw `logging`
-   records.
+   record of the run and the terminal still gets exactly one copy.
 6. **Scalars are quiet by default** — the epoch summary arrives via `log_row`; per-branch
    diagnostics arrive via `log_scalars` and are meant to be read as curves. Rendering both
    would print every epoch twice. `tracking.show_diagnostics=true` echoes them.
@@ -341,7 +319,7 @@ Every key any backend receives, by producer:
 
 | Producer | Keys |
 |---|---|
-| `train_one_epoch` / `_sam` | `loss/branch_{a,b,c,d}`, `grad_norm/{branch_a,branch_b,branch_c,branch_d,cross_interaction,arcface_head}`, `grad_norm/preclip_{head,fusion,backbone}`, `train/{steps,skipped_batches,epoch_s}`; `sam/grad_cos` from the SAM loop only |
+| `train_one_epoch` / `_sam` | `loss/branch_{a,b,c,d}_{raw,weighted}` (IC-2), `grad_norm/{branch_a,branch_b,branch_c,branch_d,cross_interaction,arcface_head}`, `grad_norm/{preclip,postclip,clipped}_{head,fusion,backbone}` and `grad_norm/clip_fraction` (IC-6), `train/{steps,skipped_batches,epoch_s}`; `sam/grad_cos` from the SAM loop only |
 | Stage 1 | `train/{loss,acc}`, `val/{f1_live,acc_live,f1_ema,acc_ema,f1_best}`, `sched/{lr,label_smooth,aux_weight,subcentre_tau,phase}` |
 | Stage 2 | `train/{loss,acc}`, `val/{…}`, `sched/{head_lr,back_lr,arcface_margin,supcon_weight,proto_weight,subcentre_tau}`, `margin/{mean,min,max}` |
 | Stage 3 | `train/{loss,acc}`, `val/{f1_live,acc_live,f1_ema,acc_ema,f1_best}`, `sched/{lr,margin_kappa,arcface_margin,supcon_weight,proto_weight}`, `swa/{n_snapshots,n_rejected,f1_running}`, then once at stage end `swa/{f1,acc}` and `ema/{f1,acc}` |
@@ -359,35 +337,12 @@ scalars.
 
 ---
 
-## 5.4 The recorded reference run
+## 5.4 Checkpoint bundle, auto-resume and selection
 
-The `outputs/output_v12_spa40/` run is a complete three-stage run — three checkpoints, three JSON
-sidecars, three prediction arrays and a baseline console log.
-
-> **It is not in this repository.** `outputs/` (and `*.pth`) are git-ignored, so the run directory
-> was never tracked, and it is not present in the working tree either. The table below is the
-> transcribed record of that run, not something a reader can re-derive from a checkout; it is kept
-> because it is the last complete three-stage run on file. Everything else in these documents *is*
-> derived from tracked sources.
-
-| Stage | Epoch saved | val Macro F1 | val Acc | Extra metadata |
-|---|---:|---:|---:|---|
-| 1 | 488 / 600 | 0.8877 | 0.8872 | `class_f1`, `cdws_weights`, `phase3_class_f1` (90 entries each), `arcface_init_done=false` |
-| 2 | 50 / 150 | 0.8867 | 0.8864 | `class_f1`, `cdws_weights`, `s2_val_f1` |
-| 3 | 120 / 120 | 0.8745 | 0.8748 | `swa_n_snapshots=15`, `swa_n_rejected=0`, `note` |
-
-Checkpoint selection ranks Stage 1 highest, so the reported test numbers come from
-`best_stage1.pth`. Stage 3's own sidecar records the outcome: *"val_f1 did not beat Stage 2;
-Stage 2 ckpt preferred for eval."* The `488 / 600` denominator is that run's `stage1.epochs`; the
-shipped config now runs 400 (§4.1), which is why the recorded Stage-1 best sits past the current
-budget.
-
-> **Schema provenance.** This run predates both Tier 2's unified head (HD-1/T2-10) and Tier 3's
-> branch redesign — its checkpoints carry a `linear_head` this model no longer has, and
-> `load_ckpt` refuses to load any of them today (`SchemaTooOldError`, §3.8), since Tier 3 changed
-> what three of the four branches *consume*, not merely their parameter counts. The metrics
-> table above is preserved as the historical record of the pre-Tier-3 pipeline; it is not
-> reproducible against the current model, and cannot be until a fresh three-stage run completes.
+A run produces, per stage, a checkpoint `best_stage{n}.pth` and a JSON sidecar
+`stage{n}_meta.json` under `cfg.output_dir`. `outputs/` is git-ignored, so no run artifacts are
+tracked in this repository; the mechanics below describe how any run's artifacts are structured
+and selected, independent of whether one currently exists on disk.
 
 ### Auto-resume semantics
 
@@ -397,7 +352,7 @@ the stage rather than skipping it. Pointing `output_dir` at a directory with all
 runs final evaluation only:
 
 ```
-python train.py output_dir=outputs/output_v12_spa40
+python train.py output_dir=<existing_run_dir>
 ```
 
 ### Checkpoint bundle schema
@@ -407,13 +362,12 @@ $$
 \texttt{val\_f1}, \texttt{val\_acc}, \texttt{use\_arcface}, \texttt{schema\_version}\} \cup \texttt{metadata}
 $$
 
-`schema_version` is currently **3** (§3.8) — bundles missing the key (every checkpoint written
-before Tier 2) are read as version 1. `use_arcface` is written as a constant `True` in every
-fresh bundle, kept only for legacy readers (`scripts/phase0_*.py`, the resume banner); nothing
-internal branches on it since HD-1 left exactly one head to select. `metadata` includes
-`best_source ∈ {"live","ema","swa"}`, recording which weight set actually produced the recorded
-`val_f1` — bundles predating this field (pre-Tier-1) default to `"ema"`, matching their actual
-production behaviour.
+`schema_version` is 3 (§3.8); a bundle missing the key is read as version 1. `use_arcface` is
+written as a constant `True` in every fresh bundle, kept for legacy readers
+(`scripts/phase0_*.py`, the resume banner); nothing internal branches on it since there is
+exactly one head to select. `metadata` includes `best_source ∈ {"live","ema","swa"}`, recording
+which weight set actually produced the recorded `val_f1`; a bundle missing this field defaults
+to `"ema"`.
 
 The JSON sidecar is the bundle minus `model`/`ema`, filtered to JSON-serialisable values.
 `load_stage_meta` re-integerises string keys, because JSON stringifies them and
@@ -429,8 +383,24 @@ distributed (DDP) training — is in `06_EXECUTION_AND_HARDWARE.md`.
 
 ## 5.5 Ablation surface
 
-The system exposes ablations through Hydra overrides — no code changes required. Nothing below
-has been executed in this repository; the table documents the *lever*, not a result.
+> **This section's own warning came true.** It documented 21 levers and said "nothing below has
+> been executed"; that remained true through the entire audited run, so not one of the design
+> hypotheses behind four branches, three stages and eleven auxiliary mechanisms was ever tested.
+> CHANGES §20 turned the levers into a **declared grid with pre-registered decision rules**:
+>
+> ```bash
+> python -m spectralquadnet.experiments.cli list          # the grid, its cost, its ordering
+> python -m spectralquadnet.experiments.cli ablate A12    # RUN THIS FIRST — run-to-run variance
+> python scripts/run_protocol.py                          # 2 folds x 3 seeds + the contrast arm
+> ```
+>
+> The levers below are still the mechanism; `spectralquadnet.experiments.registry` is now the
+> place that says *which combinations constitute an experiment, and what reads its output*.
+> **Run A12 first**: until run-to-run variance is measured, no delta from any lever here means
+> anything, and every delta the audited run reported was smaller than a variance nobody had
+> measured.
+
+The system exposes ablations through Hydra overrides — no code changes required.
 
 | Ablation | Override | Mechanism |
 |---|---|---|
@@ -450,10 +420,19 @@ has been executed in this repository; the table documents the *lever*, not a res
 | Margin annealing off | `stage3.margin_kappa_final=1.0` | freezes Stage 2's calibrated margin vector for the whole of Stage 3 |
 | SWA transient rejection off | `stage3.swa_warmup_cycles=0` | the first post-Adam-warmup cycle becomes a candidate immediately |
 | Greedy SWA off | `stage3.greedy=false` | every cycle-end candidate is accepted unconditionally |
-| Split protocol | `data=spa40_90class_pfix` | scan-disjoint (`grouped`) split + calibration split, instead of the leaky `stratified` reference protocol (§2.8) |
+| Split protocol | `data=spa40_90class_pfix` | scan-disjoint (`grouped`) split + calibration split, instead of the patch-level, scan-leaky `stratified` split (§2.8) |
 | TTA views | `tta_spatial=…` `tta_spectral=…` | 1–8 dihedral views, 0–$n$ spectral gains |
 | Multi-GPU | `runtime.multi_gpu=ddp` (with `torchrun`) | see `06_EXECUTION_AND_HARDWARE.md` |
 | Sweeps | `python train.py -m stage1.max_lr=1e-4,5e-4,1e-3` | Hydra multirun into `outputs/multirun/` |
+| **Architecture** (IC-10) | `model=seed_net` / `model=quadnet_v4_audited` | 2.82 M two-pathway model vs the audited 5.19 M four-branch one |
+| **Curriculum** (IC-11) | `pipeline=single` / `stage1_only` / `stage1_stage2` / `three_stage` | A8's arms — the same driver stopped at different points |
+| **Branch subset** (A3) | `model.enabled_branches=[b,c]` | the branch is not constructed at all, so its parameters, aux head and fusion modality all go |
+| **Symmetric branch dropout** (A3) | `model.branch_drop_profile=[1,1,1,1]` | removes the confound behind Branch C's 87% influence |
+| **Fusion form** (A5) | `model.fusion_mode=gate` / `concat_mlp` | drops the rank-128 bilinear term, or the gate as well |
+| **Capacity** (A10) | `model.spatial_width_mult=0.5` | scales the spatial path's ResBlock widths |
+| **Margin machinery** (A7) | `single.arcface_m=0` / `model.per_class_margin=true` / `model.pairwise_penalty=true` | four arms, one variable each |
+| **Band-selection scope** (A2/IC-4) | `data.patches_data=./dataset/folds/patches_fold0_40b.npy` | bands chosen on training rows only, per fold |
+| **Selection/report split** (IC-3) | `evaluation=held_out_once` / `audited_replica` | select on `calib` and score `val ∪ test` once, or reproduce the audited `val`-for-everything protocol |
 
 Three caveats for anyone running these:
 

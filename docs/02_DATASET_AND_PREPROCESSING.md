@@ -118,21 +118,20 @@ bands** — the invariant that every masked statistic downstream relies on — a
 pixel carries the partial-coverage attenuation. The patch is finally transposed
 $(H, W, C) \to (C, H, W)$.
 
-> **This order is P-3 / T4-3, and it is a correction.** Until Tier 4 the mask was applied
-> *before* the resize and the mask itself was never resized, so `INTER_AREA` averaged seed
-> pixels with background zeros: a boundary pixel covering a fraction $\alpha_p$ of seed came
-> out at $\alpha_p$ times its true radiance, and a pixel covering a thousandth of a seed came
-> out as a *non-zero background*. The invariant asserted above held only in the interior (M-11),
-> which is what made the downstream $>10^{-5}$ foreground test fragile.
-> `tests/unit/test_patch_extraction.py` measures both the old failure and the fix.
+Applying the mask after resizing (rather than before, or resizing the crop without ever
+resizing the mask) is what makes the zero-outside-the-seed invariant exact: resizing an
+unmasked crop lets an interpolation kernel blend seed pixels with background zeros, so a
+boundary pixel covering a fraction $\alpha_p$ of seed comes out at $\alpha_p$ times its true
+radiance and a pixel covering a thousandth of a seed comes out as a non-zero background.
+`tests/unit/test_patch_extraction.py` asserts the exact-zero invariant directly.
 
-Two more Tier-4 items happen here. **P-2 / T4-2**: the cube is radiance, not reflectance, so a
-per-session illumination gain multiplies every spectrum captured in that session (C-1); the full
-resolution is `data/prep/radiometry.py`, a dedicated module (below). **P-4 / T4-4**: the eight
-morphometrics `segment` already computed, gated on and threw away are written out, in physical
+Two further quantities are written out here. The cube is radiance, not reflectance, so a
+per-session illumination gain multiplies every spectrum captured in that session; the full
+resolution is `data/prep/radiometry.py`, a dedicated module (below). The eight morphometrics
+`segment` already computes as part of its shape gate are additionally written out, in physical
 pixel units — the absolute scale the resize destroys.
 
-### Radiometry (`data/prep/radiometry.py`, T4-2)
+### Radiometry (`data/prep/radiometry.py`)
 
 `PrepConfig.radiometry: str = "auto"` selects one of four modes, resolved once per archive by
 `resolve_radiometry`:
@@ -160,10 +159,11 @@ by the same scalar. The gain it removes is persisted rather than discarded (`gai
 $(\bar x, \operatorname{sd})$), so brightness stays available as an explicit input rather than
 being thrown away.
 
-`white_reference_correct()`/`white_gain()` implement the physically-correct P-2(a) path — cube-level
-reflectance division against a located panel, applied **before** segmentation — fully
-implemented and unit-tested even though no cube in this archive exercises it; `radiometry="white"`
-would select it automatically the moment a compatible archive supplied one.
+`white_reference_correct()`/`white_gain()` implement the physically-correct reflectance-division
+path — cube-level reflectance division against a located panel, applied **before**
+segmentation — fully implemented and unit-tested even though no cube in this archive exercises
+it; `radiometry="white"` would select it automatically the moment a compatible archive supplied
+one.
 
 Failures on any single cube are caught, printed and skipped, so one unreadable scan does not
 abort a multi-hour extraction; a cube counted in pass 1 that fails in pass 2 leaves no
@@ -175,11 +175,11 @@ all-zero rows, since the arrays are truncated to what was written.
 |---|---|---|
 | `dataset/patches.npy` | $(8624, 256, 64, 64)$ `float32` | the patches |
 | `dataset/labels.npy` | $(8624,)$ `int64` | class index, 90 classes at 91–96 patches each |
-| `dataset/groups.npy` | $(8624,)$ `int64` | P-1 — the `scan_id` a grouped split needs |
-| `dataset/masks.npy` | $(8624, 64, 64)$ `float16` | P-3 — the fill map $\alpha$ |
-| `dataset/gain.npy` | $(8624, 2, 64, 64)$ `float32` | P-2 — per-pixel $(\bar x, \mathrm{sd})$ |
-| `dataset/morphology.npy` | $(8624, 8)$ `float32` | P-4 — shape descriptors, unstandardised |
-| `dataset/scan_table.csv` | one row per cube | P-1 — what each `scan_id` is |
+| `dataset/groups.npy` | $(8624,)$ `int64` | the `scan_id` a grouped split needs |
+| `dataset/masks.npy` | $(8624, 64, 64)$ `float16` | the fill map $\alpha$ |
+| `dataset/gain.npy` | $(8624, 2, 64, 64)$ `float32` | per-pixel $(\bar x, \mathrm{sd})$ |
+| `dataset/morphology.npy` | $(8624, 8)$ `float32` | shape descriptors, unstandardised |
+| `dataset/scan_table.csv` | one row per cube | what each `scan_id` is |
 
 `morphology.npy` is persisted **unstandardised** on purpose: the mean and scale are fitted on
 the training split alone (`data/morphometrics.py`), and no split exists at extraction time.
@@ -266,9 +266,9 @@ This minimises multicollinearity in the resulting subset.
 
 Both orderings are evaluated with 5-fold `StratifiedKFold`, using two classifiers on
 standardised mean spectra: LDA (`solver='svd'`, pseudo-inverse — safe at 90 classes) and
-`LinearSVC(C=0.1, max_iter=3000)`. `BandSelectionConfig.n_candidates` (T4-6) now defaults to
-$k\in\{5,10,15,20,25,30,40,50,70,100,128,160,192,224,256\}$ — extended past the 10-point curve
-ending at 100 that produced the checked-in report below — restricted to $k\le|\text{ordering}|$.
+`LinearSVC(C=0.1, max_iter=3000)`. `BandSelectionConfig.n_candidates` defaults to
+$k\in\{5,10,15,20,25,30,40,50,70,100,128,160,192,224,256\}$, restricted to
+$k\le|\text{ordering}|$.
 
 Recorded curve — `dataset/band_selection_report.csv`:
 
@@ -294,20 +294,20 @@ $k^{\star} = 40$, a $84.4\%$ reduction of the spectral axis. The final band set 
 ascending before writing (selection *order* is discarded; only the *set* matters downstream).
 
 > **The shipped curve cannot demonstrate its own elbow.** `verify_elbow()` and its
-> `ElbowVerdict` (T4-6/M-14) explicitly check whether a chosen $k^\star$ is *demonstrable* — the
-> curve must extend past $k^\star$ and clear `elbow_pct · peak` there — rather than merely being
-> the curve's own last point. The checked-in `dataset/band_selection_report.csv` (the table
-> above) terminates at $k=40$, its own chosen value: the 98% criterion is satisfied *vacuously*,
-> not demonstrated. `tests/unit/test_band_curve.py::test_the_shipped_curve_cannot_demonstrate_its_elbow`
+> `ElbowVerdict` explicitly check whether a chosen $k^\star$ is *demonstrable* — the curve must
+> extend past $k^\star$ and clear `elbow_pct · peak` there — rather than merely being the
+> curve's own last point. The checked-in `dataset/band_selection_report.csv` (the table above)
+> terminates at $k=40$, its own chosen value: the 98% criterion is satisfied *vacuously*, not
+> demonstrated. `tests/unit/test_band_curve.py::test_the_shipped_curve_cannot_demonstrate_its_elbow`
 > pins exactly this as a known property of the current artifact. Re-running
 > `scripts/select_bands.py` under the current, wider `n_candidates` default would produce a
 > genuinely testable curve out to $k=256$ and may move the winner/elbow; `cfg.deployed_curve_path`
-> (F-3) additionally lets that curve be overridden by cross-validating the actually-deployed
+> additionally lets that curve be overridden by cross-validating the actually-deployed
 > SpectralQuadNet estimator rather than the LDA/SVC proxy.
 
 **Outputs** — `dataset/patches_spa_40b.npy` $(8624, 40, 64, 64)$ `float32` (written in
 2,048-row chunks off the memory map), `dataset/wavelengths_spa_40b.csv`, whose 40 centres
-span $383.22$–$1006.47$ nm, and `dataset/band_selection_elbow.json` (T4-6), the serialised
+span $383.22$–$1006.47$ nm, and `dataset/band_selection_elbow.json`, the serialised
 `ElbowVerdict`.
 
 ---
@@ -355,9 +355,9 @@ more workers buy little.
 ## 2.6 Dataset and augmentation profiles
 
 `RiceSeedDataset.__getitem__(idx)` returns **CPU tensors and never touches an accelerator** —
-it used to build every tensor directly on the training device, which cost one host-to-device
-copy per sample per tensor and made `num_workers > 0` impossible (a worker process cannot hand a
-CUDA tensor back through the multiprocessing queue). The batched transfer now happens once, in
+building tensors directly on the training device would cost one host-to-device copy per sample
+per tensor and would make `num_workers > 0` impossible (a worker process cannot hand a CUDA
+tensor back through the multiprocessing queue). The batched transfer happens once, in
 `engine/batch.py::unpack_batch`. The return shape is also conditional: with neither a persisted
 mask nor morphometrics configured it is the 2-tuple
 $\big(\text{patch}\in\mathbb{R}^{40\times64\times64},\;\text{label}\in\mathbb{Z}\big)$; with
@@ -397,11 +397,11 @@ Primitives, with foreground mask $m_{h,w} = \mathbb{1}[\sum_c |x_{c,h,w}| > 10^{
 > even when an augmentation is a no-op at $p=0$, changes every subsequent draw and breaks
 > fixed-seed reproducibility. The module docstring states this explicitly.
 
-### Same-class CutMix (T2-7 / OP-6)
+### Same-class CutMix
 
 Two more Bernoulli-gated primitives, appended **after** the five above and **before** the spatial
 dihedral transform, each guarded so a profile with the probability at $0$ consumes no RNG state
-and reproduces the exact pre-T2-7 stream:
+and reproduces the exact stream of the profile with CutMix disabled:
 
 | Profile | `spec_cutmix` | `spat_cutmix` |
 |---|---:|---:|
@@ -522,13 +522,27 @@ mechanics are in `06_EXECUTION_AND_HARDWARE.md`.
 `cfg.data.split_scheme`, with a module-level `SPLIT_SEED = 42` deliberately decoupled from
 `cfg.seed`.
 
-**`stratified`** (`configs/data/spa40_90class.yaml`) — the protocol every archived checkpoint
-was trained and selected on: a two-step stratified `train_test_split` at the **patch** level,
-$8{,}624\to6{,}036/1{,}294/1{,}294$ (70/15/15). It puts every one of the dataset's 107 capture
-scans in train *and* in val/test (Phase 0, measured 107/107) — part of the reported number is
-therefore scan recognition, not variety recognition.
+**`stratified`** (`configs/data/spa40_90class.yaml`) — a two-step stratified
+`train_test_split` at the **patch** level, $8{,}624\to6{,}036/1{,}294/1{,}294$ (70/15/15). It
+puts every one of the dataset's **180 acquisition bundles** in train *and* in val/test — the
+executed run measured `180 of 180 scans are in train and in val/test` — so part of the reported
+number under this protocol is bundle recognition, not variety recognition.
 
-**`grouped`** (`configs/data/spa40_90class_pfix.yaml`, P-1/T4-1) — holds out whole scans via
+> **Corrected (CHANGES.md §3.1 / IC-13).** Earlier revisions of this document stated **107**
+> capture scans, "measured 107/107". That figure was wrong. The Zenodo record (3241923) images
+> each of the 90 varieties as **two bundles of 48 kernels**, each bundle a tray of one single
+> variety, giving $90 \times 2 = 180$ acquisition units — which matches the executed run exactly
+> ($8{,}624 / 180 = 47.9$ patches per bundle). 107 is not divisible by 90 and contradicts the
+> "exactly two scans per class" statement made in the same paragraph.
+> `tests/unit/test_splits.py::test_the_documented_bundle_count_is_180` pins it.
+
+**This is no longer the default protocol.** CHANGES IC-3 switched the shipped experiment to
+`grouped`, because a number from this split is a claim about acquisition sessions and a number
+from `grouped` is a claim about rice varieties. `stratified` is retained as the *contrast* arm of
+ablation A1, whose gap `F1_stratified − F1_grouped` quantifies how much of reported performance
+on this dataset is acquisition recognition.
+
+**`grouped`** (`configs/data/spa40_90class_pfix.yaml`) — holds out whole scans via
 `grouped_split`, rotating which scans are held by `data.split_fold` and targeting
 `data.split_eval_frac` of each class's **groups** (not patches) for val∪test. It requires
 `groups.npy`. On this archive every variety was captured in exactly **two** scans, so a class has
@@ -542,12 +556,17 @@ and names the offending classes; `"patch_split"` — accepted-leak fallback) gov
 when a class has fewer than 2 groups to split. Sweeping `split_fold` over `{0, 1}` is the
 leave-one-scan-out cross-validation this dataset can actually support.
 
-**The calibration split** (`data.calib_frac`, P-5/T4-5) carves an inner `calib` split out of
-`train` (by group under `grouped`, by patch under `stratified`), never out of val/test. The
-per-class margins (§4.2), the CDWS weights, and the Phase-3 oversampling weights are fitted
-there, so `val` — the split that also selects the checkpoint — carries no fitted parameter.
-`spa40_90class.yaml` ships `calib_frac: 0.0` (everything fitted on `val`, reproducing the
-archived run's contamination); `spa40_90class_pfix.yaml` ships `calib_frac: 0.15`.
+`stratified` and `grouped` trade off differently: an ungrouped result is a claim about
+acquisition sessions as well as varieties; a grouped result is a claim about varieties alone, at
+the cost of a coarser, harder-to-balance split on a dataset with only two scans per class.
+
+**The calibration split** (`data.calib_frac`) carves an inner `calib` split out of `train` (by
+group under `grouped`, by patch under `stratified`), never out of val/test. The per-class
+margins (§4.2), the CDWS weights, and the Phase-3 oversampling weights are fitted there, so
+`val` — the split that also selects the checkpoint — carries no fitted parameter.
+`spa40_90class.yaml` ships `calib_frac: 0.0` (everything fitted on `val`, so that split carries
+fitted parameters as well as selecting the checkpoint); `spa40_90class_pfix.yaml` ships
+`calib_frac: 0.15`.
 
 `data/morphometrics.py` fits the morphometric standardisation (`MorphometricStats`,
 `STD_FLOOR = 10^{-6}`) on `train_idx` alone — once, threaded to every loader that needs it,

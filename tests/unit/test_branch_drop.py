@@ -60,6 +60,21 @@ WIRED_KEYS = (
     "stem_channels",  # T3-2 / BR-3
     "fusion_rank",  # T3-4 / FU-1(b)
     "fusion_gate_hidden",  # T3-4 / FU-1(b), FU-2
+    # ── new in CHANGES ────────────────────────────────────────────────
+    # Since IC-10 the schema serves two architectures, so "wired" is a claim
+    # about a *pair*: a key unread here may be live in `SpectralSeedNet`
+    # (`spectral_hidden`, `aux_head_weight`) and is covered by
+    # tests/unit/test_spectral_seed_net.py. A key dead in **both** is still the
+    # defect this inventory exists to catch.
+    "arch",  # IC-10 — selects the module registry entry
+    "branch_drop_profile",  # A3 / §5.2 — the per-branch drop ratio, now explicit
+    "enabled_branches",  # A3 — which branches are constructed at all
+    "fusion_mode",  # A5 / §5.3 — bilinear_gate | gate | concat_mlp
+    "spatial_width_mult",  # A10 — the capacity lever
+    "aux_head_weight",  # IC-5 / §7.1 — the fixed single-aux weight
+    "per_class_margin",  # IC-9 / A7 — gates the signed R-P rule
+    "pairwise_penalty",  # IC-9 / A7 — gates the confusion penalty
+    "spectral_hidden",  # IC-10 — SpectralSeedNet's spectral MLP width
 )
 
 #: Keys accepted by the schema that never reach the module they name. 0-J found

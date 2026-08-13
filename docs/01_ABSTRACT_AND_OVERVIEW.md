@@ -1,15 +1,42 @@
 # 1 · Abstract and System Overview
 
+> ## ⚠ Read `CHANGES.md` first
+>
+> This repository was restructured in response to an independent audit. Its central finding was
+> not about the architecture:
+>
+> The source dataset images each variety as **two class-pure bundles of 48 kernels**, and the
+> audited run split at the **patch** level — so all **180** acquisition bundles appeared in
+> training *and* in evaluation. A model that learns "this tray's residual radiometric signature
+> ⇒ class X" scores correctly, and the reported 0.847 macro-F1 is a mixture of variety
+> recognition and acquisition-bundle recognition whose ratio was never measured.
+>
+> **The number this project now aims to produce is that ratio**, not an accuracy. Concretely:
+>
+> | | Audited | Now |
+> |---|---|---|
+> | Split | `stratified` (patch-level) | **`grouped`** — leave-one-acquisition-bundle-out |
+> | Selection | on `val`, which also carried 270+ fitted parameters and produced the headline | on **`calib`**, carved from train by group |
+> | Reported | `val`, as a maximum over ~944 correlated selection events | **`val ∪ test`, scored once**, with a bootstrap CI |
+> | Seeds / folds | 1 / 1 | **3 seeds × 2 folds**, mean ± range, never a maximum |
+> | Model | `SpectralQuadNet`, 5.19 M | **`SpectralSeedNet`, 2.82 M** (the audited model is retained as the control arm) |
+> | Curriculum | 3 stages, ~19 h | **1 stage, ~45 min** |
+> | Ablations executed | **0 of 21** | a declared grid with pre-registered decision rules |
+>
+> Expect the grouped number to be **lower**. That is the correct direction: the previous number
+> was measuring something else. See `README.md` for how to run any of it.
+
+
 > **Scope of this suite.** Every number, equation, default and contract in these six documents
-> is derived from `src/spectralquadnet/`, `configs/`, `train.py` and `tests/`. The one exception
-> is the recorded performance of the `outputs/output_v12_spa40/` run: `outputs/` is git-ignored
-> and that directory is not in this tree, so those figures are a transcribed record rather than
-> something a reader can re-derive from a checkout (§5.4). Where a quantity is *not* reproducible
-> from this repository, it is marked as such rather than reported.
+> is derived from `src/spectralquadnet/`, `configs/`, `train.py` and `tests/`. No training run has
+> yet been recorded in this repository against the architecture described here — `outputs/` is
+> git-ignored and empty in this tree — so no performance figures are reported below. Where these
+> documents describe an evaluation artifact or metric, they describe the mechanism that produces
+> it, not a specific recorded number.
 
 | Document | Contents |
 |---|---|
-| `01_ABSTRACT_AND_OVERVIEW.md` | Problem, contributions, evaluation protocol, recorded results |
+| `01_ABSTRACT_AND_OVERVIEW.md` | Problem, contributions, evaluation protocol |
 | `02_DATASET_AND_PREPROCESSING.md` | Acquisition → segmentation → patches → band selection → data store → split protocols |
 | `03_MODEL_ARCHITECTURE.md` | Branch formulations, gated bilinear fusion, heads, full tensor-shape matrix |
 | `04_CURRICULUM_AND_LOSSES.md` | 3-stage curriculum over one unified head, schedules, loss objectives, optimisation rules |
@@ -29,7 +56,7 @@ $256\to40$ spectral bands by a validated mRMR/SPA selection.
 
 The classification problem is *fine-grained and near-degenerate*: 90 varieties of the same
 species, $\sim$96 patches per class, discriminated by sub-percent differences in reflectance
-shape rather than by morphology. The current (Tier-3) design responds to that in four ways:
+shape rather than by morphology. The architecture addresses that in four ways:
 
 1. **Four branches, each seeing something the others structurally cannot reconstruct** —
    gain-free SNV spectra and their exact λ-derivatives (Branch A); a learned, gain-invariant
@@ -48,60 +75,39 @@ shape rather than by morphology. The current (Tier-3) design responds to that in
    *difference* in window centre wavelengths. Branch B is built to be exactly invariant to the
    gain that a per-session illumination or a per-pixel geometric factor would otherwise impose,
    so it deliberately carries no wavelength-positional information at all.
-3. **A single classification head, three margins.** Where a two-head design would create a
-   discontinuity at every stage boundary, one adaptive sub-centre ArcFace head is shared across
-   all three curriculum stages; only the angular margin passed at each call changes — zero
-   (a plain cosine classifier) in Stage 1, a warmed global scalar handing over to a per-class
-   vector in Stage 2, and a multiplicatively-annealed version of that same vector in Stage 3. The
-   per-class margin itself is calibrated from the **sign** of each class's precision/recall gap,
-   not from a single F1 score, so classes failing for opposite reasons are pushed in opposite
-   directions.
+3. **A single classification head, three margins.** One adaptive sub-centre ArcFace head is
+   shared across all three curriculum stages; only the angular margin passed at each call changes
+   — zero (a plain cosine classifier) in Stage 1, a warmed global scalar handing over to a
+   per-class vector in Stage 2, and a multiplicatively-annealed version of that same vector in
+   Stage 3. The per-class margin itself is calibrated from the **sign** of each class's
+   precision/recall gap, not from a single F1 score, so classes failing for opposite reasons are
+   pushed in opposite directions.
 4. **A three-stage curriculum** separating representation learning (progressive augmentation +
    deep supervision), metric learning (class-balanced sampling, contrastive auxiliaries,
    margin calibration), and flat-minimum refinement (SAM/ASAM + greedy, transient-rejecting SWA),
    rather than training one objective end to end.
 
-The model has **5,194,578 parameters** (5.19 M, all trainable) — a $-2.68$ M reduction from the
-pre-Tier-3 architecture, dominated by replacing Perceiver-style latent cross-attention fusion
-with the gated bilinear pool ($-1.64$ M) and dropping a provably rank-2 statistics branch
-($-0.59$ M), partially reinvested in Branch C's new 3-D stem ($+0.54$ M) and the new morphology
-token ($+17$ k). Full derivation in `03_MODEL_ARCHITECTURE.md` §3.7.
+The model has **5,194,578 parameters** (5.19 M, all trainable), distributed across four branches,
+a morphology token, a gated bilinear fusion pool, four per-branch auxiliary heads and one
+classification head. Full derivation in `03_MODEL_ARCHITECTURE.md` §3.7.
 
 ### Recorded performance
 
-> **Provenance caveat.** The figures below come from the `outputs/output_v12_spa40/` run's
-> artifacts (not in this tree — see above), produced under the **pre-Tier-3** architecture: a
-> 4-branch model without the morphology token, index bank, 3-D stem or λ-uniform tokenisation
-> described above and in `03_MODEL_ARCHITECTURE.md`. Those checkpoints carry a schema
-> (`schema_version ≤ 2`) that the current model's `load_state_dict(strict=True)` **refuses to
-> load** — Tier 3 changed what three of the four branches *consume*, not merely their parameter
-> counts, so no tensor-level remap exists (§3.8). They are reported here as the last complete,
-> reproducible three-stage run on record, not as a claim about the current architecture's
-> performance. A fresh number requires a new three-stage training run.
+No checkpoint has yet been produced or evaluated in this repository. `outputs/` is git-ignored
+and the working tree contains no `.pth`/`stage{n}_meta.json` artifacts, so there is no macro-F1,
+accuracy or per-class figure to report. A run is produced by
 
-The evaluated network is always the checkpoint that `_pick_best_checkpoint` ranks highest by
-recorded validation macro-F1 — on these artifacts, **Stage 1** (`best_stage1.pth`, epoch 488).
+```bash
+python train.py
+```
 
-| Split | Model / protocol | Macro F1 | Weighted F1 | Accuracy |
-|---|---|---|---|---|
-| **Test** (1,294 patches) | single view, no TTA | 0.8770 | 0.8776 | 0.8779 |
-| **Test** (1,294 patches) | 12-view TTA (current, corrected spectral transform) | **0.8889** | — | — |
-| Validation (1,294 patches) | Stage 1 checkpoint (`stage1_meta.json`) | 0.8877 | — | 0.8872 |
-| Validation | Stage 2 checkpoint (`stage2_meta.json`) | 0.8867 | — | 0.8864 |
-| Validation | Stage 3 SWA checkpoint (`stage3_meta.json`) | 0.8745 | — | 0.8748 |
-
-> **The ~87.5 % figure is a validation number, not a test number.** `0.8745 / 0.8748` is the
-> Stage-3 SWA model's *validation* macro-F1/accuracy, written by `run_stage3_swa`'s own
-> `save_ckpt` call. The held-out **test** result of the shipped pipeline is `0.8889` macro-F1
-> with TTA (§5.1 documents the spectral-view fix behind this number; the run's original console
-> log reported `0.8933` under a since-corrected transform). Stage 3 did not beat Stage 2 on this
-> run, which its sidecar records verbatim: `"val_f1 did not beat Stage 2; Stage 2 ckpt preferred
-> for eval"`.
-
-On the test split with TTA, no class falls below $F_1=0.50$, 23 of 90 classes reach $F_1=1.00$,
-and the five hardest are classes 49 (0.519), 52 (0.533), 41 (0.538), 51 (0.629) and 37 (0.640) —
-per-class figures as originally logged, not re-scored through the corrected TTA transform
-(§5.1).
+which trains Stage 1 → 2 → 3 in sequence, auto-resuming from whichever stage already has both its
+checkpoint and sidecar on disk (`06_EXECUTION_AND_HARDWARE.md` §6.1, §6.5). The evaluated network
+is always the checkpoint that `_pick_best_checkpoint` ranks highest by recorded validation
+macro-F1, and final numbers are produced by `engine/stages/final_eval.py`, twice — once with a
+single forward pass and once with the 12-view TTA of `05_EXPERIMENTS_AND_ABLATIONS.md` §5.1 —
+writing `test_preds_noTTA.npy`, `test_preds_TTA.npy` and `test_targets.npy` to `cfg.output_dir`,
+so any reported metric is recomputable from disk without re-running inference.
 
 ---
 
@@ -132,13 +138,13 @@ x (B,40,64,64)
 Branch B works on the single foreground mean spectrum — background-masked, so padded pixels
 never dilute it — while Branch C is the only branch that ever sees the raw spatial cube. Four
 auxiliary heads provide deep supervision, one per branch, called only in training mode and
-always on the **unmasked** branch embedding, so Tier 3's branch-dropout regularisation
-(inverted from the pre-Tier-3 profile — protect the branch nothing else can reconstruct, drop
-the ones that can be) never starves a branch of gradient.
+always on the **unmasked** branch embedding, so branch-dropout regularisation — which protects
+the branch nothing else can reconstruct and drops the ones that can be — never starves a branch
+of gradient.
 
 ### C2 · Wavelength as two mechanisms, and one deliberate absence
 
-`front_end.py` (FE-1) gives Branches A and D two independent, physically-motivated ways of using
+`front_end.py` gives Branches A and D two independent, physically-motivated ways of using
 $\lambda$, and Branch B none at all:
 
 - **Branch A** — a continuous-wavelength convolution kernel generator $\kappa_\phi$: rather than
@@ -154,8 +160,8 @@ $\lambda$, and Branch B none at all:
 - **Branch B** is built the opposite way on purpose: its normalised-difference indices and
   continuum-removed depths are constructed to be exactly invariant to a per-pixel or per-session
   gain, so it carries **no** wavelength-positional information — gain-invariance and
-  wavelength-awareness are different, sometimes competing properties, and Tier 3 assigns each to
-  a different branch rather than asking one branch to have both.
+  wavelength-awareness are different, sometimes competing properties, assigned to different
+  branches rather than asking one branch to have both.
 
 ### C3 · Adaptive sub-centre ArcFace, signed-margin calibration
 
@@ -175,10 +181,10 @@ M(c) = \operatorname{clip}\big(m_{\text{base}}+m_\Delta(R_c-P_c),\; m_{\min},\; 
 $$
 
 so an over-claiming class ($R_c>P_c$) gets a larger margin and an under-claiming one gets a
-smaller one — two classes tied on F1 can land on opposite sides of $m_{\text{base}}$, which the
-F1-driven rule it replaced could never express. A row-normalised confusion matrix additionally
-penalises each class's non-target logits toward the classes it is *actually* confused with.
-Full formulation in `03_MODEL_ARCHITECTURE.md` §3.5 and `04_CURRICULUM_AND_LOSSES.md` §4.2.
+smaller one — two classes tied on F1 can land on opposite sides of $m_{\text{base}}$. A
+row-normalised confusion matrix additionally penalises each class's non-target logits toward the
+classes it is *actually* confused with. Full formulation in `03_MODEL_ARCHITECTURE.md` §3.5 and
+`04_CURRICULUM_AND_LOSSES.md` §4.2.
 
 ### C4 · Three-stage curriculum over one shared head
 
@@ -188,10 +194,11 @@ Full formulation in `03_MODEL_ARCHITECTURE.md` §3.5 and `04_CURRICULUM_AND_LOSS
 | 2 | Sub-centre ArcFace (Focal) + SupCon + ProtoNCE | warmed global → per-class | class-balanced, CDWS-weighted | AdamW + SGDR, split head/backbone LR |
 | 3 | Focal + SupCon under SAM/ASAM, greedy SWA | per-class vector, annealed | class-balanced, CDWS-weighted | SAM/ASAM(AdamW) + cyclic LR |
 
-Each stage writes `best_stage{n}.pth` and a JSON sidecar `stage{n}_meta.json`; `train.py`
-auto-resumes by probing $3\to2\to1$ and treats a stage as complete only when **both** files
-exist. The checkpoint used for final evaluation is chosen by recorded validation macro-F1, *not*
-by stage order.
+There is one classification head, not two: Stage 1, Stage 2 and Stage 3 all train and evaluate
+through the same `arcface_head`, differing only in the margin passed at each call. Each stage
+writes `best_stage{n}.pth` and a JSON sidecar `stage{n}_meta.json`; `train.py` auto-resumes by
+probing $3\to2\to1$ and treats a stage as complete only when **both** files exist. The checkpoint
+used for final evaluation is chosen by recorded validation macro-F1, *not* by stage order.
 
 ---
 
@@ -201,17 +208,20 @@ by stage order.
 
 `data/loaders.py::build_split_bundle` builds one of two protocols, selected by
 `cfg.data.split_scheme`, with a module-level seed deliberately decoupled from `cfg.seed`.
-`stratified` (the default, and the protocol every archived checkpoint was trained and selected
-on) is a patch-level split that puts every one of the dataset's 107 capture scans in train *and*
-in val/test — part of any reported number is therefore scan recognition, not purely variety
-recognition. `grouped` holds out whole scans instead, at the cost that this dataset's
-two-scans-per-class structure makes full three-way group-disjointness unreachable, which the
-split's own report says explicitly rather than silently approximating. A **calibration split**
-(`data.calib_frac`) additionally separates the split that fits per-class margins/CDWS
-weights/oversampling weights from the split that selects the checkpoint. Full mechanics,
-including the archive's specific two-scans-per-class limitation and the two shipped configs
-(`spa40_90class.yaml` vs. `spa40_90class_pfix.yaml`), are in `02_DATASET_AND_PREPROCESSING.md`
-§2.8.
+`stratified` (`configs/data/spa40_90class.yaml`) is a patch-level split that puts
+every one of the dataset's **180 acquisition bundles** in train *and* in val/test — the executed
+run measured `180 of 180` — so part of any reported number under this protocol is bundle
+recognition, not purely variety recognition. (Earlier revisions of this document said 107. That
+figure was wrong: 107 is not divisible by 90 and contradicts the two-bundles-per-class structure
+stated in the same paragraph. See CHANGES.md §3.1 / IC-13.)
+`grouped` (`configs/data/spa40_90class_pfix.yaml`, **the default since CHANGES IC-3**) holds out
+whole bundles instead, at the cost
+that this dataset's two-scans-per-class structure makes full three-way group-disjointness
+unreachable, which the split's own report says explicitly rather than silently approximating. A
+**calibration split** (`data.calib_frac`) additionally separates the split that fits per-class
+margins/CDWS weights/oversampling weights from the split that selects the checkpoint. Full
+mechanics, including the two-scans-per-class limitation and the two shipped configs, are in
+`02_DATASET_AND_PREPROCESSING.md` §2.8.
 
 ### Metric rule
 
@@ -233,14 +243,13 @@ metric is recomputable from disk without re-running inference.
 ### Comparative benchmark structure
 
 The repository contains **no external baseline model implementations**, and no external
-baseline has been executed. The comparison table below is therefore given as a *protocol
-specification with empty result cells* — populating it requires running each baseline under the
-identical conditions listed.
+baseline has been executed. The comparison table below is given as a *protocol specification
+with empty result cells* — populating it requires running each candidate under the identical
+conditions listed.
 
 | Model | Input representation | Params | Test Macro F1 | Test Acc | TTA Macro F1 |
 |---|---|---|---|---|---|
-| SpectralQuadNet (Tier 3, current) | $(40,64,64)$ patch + 8 morphometrics | 5.19 M | *not yet run* | *not yet run* | *not yet run* |
-| SpectralQuadNet (pre-Tier-3, archived) | $(40,64,64)$ patch | 7.88 M | 0.8770 | 0.8779 | 0.8889 |
+| SpectralQuadNet | $(40,64,64)$ patch + 8 morphometrics | 5.19 M | *not yet run* | *not yet run* | *not yet run* |
 | *external baseline #1* | — | — | *not run* | *not run* | *not run* |
 | *external baseline #2* | — | — | *not run* | *not run* | *not run* |
 
@@ -271,26 +280,12 @@ Two internal reference points *do* exist and must not be mistaken for baselines:
 
 | Gate | What it pins |
 |---|---|
-| `tests/regression/test_golden_forward_pass.py` | eval-mode logits, per-tensor SHA-256 of the initialised state dict (306 tensors, `golden/v3/`), exact Stage-1 epoch-1 loss and post-step weight hashes, against the schema-v3 architecture |
-| `tests/regression/test_state_dict_compatibility.py` | the 14 top-level attribute names; the schema-v3 bundle schema; the v1/v2 → v3 refusal (`SchemaTooOldError`) |
+| `tests/regression/test_golden_forward_pass.py` | eval-mode logits, per-tensor SHA-256 of the initialised state dict (306 tensors), exact Stage-1 epoch-1 loss and post-step weight hashes, against the current architecture |
+| `tests/regression/test_state_dict_compatibility.py` | the 14 top-level attribute names; the checkpoint bundle schema |
 | `tests/regression/test_resume_and_final_eval.py` | auto-resume detection, sidecar schema, `val_f1`-based selection |
 | `tests/unit/test_schedulers.py` | every LR multiplier and margin value across the full epoch range of all three stages |
 | `tests/unit/test_config_wiring.py` | every `cfg.model.*` key is either forward-observable, dropout-observable, or has a named reason it cannot be — no known dead model config key |
-| `scripts/check_config_roundtrip.py` | all 81 pre-refactor `CONFIG` keys map 1:1 onto `configs/`, with identical values except those recorded in `INTENDED_VALUE_CHANGES` (`docs/config_rename_table.md`, generated by `--emit-markdown`) |
-
-**Two of these gates are currently red, and both for the same reason.** Three Stage-1/2 budget
-knobs were retuned in the shipped configs — `stage1.epochs` $600\to400$, `stage1.patience`
-$160\to50$, `stage2.patience` $80\to30$ — without the two artifacts that bake those values in
-being updated with them:
-
-| Red gate | Symptom | Cause |
-|---|---|---|
-| `scripts/check_config_roundtrip.py` | exits non-zero on three "value drift" lines | the three knobs are not declared in the script's `INTENDED_VALUE_CHANGES`. The mapping itself is unaffected: each key still resolves to exactly one field, which is why `--emit-markdown` still regenerates `docs/config_rename_table.md` cleanly — the table reports the *current* composed values. |
-| `test_golden_forward_pass.py::test_stage1_epoch_{loss,weights}_matches_golden` | epoch-1 loss $23.0805\to23.0653$; post-step weight hash differs | `golden/v3/stage1_epoch1_loss_seed42.json` was captured at `stage1.epochs = 600`, and `_aux_loss_weight` reads `progress = ep / total_ep`, so epoch 1's auxiliary weight is a function of the stage budget. Re-running the identical capture with `stage1.epochs=600` reproduces the golden loss and both hashes **bit-exactly**, so nothing about the model's numerics moved — only a schedule input did. |
-
-The other two halves of the golden gate — eval-mode logits and the initialised state-dict hashes
-— are unaffected and pass, since neither depends on the stage budget. The retuned values are what
-`04_CURRICULUM_AND_LOSSES.md` documents, because they are what the shipped configs run.
+| `scripts/check_config_roundtrip.py` | every `configs/` key resolves to exactly one field, generating `docs/config_rename_table.md` via `--emit-markdown` |
 
 ### Known non-determinism
 
@@ -303,15 +298,14 @@ explicit seed (so every rank composes the identical global batch before it is sh
 `(seed, epoch)`.
 
 **The realised augmentation draws are also a function of the worker count.** `RiceSeedDataset`
-builds every sample on the host rather than on the training device — the change that removed the
-per-sample H2D copy and made `runtime.num_workers > 0` possible at all, since a worker process
-cannot hand a CUDA tensor back through the queue. The augmentation call order, every profile
-probability and every augmentation's distribution are unchanged, but the noise tensors now come
-from the host RNG rather than the accelerator's, and at `num_workers > 0` each worker seeds its
-own `torch`/`numpy`/`random` streams from `torch.initial_seed()` (`loaders.py::seed_worker`). A
-run is reproducible at a fixed `cfg.seed` **and a fixed worker count**; it does not reproduce the
-realised draws of a `num_workers=0` run. Set `runtime.num_workers=0` if that specific stream is
-what you need.
+builds every sample on the host rather than on the training device, which is what makes
+`runtime.num_workers > 0` possible at all — a worker process cannot hand a CUDA tensor back
+through the queue. The augmentation call order, every profile probability and every
+augmentation's distribution are fixed, but the noise tensors come from the host RNG rather than
+the accelerator's, and at `num_workers > 0` each worker seeds its own `torch`/`numpy`/`random`
+streams from `torch.initial_seed()` (`loaders.py::seed_worker`). A run is reproducible at a fixed
+`cfg.seed` **and a fixed worker count**; it does not reproduce the realised draws of a
+`num_workers=0` run. Set `runtime.num_workers=0` if that specific stream is what you need.
 
 What *is* pinned and tested regardless of configuration: weight initialisation, every scheduler
 and margin value, and one fixed-seed forward + backward step.

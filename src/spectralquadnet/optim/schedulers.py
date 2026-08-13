@@ -113,6 +113,100 @@ def subcentre_tau(ep: int, total_ep: int, tau_init: float, tau_final: float) -> 
     return tau_final + (tau_init - tau_final) * 0.5 * (1.0 + math.cos(math.pi * progress))
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  The collapsed curriculum's three schedules (IC-11 / CHANGES §17)
+# ══════════════════════════════════════════════════════════════════════
+
+
+def single_stage_lr(cfg: ExperimentConfig | Any) -> Callable[[int], float]:
+    """Linear warm-up then one cosine decay to ``single.min_lr``. No restarts.
+
+    Replaces ``phase_aware_lr``'s three regimes plus 30-epoch restarts. The
+    audited SGDR restart at Stage-2 epoch 28 was followed by 21 epochs of no
+    improvement and then early stopping, and CHANGES §8.1 shows the whole LR
+    *shape* was in any case interacting with a clip that renormalised the
+    backbone gradient on every step. One schedule, one thing to reason about.
+
+    Returns the ``LambdaLR`` callable, which takes a **0-based** epoch index and
+    returns a multiplier on ``single.max_lr``.
+    """
+    warmup = max(int(cfg.single.warmup_ep), 0)
+    total = max(int(cfg.single.epochs), 1)
+    floor = float(cfg.single.min_lr) / max(float(cfg.single.max_lr), 1e-12)
+
+    def _l(ep_idx: int) -> float:
+        ep = ep_idx + 1
+        if warmup and ep <= warmup:
+            # `ep / warmup`, never 0 at ep=1: a zero multiplier on the first
+            # epoch wastes it and makes the first logged LR meaningless.
+            return ep / warmup
+        progress = (ep - warmup) / max(total - warmup, 1)
+        progress = min(max(progress, 0.0), 1.0)
+        return floor + (1.0 - floor) * 0.5 * (1.0 + math.cos(math.pi * progress))
+
+    return _l
+
+
+def single_stage_margin(ep: int, cfg: ExperimentConfig | Any) -> float:
+    """The global ArcFace margin at epoch ``ep`` — 0, ramping, or ``arcface_m``.
+
+    .. code-block:: text
+
+        m = 0                       ep <  margin_warmup_start   (mixup is on)
+        m = cosine ramp to target   ep in [start, end]
+        m = arcface_m               ep >  margin_warmup_end
+
+    This *is* the collapsed curriculum. The only thing Stage 2 did that Stage 1
+    did not was introduce a non-zero margin, and the only reason it needed its
+    own stage is that a margin is incompatible with mixup — the head cannot
+    index a per-sample margin by an interpolated label pair. Switching mixup off
+    at ``single.mixup_epochs`` and warming one scalar margin in over the window
+    that follows achieves the same transition inside one stage, with one
+    optimiser state and no EMA re-initialisation (CHANGES §17).
+
+    The ramp is cosine rather than linear for the same reason Stage 2's was: the
+    margin's effect on the loss is steepest near zero, so a linear ramp is a
+    step in the objective's curvature.
+
+    Args:
+        ep: 1-based epoch within the stage.
+        cfg: Composed config, read for ``single.arcface_m`` and the window.
+
+    Returns:
+        The scalar margin to pass as ``arc_m``. Exactly ``0.0`` before the
+        window, which is what makes the head a plain cosine (NormFace)
+        classifier and mixup admissible.
+    """
+    target = float(cfg.single.arcface_m)
+    start = int(cfg.single.margin_warmup_start)
+    end = int(cfg.single.margin_warmup_end)
+    if ep < start:
+        return 0.0
+    if ep >= end:
+        return target
+    progress = (ep - start) / max(end - start, 1)
+    return target * 0.5 * (1.0 - math.cos(math.pi * progress))
+
+
+def single_stage_label_smoothing(ep: int, cfg: ExperimentConfig | Any) -> float:
+    """Linear decay ``label_smooth_hi -> label_smooth_lo`` across the stage."""
+    total = max(int(cfg.single.epochs), 1)
+    t = min(max((ep - 1) / max(total - 1, 1), 0.0), 1.0)
+    hi = float(cfg.single.label_smooth_hi)
+    lo = float(cfg.single.label_smooth_lo)
+    return hi * (1.0 - t) + lo * t
+
+
+def single_stage_uses_mixup(ep: int, cfg: ExperimentConfig | Any) -> bool:
+    """Whether epoch ``ep`` trains under mixup.
+
+    Mutually exclusive with a non-zero margin by construction, and
+    ``tests/unit/test_schedulers.py`` pins that they never overlap: the window
+    opens at ``margin_warmup_start``, which must exceed ``mixup_epochs``.
+    """
+    return ep <= int(cfg.single.mixup_epochs)
+
+
 def phase_aware_lr(cfg: ExperimentConfig | Any, p1_end: int, p2_end: int) -> Callable[[int], float]:
     """Build Stage 1's three-phase LR multiplier schedule.
 

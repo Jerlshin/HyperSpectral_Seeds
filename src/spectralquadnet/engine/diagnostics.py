@@ -36,7 +36,7 @@ from spectralquadnet.engine.batch import side_inputs, unpack_batch
 from spectralquadnet.engine.evaluate import evaluate_per_class
 from spectralquadnet.losses.cdws import build_cdws_weights
 from spectralquadnet.tracking.base import ExperimentTracker, NullTracker
-from spectralquadnet.utils.device import release_memory
+from spectralquadnet.utils.device import release_memory, unwrap_model
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from spectralquadnet.config.schema import ExperimentConfig
@@ -54,6 +54,24 @@ BRANCH_PREFIXES: tuple[str, ...] = (
     "cross_interaction.",
     "arcface_head.",
 )
+
+
+#: What :func:`pathway_labels` falls back to for a model that declares nothing —
+#: the four-branch layout every pre-IC-10 caller assumed.
+DEFAULT_PATHWAY_LABELS: tuple[str, ...] = ("A", "B", "C", "D")
+
+
+def pathway_labels(model: nn.Module) -> tuple[str, ...]:
+    """The maskable pathways of ``model``, in the order ``branch_mask`` indexes them.
+
+    Read from the model's own ``pathway_labels()`` when it has one — both
+    shipped architectures do — so the influence probe, the console block and
+    the W&B ``influence/*`` series all agree about what they are describing.
+    """
+    getter = getattr(unwrap_model(model), "pathway_labels", None)
+    if callable(getter):
+        return tuple(getter())
+    return DEFAULT_PATHWAY_LABELS
 
 
 @torch.no_grad()
@@ -78,15 +96,22 @@ def compute_branch_influence(
             ``max_batches * 5`` forward passes (1 full + 4 ablated per batch).
 
     Returns:
-        ``{"A": pct, "B": pct, "C": pct, "D": pct}`` — influence normalised
-        to sum to 100, or all zeros if the loader yielded no batches.
+        ``{label: pct}`` over the model's maskable pathways — ``A``…``D`` for
+        ``SpectralQuadNet`` (or the subset an A3 arm enabled) and
+        ``SPATIAL``/``SPECTRAL`` for ``SpectralSeedNet`` — normalised to sum to
+        100, or all zeros if the loader yielded no batches.
     """
     model.eval()
-    influences = torch.zeros(4, device=device)
+    # Read from the model rather than hardcoded at 4: a two-branch A3 arm should
+    # report two influences, not four of which two are structurally zero, and
+    # `SpectralSeedNet` has two pathways with different names entirely.
+    labels = pathway_labels(model)
+    n_paths = len(labels)
+    influences = torch.zeros(n_paths, device=device)
     total = 0
-    # The four ablation vectors are the same on every batch and every call, so
-    # they are built once rather than 4 x max_batches times.
-    ablations = 1.0 - torch.eye(4, device=device)
+    # The ablation vectors are the same on every batch and every call, so they
+    # are built once rather than n_paths x max_batches times.
+    ablations = 1.0 - torch.eye(n_paths, device=device)
 
     for i, batch in enumerate(loader):
         if i >= max_batches:
@@ -96,7 +121,7 @@ def compute_branch_influence(
         logits_full = model(x, **side)
         p_full = torch.softmax(logits_full, dim=1)
 
-        for b in range(4):
+        for b in range(n_paths):
             logits_ab = model(x, branch_mask=ablations[b], **side)
             p_ab = torch.softmax(logits_ab, dim=1).clamp(min=1e-10)
             influences[b] += F.kl_div(p_ab.log(), p_full, reduction="batchmean")
@@ -108,14 +133,14 @@ def compute_branch_influence(
         del x, mask, morph, side, logits_full, p_full
 
     if total == 0:
-        return {"A": 0, "B": 0, "C": 0, "D": 0}
+        return dict.fromkeys(labels, 0.0)
 
     influences /= total
     total_inf = influences.sum().clamp(min=1e-8)
-    # One transfer for all four, rather than one `float(...)` synchronisation
-    # per branch.
+    # One transfer for all of them, rather than one `float(...)` synchronisation
+    # per pathway.
     shares = (influences / total_inf * 100.0).cpu().tolist()
-    return {k: float(v) for k, v in zip("ABCD", shares, strict=True)}
+    return {k: float(v) for k, v in zip(labels, shares, strict=True)}
 
 
 def epoch_tag(step: int, total: int | None = None) -> str:
@@ -230,7 +255,7 @@ def compute_class_difficulty(
         release_memory(device)
         trk.log_message(
             f"{tag}{label} branch influence % (leave-one-out KL) — "
-            + "  ".join(f"{k}: {branch_inf[k]:5.1f}" for k in "ABCD")
+            + "  ".join(f"{k}: {v:5.1f}" for k, v in branch_inf.items())
         )
         scalars.update({f"influence/branch_{k.lower()}": v for k, v in branch_inf.items()})
 

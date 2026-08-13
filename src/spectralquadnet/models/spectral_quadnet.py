@@ -65,6 +65,7 @@ from spectralquadnet.models.branches.spatial_cnn import SpatialCNNBranch
 from spectralquadnet.models.branches.specformer import SpecFormerBranch
 from spectralquadnet.models.branches.spectral_profile import SpectralProfileBranch
 from spectralquadnet.models.branches.spectral_stats import SpectralStatsBranch
+from spectralquadnet.models.control import set_dropout as set_module_dropout
 from spectralquadnet.models.fusion import CrossModalInteraction, EmbedNet, MorphologyEmbed
 from spectralquadnet.models.heads import AdaptiveSubcenterArcFaceHead, AuxiliaryHead
 from spectralquadnet.models.stats_ops import (
@@ -89,6 +90,45 @@ if TYPE_CHECKING:  # pragma: no cover - typing only, keeps hydra out of the mode
 #: reproduces those rates and ``0.0`` means off, which is what N-1d wanted and
 #: what lets Stage 3 actually disable branch masking.
 BRANCH_DROP_PROFILE: tuple[float, float, float, float] = (0.75, 0.75, 0.0, 0.75)
+
+#: The order branches are constructed, fused and auxiliary-supervised in.
+#: ``cfg.model.enabled_branches`` selects a subset of it; the *order* is fixed
+#: here so an ablation arm cannot silently reorder the RNG stream by listing
+#: its branches differently.
+BRANCH_ORDER: tuple[str, ...] = ("a", "b", "c", "d")
+
+#: Accepted values of ``cfg.model.fusion_mode`` (A5 / CHANGES §5.3).
+FUSION_MODES: tuple[str, ...] = ("bilinear_gate", "gate", "concat_mlp")
+
+
+def _enabled_branches(model_cfg: Any) -> tuple[str, ...]:
+    """``cfg.model.enabled_branches``, defaulting to all four."""
+    listed = getattr(model_cfg, "enabled_branches", None)
+    if not listed:
+        return BRANCH_ORDER
+    return tuple(str(b).strip().lower() for b in listed)
+
+
+def _drop_profile(model_cfg: Any) -> tuple[float, ...]:
+    """``cfg.model.branch_drop_profile``, defaulting to the audited asymmetric one.
+
+    The default is the *historical* vector rather than the symmetric one, so a
+    config written before A3 existed keeps reproducing its own run. The shipped
+    configs set the key explicitly in both directions — the audited baseline to
+    ``(0.75, 0.75, 0, 0.75)`` and everything else to symmetric — because
+    "which branches get dropped" is a claim a reader should not have to infer
+    from a default.
+    """
+    listed = getattr(model_cfg, "branch_drop_profile", None)
+    if not listed:
+        return BRANCH_DROP_PROFILE
+    profile = tuple(float(p) for p in listed)
+    if len(profile) != len(BRANCH_ORDER):
+        raise ValueError(
+            f"model.branch_drop_profile must have {len(BRANCH_ORDER)} entries "
+            f"(one per branch in {BRANCH_ORDER}); got {profile!r}"
+        )
+    return profile
 
 
 class SpectralQuadNet(nn.Module):
@@ -116,6 +156,11 @@ class SpectralQuadNet(nn.Module):
     anneals that same vector multiplicatively.
     """
 
+    #: Checkpoint schema written by bundles of this architecture.
+    SCHEMA_VERSION: int = 3
+    #: The ``model.arch`` value that selects this class.
+    ARCH: str = "spectral_quadnet"
+
     def __init__(
         self,
         cfg: ExperimentConfig | Any,
@@ -133,6 +178,19 @@ class SpectralQuadNet(nn.Module):
         self.grid_a = int(cfg.model.grid_size_a)
         self.grid_d = int(cfg.model.grid_size_d)
         self.n_morph = int(cfg.model.n_morphometrics)
+        # A3. Ordered by BRANCH_ORDER, never by the config's listing — see that
+        # constant. `enabled` is part of the checkpoint's meaning, so an arm's
+        # bundle is not loadable into a differently-configured arm; `load_ckpt`
+        # would fail strict and say so.
+        self.enabled_branches = tuple(
+            b for b in BRANCH_ORDER if b in set(_enabled_branches(cfg.model))
+        )
+        if not self.enabled_branches:
+            raise ValueError(
+                "model.enabled_branches must name at least one of "
+                f"{BRANCH_ORDER}; got {list(_enabled_branches(cfg.model))!r}"
+            )
+        self.drop_profile = _drop_profile(cfg.model)
 
         # ── Shared spectral attention ─────────────────────────────────
         self.se = MaskedSpectralECA(num_bands)
@@ -140,59 +198,94 @@ class SpectralQuadNet(nn.Module):
         # ── Physical wavelength positional encoding (for 1-D CNN branches) ──
         self.wl_pe_cnn = PhysicalWavelengthPE(physical_wl, tower_ch)
 
-        # ── Four spectral branches ────────────────────────────────────
-        self.branch_a = SpectralProfileBranch(
-            wavelengths=physical_wl,
-            out_dim=256,
-            tower_ch=tower_ch,
-            wl_pe_module=self.wl_pe_cnn,
-            n_freq=wl_embed_dim,
+        # ── The branches, in BRANCH_ORDER ─────────────────────────────
+        # A disabled branch is not constructed at all, so an A3 arm is genuinely
+        # the smaller model rather than the full one with a tensor multiplied by
+        # zero — its parameter count, its FLOPs and its checkpoint all shrink.
+        # `None` rather than a missing attribute: `nn.Module.__setattr__` would
+        # reject the assignment, and every read site is already guarded.
+        self.branch_a = (
+            SpectralProfileBranch(
+                wavelengths=physical_wl,
+                out_dim=256,
+                tower_ch=tower_ch,
+                wl_pe_module=self.wl_pe_cnn,
+                n_freq=wl_embed_dim,
+            )
+            if "a" in self.enabled_branches
+            else None
         )
-        self.branch_b = SpectralStatsBranch(
-            num_bands=num_bands,
-            wavelengths=physical_wl,
-            out_dim=256,
-            n_indices=cfg.model.index_bank_size,
-            n_depths=cfg.model.continuum_depths,
-            n_morph=self.n_morph,
+        self.branch_b = (
+            SpectralStatsBranch(
+                num_bands=num_bands,
+                wavelengths=physical_wl,
+                out_dim=256,
+                n_indices=cfg.model.index_bank_size,
+                n_depths=cfg.model.continuum_depths,
+                n_morph=self.n_morph,
+            )
+            if "b" in self.enabled_branches
+            else None
         )
-        self.branch_c = SpatialCNNBranch(num_bands, 256, stem_channels=cfg.model.stem_channels)
-        self.branch_d = SpecFormerBranch(
-            physical_wl=physical_wl,
-            num_bands=num_bands,
-            patch_size=cfg.model.specf_patch,
-            stride=cfg.model.specf_patch // 2,
-            d_model=cfg.model.specf_dim,
-            n_heads=cfg.model.specf_heads,
-            n_layers=cfg.model.specf_layers,
-            out_dim=256,
-            dropout=cfg.model.specf_drop,
-            n_freq=wl_embed_dim,
+        self.branch_c = (
+            SpatialCNNBranch(
+                num_bands,
+                256,
+                stem_channels=cfg.model.stem_channels,
+                width_mult=float(getattr(cfg.model, "spatial_width_mult", 1.0)),
+            )
+            if "c" in self.enabled_branches
+            else None
+        )
+        self.branch_d = (
+            SpecFormerBranch(
+                physical_wl=physical_wl,
+                num_bands=num_bands,
+                patch_size=cfg.model.specf_patch,
+                d_model=cfg.model.specf_dim,
+                n_heads=cfg.model.specf_heads,
+                n_layers=cfg.model.specf_layers,
+                out_dim=256,
+                dropout=cfg.model.specf_drop,
+                n_freq=wl_embed_dim,
+            )
+            if "d" in self.enabled_branches
+            else None
         )
 
         # ── The fifth modality (FU-4) ─────────────────────────────────
         self.morphology_embed = MorphologyEmbed(n_morph=self.n_morph, d=256)
 
         # ── Cross-modal fusion ────────────────────────────────────────
+        self.fusion_mode = str(getattr(cfg.model, "fusion_mode", "bilinear_gate"))
+        if self.fusion_mode not in FUSION_MODES:
+            raise ValueError(
+                f"model.fusion_mode must be one of {FUSION_MODES}, got {self.fusion_mode!r}"
+            )
         self.cross_interaction = CrossModalInteraction(
-            num_modalities=5,
+            num_modalities=len(self.enabled_branches) + 1,
             d=256,
             rank=cfg.model.fusion_rank,
             gate_hidden=cfg.model.fusion_gate_hidden,
             drop=cfg.model.fusion_drop,
+            mode=self.fusion_mode,
         )
 
-        # ── Auxiliary heads — one per branch (deep supervision) ───────
+        # ── Auxiliary heads — one per enabled branch (deep supervision) ─
         aux_hidden = cfg.model.aux_head_hidden
-        self.aux_head_a = AuxiliaryHead(256, aux_hidden, num_classes)
-        self.aux_head_b = AuxiliaryHead(256, aux_hidden, num_classes)
-        self.aux_head_c = AuxiliaryHead(256, aux_hidden, num_classes)  # ← branch C
-        self.aux_head_d = AuxiliaryHead(256, aux_hidden, num_classes)
+        self.aux_head_a = AuxiliaryHead(256, aux_hidden, num_classes) if self.branch_a else None
+        self.aux_head_b = AuxiliaryHead(256, aux_hidden, num_classes) if self.branch_b else None
+        self.aux_head_c = AuxiliaryHead(256, aux_hidden, num_classes) if self.branch_c else None
+        self.aux_head_d = AuxiliaryHead(256, aux_hidden, num_classes) if self.branch_d else None
 
         # ── Embedding network ─────────────────────────────────────────
         self.embed_net = EmbedNet(256, 512, dropout)
 
         # ── Classification head (one, for every stage — HD-1) ─────────
+        # IC-9: the pairwise confusion penalty is now gated by an explicit flag
+        # rather than by whether someone happened to leave its delta non-zero.
+        # It was fitted on the selection split, never ablated, and aimed at the
+        # hard classes that never moved (CHANGES §5.4); A7 arm 4 measures it.
         self.arcface_head = AdaptiveSubcenterArcFaceHead(
             256,
             num_classes,
@@ -203,9 +296,24 @@ class SpectralQuadNet(nn.Module):
             m_min=cfg.stage2.arcface_m_min,
             m_max=cfg.stage2.arcface_m_max,
             tau=cfg.model.subcenter_tau_init,
-            pairwise_delta=cfg.stage2.pairwise_margin_delta,
+            pairwise_delta=(
+                cfg.stage2.pairwise_margin_delta
+                if bool(getattr(cfg.model, "pairwise_penalty", True))
+                else 0.0
+            ),
         )
         self._init_weights()
+
+    # ── What the fusion and the influence probe address ───────────────
+
+    def pathway_labels(self) -> tuple[str, ...]:
+        """Uppercased identifiers of the maskable pathways, in fusion order.
+
+        ``compute_branch_influence`` builds its ablation vectors from this, so a
+        two-branch A3 arm produces a two-entry influence table rather than four
+        entries of which two are structurally zero.
+        """
+        return tuple(b.upper() for b in self.enabled_branches)
 
     # ── Construction from a composed config ───────────────────────────
 
@@ -256,9 +364,14 @@ class SpectralQuadNet(nn.Module):
     # ── Control API ──────────────────────────────────────────────────
 
     def set_dropout(self, p: float) -> None:
-        for m in self.modules():
-            if isinstance(m, nn.Dropout):
-                m.p = p
+        """Set every dropout rate, **including** ``nn.MultiheadAttention``'s (IC-14).
+
+        The walk used to cover ``nn.Dropout`` alone, which left Branch D's four
+        attention sites pinned at their construction-time 0.15 for the whole run
+        regardless of the stage schedule. See
+        :func:`~spectralquadnet.models.control.set_dropout`.
+        """
+        set_module_dropout(self, p)
 
     def set_subcentre_tau(self, tau: float) -> None:
         """Set the head's sub-centre pooling temperature (HD-2(i), T2-9)."""
@@ -287,18 +400,34 @@ class SpectralQuadNet(nn.Module):
         """
         n_batch, n_bands = x.shape[0], x.shape[1]
         # One masked cube shared by both grids; see `extract_grid_spectra_multi`.
-        (grid_a, mass_a), (grid_d, _) = extract_grid_spectra_multi(
-            x, (self.grid_a, self.grid_d), mask=m
-        )
-        return {
-            "a": self.branch_a.shape_channels(grid_a.reshape(-1, n_bands)),
-            "a_mass": mass_a,
-            "b": self.branch_b.features(
+        # Only the grids a live branch consumes are extracted — an A3 arm
+        # without Branch A should not pay for an 8×8 grid nobody reads.
+        grids: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}
+        wanted: list[int] = []
+        if self.branch_a is not None:
+            wanted.append(self.grid_a)
+        # De-duplicated: A and D need not share a grid, but nothing forbids a
+        # config from setting both to 4, and pooling the same buffer twice to
+        # get the same tensor twice is pure cost.
+        if self.branch_d is not None and self.grid_d not in wanted:
+            wanted.append(self.grid_d)
+        if wanted:
+            extracted = extract_grid_spectra_multi(x, tuple(wanted), mask=m)
+            grids = dict(zip(wanted, extracted, strict=True))
+
+        inputs: dict[str, torch.Tensor] = {}
+        if self.branch_a is not None:
+            grid_a, mass_a = grids[self.grid_a]
+            inputs["a"] = self.branch_a.shape_channels(grid_a.reshape(-1, n_bands))
+            inputs["a_mass"] = mass_a
+        if self.branch_b is not None:
+            inputs["b"] = self.branch_b.features(
                 masked_mean_spectrum(x, m),
                 morph if morph is not None else x.new_zeros(n_batch, self.n_morph),
-            ),
-            "d": grid_d,
-        }
+            )
+        if self.branch_d is not None:
+            inputs["d"] = grids[self.grid_d][0]
+        return inputs
 
     def branch_inputs(
         self,
@@ -317,7 +446,8 @@ class SpectralQuadNet(nn.Module):
         """
         m = foreground_mask(x, mask)
         inputs = self._parametric_branch_inputs(x, m, morph)
-        inputs["c"] = x * m
+        if self.branch_c is not None:
+            inputs["c"] = x * m
         return inputs
 
     def forward(
@@ -358,52 +488,62 @@ class SpectralQuadNet(nn.Module):
         inputs = self._parametric_branch_inputs(x, m, morph)
         n_batch = x.shape[0]
 
+        # Each enabled branch's embedding, keyed by letter and built in
+        # BRANCH_ORDER. With all four enabled this is the same four tensors, in
+        # the same order, from the same expressions as before.
+        raw: dict[str, torch.Tensor] = {}
+
         # --- BRANCH A (Spectral Profile) ---
         # Processes grid_a ** 2 regions independently, then pools the embeddings
         # by each cell's foreground mass (BR-2, M-12): a corner cell holding four
         # seed pixels no longer counts as much as one that is entirely seed.
-        ba_grid = self.branch_a.forward_channels(inputs["a"]).view(n_batch, -1, 256)
-        weights = inputs["a_mass"].unsqueeze(-1)
-        ba_raw = (ba_grid * weights).sum(dim=1) / weights.sum(dim=1).clamp(min=1e-5)
+        if self.branch_a is not None:
+            ba_grid = self.branch_a.forward_channels(inputs["a"]).view(n_batch, -1, 256)
+            weights = inputs["a_mass"].unsqueeze(-1)
+            raw["a"] = (ba_grid * weights).sum(dim=1) / weights.sum(dim=1).clamp(min=1e-5)
 
         # --- BRANCH B (Spectral index bank) ---
         # Processes the global foreground mean spectrum and the morphometrics
-        bb_raw = self.branch_b.forward_features(inputs["b"])
+        if self.branch_b is not None:
+            raw["b"] = self.branch_b.forward_features(inputs["b"])
 
         # --- BRANCH C (Spectral-spatial CNN) ---
         # Processes full 64x64 cube with the spectral axis alive through 3 stages
-        bc_raw = self.branch_c(x, m)
+        if self.branch_c is not None:
+            raw["c"] = self.branch_c(x, m)
 
         # --- BRANCH D (SpecFormer) ---
         # Processes grid_d ** 2 regions independently, then correlates them
-        bd_raw = self.branch_d(inputs["d"])
+        if self.branch_d is not None:
+            raw["d"] = self.branch_d(inputs["d"])
 
         # --- Branch Masking (Deep Supervision Dropout) ---
+        # A3 / CHANGES §5.2: the per-branch rates come from
+        # `model.branch_drop_profile` rather than a module constant, because the
+        # audited asymmetric vector (C never dropped, the other three at 15%) is
+        # what taught the fusion gate to route onto the always-present branch.
+        # Branch C's 87% influence is confounded by it, and a symmetric profile
+        # is what makes A3 a measurement of the branches instead of the policy.
+        n_active = len(self.enabled_branches)
+        anchor = next(iter(raw.values()))
         if branch_mask is not None:
-            ba = ba_raw * branch_mask[0]
-            bb = bb_raw * branch_mask[1]
-            bc = bc_raw * branch_mask[2]
-            bd = bd_raw * branch_mask[3]
+            masked = {b: raw[b] * branch_mask[i] for i, b in enumerate(self.enabled_branches)}
         elif self.training and self.branch_drop_prob > 0.0:
-            drop_probs = self.branch_drop_prob * torch.tensor(
-                BRANCH_DROP_PROFILE, device=ba_raw.device
-            )
-            keeps = (torch.rand(4, device=ba_raw.device) > drop_probs).float()
-            safe_idx = torch.randint(0, 4, (), device=ba_raw.device)
-            safe_mask = F.one_hot(safe_idx, num_classes=4).float()
+            profile = [self.drop_profile[BRANCH_ORDER.index(b)] for b in self.enabled_branches]
+            drop_probs = self.branch_drop_prob * torch.tensor(profile, device=anchor.device)
+            keeps = (torch.rand(n_active, device=anchor.device) > drop_probs).float()
+            safe_idx = torch.randint(0, n_active, (), device=anchor.device)
+            safe_mask = F.one_hot(safe_idx, num_classes=n_active).float()
             keeps = torch.maximum(keeps, safe_mask)
-            ba = ba_raw * keeps[0]
-            bb = bb_raw * keeps[1]
-            bc = bc_raw * keeps[2]
-            bd = bd_raw * keeps[3]
+            masked = {b: raw[b] * keeps[i] for i, b in enumerate(self.enabled_branches)}
         else:
-            ba, bb, bc, bd = ba_raw, bb_raw, bc_raw, bd_raw
+            masked = dict(raw)
 
-        # --- Fusion (five modalities since FU-4) ---
+        # --- Fusion (the enabled branches plus morphology, since FU-4) ---
         be = self.morphology_embed(
             morph.to(dtype=x.dtype) if morph is not None else x.new_zeros(n_batch, self.n_morph)
         )
-        joint_token = self.cross_interaction([ba, bb, bc, bd, be])
+        joint_token = self.cross_interaction([masked[b] for b in self.enabled_branches] + [be])
         emb = self.embed_net(joint_token)
 
         emb_n = F.normalize(emb, dim=1)
@@ -412,13 +552,17 @@ class SpectralQuadNet(nn.Module):
         logits, assign = head_out if want_balance else (head_out, None)
 
         if self.training:
-            out = {
-                "main": logits,
-                "aux_a": self.aux_head_a(ba_raw),
-                "aux_b": self.aux_head_b(bb_raw),
-                "aux_c": self.aux_head_c(bc_raw),
-                "aux_d": self.aux_head_d(bd_raw),
+            aux_heads = {
+                "a": self.aux_head_a,
+                "b": self.aux_head_b,
+                "c": self.aux_head_c,
+                "d": self.aux_head_d,
             }
+            out = {"main": logits}
+            for b in self.enabled_branches:
+                head = aux_heads[b]
+                if head is not None:
+                    out[f"aux_{b}"] = head(raw[b])
             # HD-2(ii): the sub-centre load-balancing term. Produced here rather
             # than recomputed in the loops, because it needs the assignment the
             # head already formed on this forward.

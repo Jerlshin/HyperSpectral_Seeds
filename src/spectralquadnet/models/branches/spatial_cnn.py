@@ -259,27 +259,61 @@ class SpectralSpatialStem3D(nn.Module):
         return self.fold(folded)  # type: ignore[no-any-return]  # `nn.Module.__call__` -> Any
 
 
+#: Intermediate ResBlock widths of the 2-D tail, at ``width_mult = 1.0``.
+#: The terminal width is ``out_dim`` and is **not** scaled: it is the fusion
+#: contract every other modality is projected to.
+TAIL_WIDTHS: tuple[int, int, int] = (128, 192, 256)
+
+
+def _scaled_width(width: int, mult: float, multiple_of: int = 8) -> int:
+    """``width * mult``, rounded to a multiple of ``multiple_of`` and at least it.
+
+    Rounding keeps GroupNorm's group counts and the CBAM reduction divisible at
+    every arm of A10's ``{0.5, 0.75, 1.0, 1.5}`` sweep. Exact at ``mult = 1.0``,
+    which is what keeps the golden digests valid.
+    """
+    scaled = int(round(width * float(mult) / multiple_of)) * multiple_of
+    return max(scaled, multiple_of)
+
+
 class SpatialCNNBranch(nn.Module):
     """3-D spectral–spatial stem into a CBAM-gated ResNet-2D stack over spatial texture.
 
     Pools the fused feature map with concatenated signed-power-normalised mean
     and max statistics, which is more stable than raw mean/max pooling under
     the heavy-tailed activations a ResNet stack produces.
+
+    This is the one component with convergent evidence of contribution in the
+    audited run — rising fused influence, the largest parameter share, and the
+    only operator in the network that can see texture × spectral position — so
+    CHANGES §16.2 keeps it verbatim as ``SpectralSeedNet``'s spatial path.
+
+    Args:
+        width_mult: A10's capacity lever, scaling the three intermediate
+            :data:`TAIL_WIDTHS`. ``1.0`` reproduces the audited branch exactly,
+            tensor for tensor.
     """
 
-    def __init__(self, num_bands: int = 256, out_dim: int = 256, stem_channels: int = 192) -> None:
+    def __init__(
+        self,
+        num_bands: int = 256,
+        out_dim: int = 256,
+        stem_channels: int = 192,
+        width_mult: float = 1.0,
+    ) -> None:
         super().__init__()
 
         self.stem = SpectralSpatialStem3D(num_bands, stem_channels)
 
+        w1, w2, w3 = (_scaled_width(w, width_mult) for w in TAIL_WIDTHS)
         self.stages = nn.Sequential(
-            ResBlock2D(stem_channels, 128, 2),
-            CBAM(128),
-            ResBlock2D(128, 192, 2),
-            CBAM(192),
-            ResBlock2D(192, 256, 2),
-            CBAM(256),
-            ResBlock2D(256, out_dim, 2),
+            ResBlock2D(stem_channels, w1, 2),
+            CBAM(w1),
+            ResBlock2D(w1, w2, 2),
+            CBAM(w2),
+            ResBlock2D(w2, w3, 2),
+            CBAM(w3),
+            ResBlock2D(w3, out_dim, 2),
         )
         self.proj = nn.Sequential(
             nn.Linear(out_dim * 2, out_dim), nn.BatchNorm1d(out_dim), nn.GELU()

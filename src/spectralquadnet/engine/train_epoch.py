@@ -6,14 +6,18 @@ added beyond the loop's normal work. When a tracker is supplied, three
 families of scalars are recorded, and all three come from values the loop
 already computes:
 
-* ``loss/branch_{a,b,c,d}`` — the weighted per-branch terms
-  ``_compute_aux_loss`` sums internally, now returned alongside the total.
+* ``loss/branch_{a,b,c,d}_{raw,weighted}`` — the per-branch terms
+  ``_compute_aux_loss`` sums internally, returned alongside the total both
+  before and after the per-branch weight (IC-2). Logging only the weighted
+  term made the panel track the controller rather than the branch — see
+  :class:`~spectralquadnet.losses.auxiliary.AuxComponents`.
 * ``grad_norm/{branch_a,…,cross_interaction,arcface_head}`` — the pre-clip
   gradient norm split by owner, sampled at the same place the clip runs, and
   gated on ``cfg.tracking.log_grad_norms``.
-* ``grad_norm/preclip_{head,fusion,backbone}`` — the three per-group pre-clip
-  norms :func:`~spectralquadnet.optim.param_groups.clip_grad_norm_by_group`
-  returns for free (OP-3 / T2-5).
+* ``grad_norm/{preclip,postclip,clipped}_{head,fusion,backbone}`` and
+  ``grad_norm/clip_fraction`` — what the per-group clip actually did (IC-6).
+  ``clip_fraction`` is the number that says whether ``grad_clip`` is clipping
+  outliers or renormalising every step.
 
 All are accumulated as device tensors and resolved to floats **once per epoch**,
 so the per-step cost is a handful of adds rather than a host synchronisation.
@@ -46,9 +50,16 @@ means are bit-for-bit what they were.
 
 Behaviour worth keeping in mind when reading these loops:
 
-* **AMP is silently disabled whenever a SupCon loss is passed** (``use_amp =
-  (supcon is None) and (scaler is not None)``), so Stage 1 Phase 3 and all of
-  Stage 2 train in full fp32.
+* **AMP stays on through the contrastive phases** (IC-7). It used to be
+  ``use_amp = (supcon is None) and (scaler is not None)``, so merely *passing* a
+  SupCon module dropped the whole epoch — backbone forward included — into
+  fp32. On an 11 GB card already at 91% occupancy that doubles activation
+  memory and the allocator starts paging: Phase 3 cost 190–405 s/epoch against
+  Phases 1–2's 39 s, a 5–10× jump on identical data (CHANGES.md §7.3, §9.2).
+  SupCon genuinely needs fp32 for the ``exp(·/0.1)`` reduction, but only for
+  *that* — so the contrastive terms are now computed inside
+  :func:`_contrastive_terms`, which re-enters fp32 for the similarity matrix
+  alone after casting the ℓ2-normalised embedding up.
 * **The autocast dtype is the caller's**, and defaults to ``torch.bfloat16``
   rather than to torch's per-device default of fp16. It is passed to
   ``autocast`` explicitly, so what the loop runs in is a decision
@@ -98,7 +109,12 @@ from spectralquadnet.engine.diagnostics import (
     flat_grad,
     grad_cosine,
 )
-from spectralquadnet.losses.auxiliary import GradNormAuxWeights, _aux_loss_weight, _compute_aux_loss
+from spectralquadnet.losses.auxiliary import (
+    AuxComponents,
+    GradNormAuxWeights,
+    _aux_loss_weight,
+    _compute_aux_loss,
+)
 from spectralquadnet.losses.mixup import mix_side_inputs, mixed_aug, mixed_loss
 from spectralquadnet.models.ema import ModelEMA
 from spectralquadnet.optim.param_groups import clip_grad_norm_by_group
@@ -119,6 +135,38 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: logged value is the mean over ~32 evenly spaced steps rather than over all of
 #: them. Nothing consumes it but the tracker.
 GRAD_COS_SAMPLES: int = 32
+
+
+def _contrastive_terms(
+    emb: torch.Tensor,
+    labels: torch.Tensor,
+    supcon: nn.Module | None,
+    proto: nn.Module | None,
+) -> tuple[torch.Tensor | float, torch.Tensor | float]:
+    """SupCon and ProtoNCE in fp32, inside an otherwise-autocast epoch (IC-7).
+
+    The embedding arrives ℓ2-normalised in the autocast dtype. Both losses build
+    a ``B × B`` (or ``B × |C|``) similarity matrix and exponentiate it at
+    ``τ = 0.10``, so the argument reaches ±10 and the reduction is over 128
+    terms — bf16's 8 mantissa bits put a relative error of ~4e-3 on each, which
+    is the same order as the logit gaps the loss is trying to rank.
+
+    Casting *here* rather than disabling autocast for the epoch is the whole
+    point: the backbone forward that produced ``emb`` keeps its bf16 kernels,
+    and only the few megaflops of the similarity matrix run wide. The returned
+    values are fp32 and compose into the total loss unchanged.
+
+    Returns:
+        ``(supcon_loss, proto_loss)``, each ``0.0`` when its module is absent so
+        the caller's arithmetic does not need a branch.
+    """
+    if supcon is None and proto is None:
+        return 0.0, 0.0
+    with autocast(device_type=emb.device.type, enabled=False):
+        emb32 = emb.float()
+        sc = supcon(emb32, labels) if supcon is not None else 0.0
+        pt = proto(emb32, labels) if proto is not None else 0.0
+    return sc, pt
 
 
 def _resolve_step_scalars(loss: torch.Tensor, accuracy: torch.Tensor) -> tuple[float, float]:
@@ -197,7 +245,9 @@ def train_one_epoch(
     total_loss = total_acc = 0.0
     optimizer.zero_grad(set_to_none=True)
 
-    use_amp = (supcon is None) and (scaler is not None)
+    # IC-7: the SupCon module no longer vetoes autocast for the epoch. The
+    # contrastive terms take their own fp32 region in `_contrastive_terms`.
+    use_amp = scaler is not None
     aux_w = _aux_loss_weight(cfg, current_ep, total_ep)
     balance_w = float(getattr(getattr(cfg, "model", None), "subcenter_balance_weight", 0.0))
     branch_w = aux_weights.weights if aux_weights is not None else None
@@ -232,7 +282,7 @@ def train_one_epoch(
         else:
             x_in, ya, yb, lam = x, y, y, 1.0
         side = side_inputs(*mix_side_inputs(mask, morph, perm, lam))
-        aux_parts: dict[str, torch.Tensor] = {}
+        aux_parts: AuxComponents | None = None
 
         with autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
             # ── SupCon / ProtoNCE path ─────────────────────────────────
@@ -240,10 +290,18 @@ def train_one_epoch(
                 out = model(x_in, ya, return_embed=True, arc_m=arc_m, **side)
                 logits = out["main"] if isinstance(out, dict) else out[0]
                 emb = out.get("emb") if isinstance(out, dict) else out[1]
+                if emb is None:
+                    # `return_embed=True` was passed, so a model that returns a
+                    # dict must put `emb` in it. Reaching here means a custom
+                    # architecture broke the contract, and a silent `None` would
+                    # surface as a contrastive term that is quietly zero.
+                    raise RuntimeError(
+                        f"{type(unwrap_model(model)).__name__} did not return an embedding "
+                        "under return_embed=True, but a contrastive loss needs one."
+                    )
 
                 cls_l = criterion(logits, ya)
-                sc_l = supcon(emb, ya)
-                pt_l = proto(emb, ya) if proto is not None else 0.0
+                sc_l, pt_l = _contrastive_terms(emb, ya, supcon, proto)
 
                 if isinstance(out, dict):
                     aux_l, aux_parts = _compute_aux_loss(
@@ -308,9 +366,7 @@ def train_one_epoch(
             continue
 
         if want_diag and aux_parts:
-            _accumulate(
-                diag_aux, {f"loss/branch_{k.removeprefix('aux_')}": v for k, v in aux_parts.items()}
-            )
+            _accumulate(diag_aux, aux_parts.scalars())
             n_aux += 1
 
         # `use_amp` already implies `scaler is not None`, but mypy cannot see the
@@ -331,11 +387,9 @@ def train_one_epoch(
                     {f"grad_norm/{k}": v for k, v in branch_grad_norm_tensors(core).items()},
                 )
                 n_branch += 1
-            group_norms = clip_grad_norm_by_group(core, cfg.grad_clip)
+            clip_report = clip_grad_norm_by_group(core, cfg.grad_clip)
             if want_diag:
-                _accumulate(
-                    diag_clip, {f"grad_norm/preclip_{k}": v for k, v in group_norms.items()}
-                )
+                _accumulate(diag_clip, clip_report.scalars())
                 n_clip += 1
             if use_amp:
                 scaler.step(optimizer)  # type: ignore[union-attr]
@@ -446,7 +500,7 @@ def train_one_epoch_sam(
 
     def _objective(
         x: torch.Tensor, y: torch.Tensor, side: dict[str, torch.Tensor]
-    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
+    ) -> tuple[torch.Tensor, torch.Tensor, AuxComponents | None]:
         """The one Stage-3 objective, evaluated at the model's current weights."""
         out = model(x, labels=y, arc_m=arc_m, return_embed=want_embed, **side)
         logits = out["main"] if isinstance(out, dict) else out
@@ -454,11 +508,9 @@ def train_one_epoch_sam(
 
         loss = criterion(logits, y)
         if emb is not None:
-            if supcon is not None:
-                loss = loss + supcon_weight * supcon(emb, y)
-            if proto is not None:
-                loss = loss + proto_weight * proto(emb, y)
-        parts: dict[str, torch.Tensor] = {}
+            sc_l, pt_l = _contrastive_terms(emb, y, supcon, proto)
+            loss = loss + supcon_weight * sc_l + proto_weight * pt_l
+        parts: AuxComponents | None = None
         if isinstance(out, dict) and aux_weight > 0.0:
             aux_l, parts = _compute_aux_loss(
                 criterion, out, y, y, 1.0, use_mixup=False, return_components=True, weights=branch_w
@@ -469,11 +521,11 @@ def train_one_epoch_sam(
         return loss, logits, parts
 
     def _clip(sample: bool) -> None:
-        """Per-group clip, recording the pre-clip norms on the ascent step only."""
+        """Per-group clip, recording the clip report on the ascent step only."""
         nonlocal n_clip
-        group_norms = clip_grad_norm_by_group(core, cfg.grad_clip)
+        clip_report = clip_grad_norm_by_group(core, cfg.grad_clip)
         if sample and want_diag:
-            _accumulate(diag_clip, {f"grad_norm/preclip_{k}": v for k, v in group_norms.items()})
+            _accumulate(diag_clip, clip_report.scalars())
             n_clip += 1
 
     # Even sampling of the gradient-cosine diagnostic — see GRAD_COS_SAMPLES.
@@ -498,9 +550,7 @@ def train_one_epoch_sam(
             continue
 
         if want_diag and aux_parts:
-            _accumulate(
-                diag_aux, {f"loss/branch_{k.removeprefix('aux_')}": v for k, v in aux_parts.items()}
-            )
+            _accumulate(diag_aux, aux_parts.scalars())
             n_aux += 1
 
         # `Tensor.backward` is untyped in this torch's stubs. The AdamW loop
