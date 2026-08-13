@@ -10,8 +10,9 @@ $K_{\text{cls}} = 90$ classes, $K_{\text{sub}} = 3$ ArcFace sub-centres per clas
 and parameter counts below are measured from a live `SpectralQuadNet.from_config` build of the
 shipped configuration (`configs/model/spectral_quadnet_v4.yaml`), not estimated.
 
-This is the **Tier-3 architectural redesign** (`IMPROVEMENT_PLAN.md` §3.2–§3.4,
-`MIGRATION_PROGRESS.md` → Tier 3). It replaced a 4-branch, 7.88 M-parameter model in which two
+This is the **Tier-3 architectural redesign** (the `T3-*` items referenced throughout; the
+planning documents they were tracked in are no longer part of the repository, so this suite plus
+`tests/` is the record). It replaced a 4-branch, 7.88 M-parameter model in which two
 branches received a byte-identical input, the statistics branch read a provably rank-2 tensor,
 no module combined spectral and spatial extent, and fusion was Perceiver-style latent
 cross-attention. The current model has **5,194,578 trainable parameters** across four branches
@@ -179,8 +180,8 @@ $n_{\text{freq}} = $ `wl_embed_dim` $= 16$); the MLP (`Linear(32\to32)\to\mathrm
 per forward, shared across the batch** — they depend only on the wavelength grid, not on $x$.
 Parameter cost is **independent of band count** (measured $8\text{k}\text{–}12\text{k}$ params
 for a $(3\to96, k{=}5)$ instance); this is what makes Branch A's stem transferable across a
-band-count ablation. `nbr`/`offsets` are non-persistent-free buffers ($40\times5$), also travel
-in the checkpoint.
+band-count ablation. `nbr`/`offsets` are registered buffers ($40\times5$ each) with the default
+`persistent=True`, so they travel in the checkpoint.
 
 ### Physical-wavelength positional encoding (`PhysicalWavelengthPE`, `wl_pe_cnn`)
 
@@ -250,8 +251,9 @@ so cells with little or no foreground coverage contribute little or nothing to t
 descriptor, rather than diluting it as a plain mean would.
 
 **Measured parameters: 603,089** (stem 10,816 · tower$_{3/5/7}$ 153,024/153,408/153,792 ·
-fusion 104,352 · attn\_pool 2,353 · proj 25,344). Buffers: 7,456
-($D_1$/$D_2$ = 3,200; `LambdaConv1d`'s `nbr`/`offsets`/`omega` = 4,256).
+fusion 104,352 · attn\_pool 2,353 · proj 25,344). Buffers: 7,456 elements, all persisted —
+`wl_pe_module.pe` $(40,96)$ = 3,840; `derivatives.{d1_op,d2_op}` $(40,40)$ each = 3,200;
+`LambdaConv1d`'s `stem.0.{nbr,offsets}` $(40,5)$ each and `features.omega` $(16,)$ = 416.
 
 ### Branch B — Index Bank (`SpectralStatsBranch`)
 
@@ -760,6 +762,16 @@ recomputed from the wavelength grid on every construction rather than checkpoint
 7. **Aux heads and branch dropout are both training-only.** No auxiliary head is ever invoked in
    `.eval()`, and `branch_drop_prob` never masks a branch there either — the return-type table in
    §3.1 reflects this directly (aux keys only appear in the training-mode dict).
+8. **Two modules carry a runtime-selected execution path, and it is not schema.**
+   `SpectralSpatialStem3D.decompose_conv3d` (Branch C's `Conv3d` stages evaluated as stacks of
+   `Conv2d`) and `SpectralProfileBranch.grad_checkpoint` (Branch A's towers recomputed in the
+   backward) are set by `utils/device.py::apply_runtime_optimisations` from the resolved runtime
+   plan, before the EMA deep-copy and every wrapper, so all copies of the module agree. Neither
+   adds a parameter, a buffer or a state-dict key, neither draws from the RNG, and the
+   decomposition is the same arithmetic in a different summation order ($1.9\times10^{-7}$ on the
+   logits) — so a checkpoint written under either path loads under the other, and a resumed run
+   may legitimately change device and change paths with it.
+   `06_EXECUTION_AND_HARDWARE.md` §6.2 has the measurements and the defaults.
 
 ### Config keys — full coverage, one call-site-level exception
 

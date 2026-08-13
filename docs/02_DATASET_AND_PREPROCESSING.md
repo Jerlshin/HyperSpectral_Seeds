@@ -122,9 +122,9 @@ $(H, W, C) \to (C, H, W)$.
 > *before* the resize and the mask itself was never resized, so `INTER_AREA` averaged seed
 > pixels with background zeros: a boundary pixel covering a fraction $\alpha_p$ of seed came
 > out at $\alpha_p$ times its true radiance, and a pixel covering a thousandth of a seed came
-> out as a *non-zero background*. The invariant asserted above held only in the interior
-> (IMPROVEMENT_PLAN M-11), which is what made the downstream $>10^{-5}$ foreground test
-> fragile. `tests/unit/test_patch_extraction.py` measures both the old failure and the fix.
+> out as a *non-zero background*. The invariant asserted above held only in the interior (M-11),
+> which is what made the downstream $>10^{-5}$ foreground test fragile.
+> `tests/unit/test_patch_extraction.py` measures both the old failure and the fix.
 
 Two more Tier-4 items happen here. **P-2 / T4-2**: the cube is radiance, not reflectance, so a
 per-session illumination gain multiplies every spectrum captured in that session (C-1); the full
@@ -324,6 +324,7 @@ non-negotiable and are asserted by `tests/unit/test_mmap_store.py`.
 | **One handle per process** | `DataStore.__new__` returns a process-wide singleton; constructing it twice yields the *same object* |
 | **Copy lives in the Dataset** | `DataStore` exposes the raw `np.memmap`; only `RiceSeedDataset.__getitem__` touches it |
 | **Exactly one patch per item** | `np.array(self.patches[ri])` materialises $(40,64,64) = 655{,}360$ B $\approx 0.64$ MiB; no batched `.copy()` anywhere on the loader path |
+| **The mapping survives a process boundary** | `RiceSeedDataset.__getstate__` drops `patches`/`masks` before pickling and `__setstate__` re-opens them from the recorded paths — `np.memmap` inherits `ndarray`'s pickling, which *materialises*, so sending one to a worker would copy the whole cube (four workers ≈ 22 GB). `labels` (69 kB) and the standardised `morph` (276 kB) are ordinary in-RAM arrays and do travel. A store built from arrays rather than files raises here by name rather than leaking gigabytes — valid for the unit tests, but it cannot cross into a worker, so that configuration needs `runtime.num_workers=0`. |
 
 Labels ($8624 \times 8$ B) are read fully into RAM; wavelengths are read with a sniffed
 delimiter (`sep=None`), taken from the **last** CSV column, and min–max normalised to $[0,1]$
@@ -339,8 +340,15 @@ rather than return `None`, so a missing load fails at the call site.
 **Footprint.** The cube is $8624 \times 40 \times 64 \times 64 \times 4\,\text{B} = 5.65$ GB on
 disk. The README records a measured **peak RSS of 1.39 GB, median 0.65 GB** across a full
 three-stage run against that file, with mean usage *falling* over the run — clean mapped
-pages being reclaimed, not a dataset accumulating. Every `DataLoader` in the system uses
-`num_workers=0`, so no worker process duplicates the mapping.
+pages being reclaimed, not a dataset accumulating.
+
+Worker processes each carry **their own page table** for that file — one mapping per worker, no
+resident bytes — which is why the auto worker count is bounded: `MAX_AUTO_WORKERS = 8` on CUDA,
+`NON_CUDA_AUTO_WORKERS = 2` on Metal/CPU, where a worker's pages and the accelerator's
+activations come out of the same unified pool (`06_EXECUTION_AND_HARDWARE.md` §6.3). The mapping
+is also what dominates the host cost per sample: measured at 1.86 ms, of which 1.41 ms is the
+mmap page-in and only ~0.45 ms is augmentation — so the feed is I/O-bound, not CPU-bound, and
+more workers buy little.
 
 ---
 
