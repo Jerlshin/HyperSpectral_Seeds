@@ -58,6 +58,9 @@ class TaggedModel(nn.Module):
 def eval_cfg(cfg, tmp_path):
     small = cfg.copy()
     small.output_dir = str(tmp_path)
+    # The bootstrap is 2,000 resamples of a macro-F1 over 90 classes; these
+    # tests assert *which weights ran*, not an interval, so it is pure cost here.
+    small.evaluation.bootstrap_samples = 0
     return small
 
 
@@ -78,14 +81,22 @@ def write_bundle(eval_cfg, path, **metadata) -> None:
 
 
 def predicted_class(eval_cfg, path, test_loader) -> int:
-    """Run ``final_evaluation`` on the bundle and read back what it predicted."""
+    """Run ``final_evaluation`` on the bundle and read back what it predicted.
+
+    Reads the un-TTA'd predictions from the ``results/`` tree
+    (:mod:`spectralquadnet.reporting.artifacts`) rather than the flat
+    ``test_preds_noTTA.npy`` the pre-CHANGES layout wrote. The filename encodes
+    the reported split and the TTA variant, because a run now scores both and a
+    single name could only ever be one of them.
+    """
     num_classes = eval_cfg.data.num_classes
     model = TaggedModel(num_classes, 0)
     ema = ModelEMA(TaggedModel(num_classes, 0), decay=0.99)
 
-    final_evaluation(eval_cfg, model, ema, test_loader, DEVICE, str(path))
+    results = final_evaluation(eval_cfg, model, ema, test_loader, DEVICE, str(path))
 
-    preds = np.load(f"{eval_cfg.output_dir}/test_preds_noTTA.npy")
+    split_tag = results["no_tta"].split
+    preds = np.load(f"{eval_cfg.output_dir}/results/preds_{split_tag}.npy")
     assert len(set(preds.tolist())) == 1, "the stub predicts one class"
     return int(preds[0])
 

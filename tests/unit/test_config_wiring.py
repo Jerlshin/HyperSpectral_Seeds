@@ -55,6 +55,16 @@ PERTURBATIONS: dict[str, object] = {
     "stem_channels": 96,
     "fusion_rank": 64,
     "fusion_gate_hidden": 64,
+    # ── Added by CHANGES ──────────────────────────────────────────────
+    # A5 — the fusion arms. `gate` drops the second-order term; the logits must
+    # move, or the 0.50 M parameters the bilinear pool costs are unobservable
+    # and A5 could not measure them.
+    "fusion_mode": "gate",
+    # A3 — dropping a branch removes its parameters, its auxiliary head and its
+    # fusion modality, so the forward is genuinely a different function.
+    "enabled_branches": ["b", "c"],
+    # A10 — the spatial path's capacity lever.
+    "spatial_width_mult": 0.5,
 }
 
 #: Dropout rates. Inert in ``.eval()`` by definition, so they are probed in
@@ -81,6 +91,35 @@ NOT_FORWARD_OBSERVABLE: dict[str, str] = {
     "subcenter_balance_weight": (
         "read by the epoch loops, not by the module. Covered by "
         "tests/unit/test_branch_drop.py::test_the_balance_weight_reaches_the_loss."
+    ),
+    # ── Added by CHANGES ──────────────────────────────────────────────
+    "arch": (
+        "selects *which* module is built, so it cannot be a perturbation of one. "
+        "Covered by tests/unit/test_spectral_seed_net.py."
+    ),
+    "branch_drop_profile": (
+        "training-only, like branch_drop_prob — eval mode never masks. Covered by "
+        "tests/unit/test_branch_drop.py."
+    ),
+    "per_class_margin": (
+        "gates whether the stage loop *calls* update_margins_from_pr; the head is "
+        "constructed identically either way. Covered by "
+        "tests/unit/test_margin_rule.py and A7's arms."
+    ),
+    "pairwise_penalty": (
+        "the penalty applies only in train mode with labels — an eval forward "
+        "returns the plain scaled cosine either way, which is the head's design. "
+        "Covered by tests/unit/test_config_wiring.py::"
+        "test_the_pairwise_penalty_flag_reaches_the_head."
+    ),
+    "spectral_hidden": (
+        "SpectralSeedNet's spectral MLP width — unread by SpectralQuadNet, which is "
+        "what this module perturbs. Covered by "
+        "tests/unit/test_spectral_seed_net.py::test_the_parameter_budget_matches_the_design."
+    ),
+    "aux_head_weight": (
+        "a loss coefficient read by the stage loop, not a construction-time value. "
+        "Covered by tests/unit/test_observability.py and the single-stage smoke run."
     ),
 }
 
@@ -156,6 +195,35 @@ def test_the_excuses_name_a_test_that_covers_them() -> None:
     """An exclusion has to point somewhere, or it is a hole with a comment on it."""
     for key, reason in NOT_FORWARD_OBSERVABLE.items():
         assert "tests/unit/" in reason, key
+
+
+def test_the_pairwise_penalty_flag_reaches_the_head(cfg, physical_wl) -> None:
+    """IC-9 — the confusion penalty is gated by a flag, not by a leftover delta.
+
+    It applies only in train mode with labels, so it cannot be observed by an
+    eval forward. What *is* observable at construction is that the flag decides
+    whether the head carries a non-zero ``pairwise_delta`` at all — which is
+    what makes A7's fourth arm a one-variable change.
+    """
+    on = _build(cfg, physical_wl, pairwise_penalty=True)
+    off = _build(cfg, physical_wl, pairwise_penalty=False)
+
+    assert on.arcface_head.pairwise_delta == pytest.approx(cfg.stage2.pairwise_margin_delta)
+    assert off.arcface_head.pairwise_delta == 0.0
+
+    # And the train-mode logits differ, which is where the term lives.
+    x = torch.randn(BATCH, cfg.data.num_bands, 64, 64, generator=torch.Generator().manual_seed(3))
+    labels = torch.tensor([0, 1])
+    on.arcface_head.set_confusion(torch.rand(cfg.data.num_classes, cfg.data.num_classes))
+    with torch.no_grad():
+        emb = torch.nn.functional.normalize(torch.randn(BATCH, 256), dim=1)
+        on.train(), off.train()
+        assert not torch.allclose(
+            on.arcface_head(emb, labels, global_m=0.0),
+            off.arcface_head(emb, labels, global_m=0.0),
+            atol=1e-6,
+        )
+    del x
 
 
 # ══════════════════════════════════════════════════════════════════════

@@ -92,13 +92,29 @@ class CrossModalInteraction(nn.Module):
     The class name is the schema's — ``SpectralQuadNet.cross_interaction`` is a
     top-level checkpoint key. What it computes is FU-1(b), not a Perceiver.
 
+    A5 / CHANGES §5.3 adds :attr:`mode`, because the bilinear term is 0.50 M
+    parameters — 9.6% of the model — spent on second-order interactions across
+    ten modality pairs, fitted from 6,036 training samples, in a fusion where
+    three of the five modalities carried ≤6% influence each. That is a large
+    hypothesis class in service of combining one strong signal and one weak one.
+    The audit's verdict is "replace with concat + MLP"; the three modes here are
+    what turns that verdict into a measurement.
+
     Args:
-        num_modalities: 5 since FU-4 — branches A-D plus morphology.
+        num_modalities: 5 since FU-4 — branches A-D plus morphology. An A3 arm
+            passes fewer.
         d: Branch embedding width.
         rank: :math:`r` in :math:`U_m \\in \\mathbb R^{r \\times d}`. The whole
             point of the low-rank factorisation: a full bilinear pool over five
             modalities would be :math:`10 d^2 = 655\\,\\mathrm{k}` per pair.
+        gate_hidden: Hidden width of the gate MLP.
         drop: Dropout on the fused output.
+        mode: One of
+            :data:`~spectralquadnet.models.spectral_quadnet.FUSION_MODES`.
+            ``bilinear_gate`` is the audited default; ``gate`` keeps the
+            sigmoid gate and drops the second-order term; ``concat_mlp``
+            discards both and concatenates the normalised tokens into a
+            2-layer MLP.
     """
 
     def __init__(
@@ -108,12 +124,14 @@ class CrossModalInteraction(nn.Module):
         rank: int = 128,
         gate_hidden: int = 128,
         drop: float = 0.1,
+        mode: str = "bilinear_gate",
     ):
         super().__init__()
 
         self.num_modalities = int(num_modalities)
         self.d = int(d)
         self.rank = int(rank)
+        self.mode = str(mode)
 
         # FU-2: a *dataset* statistic, not a per-sample one. BatchNorm1d in
         # eval mode applies the running estimate, so a sample whose branch
@@ -122,20 +140,48 @@ class CrossModalInteraction(nn.Module):
         self.branch_norms = nn.ModuleList([nn.BatchNorm1d(d) for _ in range(self.num_modalities)])
 
         # FU-2: sigmoid, and fed the pre-normalisation log-norms.
-        self.modality_gate = nn.Sequential(
-            nn.Linear(self.num_modalities * d + self.num_modalities, gate_hidden),
-            nn.GELU(),
-            nn.Linear(gate_hidden, self.num_modalities),
-            nn.Sigmoid(),
+        # Absent in `concat_mlp`, which is the arm that asks whether a gate is
+        # needed at all — constructing an unused one would put 0.17 M dead
+        # parameters into that arm's reported budget.
+        self.modality_gate = (
+            nn.Sequential(
+                nn.Linear(self.num_modalities * d + self.num_modalities, gate_hidden),
+                nn.GELU(),
+                nn.Linear(gate_hidden, self.num_modalities),
+                nn.Sigmoid(),
+            )
+            if self.mode in ("bilinear_gate", "gate")
+            else None
         )
 
-        # FU-1(b): the second-order term.
-        self.bilinear = nn.ModuleList(
-            [nn.Linear(d, self.rank, bias=False) for _ in range(self.num_modalities)]
+        # FU-1(b): the second-order term. Only in `bilinear_gate`.
+        wants_bilinear = self.mode == "bilinear_gate"
+        self.bilinear = (
+            nn.ModuleList([nn.Linear(d, self.rank, bias=False) for _ in range(self.num_modalities)])
+            if wants_bilinear
+            else None
         )
-        self.bilinear_out = nn.Linear(self.rank, d)
-        self.output = nn.Linear(2 * d, d)
+        self.bilinear_out = nn.Linear(self.rank, d) if wants_bilinear else None
+
+        if self.mode == "bilinear_gate":
+            self.output: nn.Module = nn.Linear(2 * d, d)
+        elif self.mode == "gate":
+            self.output = nn.Linear(d, d)
+        else:  # concat_mlp
+            self.output = nn.Sequential(
+                nn.Linear(self.num_modalities * d, d),
+                nn.LayerNorm(d),
+                nn.GELU(),
+                nn.Linear(d, d),
+            )
         self.drop = nn.Dropout(drop)
+
+    def normalised_tokens(self, branches: list[torch.Tensor]) -> torch.Tensor:
+        """``(B, M, d)`` — each modality through its own ``BatchNorm1d`` (FU-2)."""
+        return torch.stack(
+            [norm(b) for norm, b in zip(self.branch_norms, branches, strict=True)],
+            dim=1,
+        )
 
     def gate_values(self, branches: list[torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         """``(gate, normalised_tokens)`` — the gate as a first-class diagnostic.
@@ -143,22 +189,34 @@ class CrossModalInteraction(nn.Module):
         Returned rather than hidden so ``sum_m g_m != 1`` and the gate's entropy
         are assertable properties (T3-4's validation criterion) instead of
         claims.
+
+        Raises:
+            RuntimeError: ``mode="concat_mlp"``, which has no gate to report.
         """
+        if self.modality_gate is None:
+            raise RuntimeError(
+                f"fusion_mode={self.mode!r} has no modality gate; "
+                "gate diagnostics are only defined for 'bilinear_gate' and 'gate'."
+            )
         confidence = torch.stack(
             [torch.log(b.norm(dim=1) + 1e-6) for b in branches], dim=1
         )  # (B, M) — FU-2, before normalisation
-        tokens = torch.stack(
-            [norm(b) for norm, b in zip(self.branch_norms, branches, strict=True)],
-            dim=1,
-        )  # (B, M, d)
+        tokens = self.normalised_tokens(branches)
         gate = self.modality_gate(torch.cat([tokens.flatten(1), confidence], dim=1))
         return gate, tokens
 
     def forward(self, branches: list[torch.Tensor]) -> torch.Tensor:
+        if self.mode == "concat_mlp":
+            tokens = self.normalised_tokens(branches)
+            return self.drop(self.output(tokens.flatten(1)))  # type: ignore[no-any-return]
+
         gate, tokens = self.gate_values(branches)
 
         # First order — an independent gate per modality, so two can be on at once.
         first = (tokens * gate.unsqueeze(-1)).sum(dim=1)
+
+        if self.bilinear is None or self.bilinear_out is None:
+            return self.drop(self.output(first))  # type: ignore[no-any-return]
 
         # Second order — every unordered pair, in the rank-r space.
         projected = [proj(tokens[:, m]) for m, proj in enumerate(self.bilinear)]

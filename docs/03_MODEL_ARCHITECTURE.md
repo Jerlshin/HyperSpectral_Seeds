@@ -1,24 +1,41 @@
 # 3 · Model Architecture
 
-Notation throughout: $B$ = batch, $C = 40$ bands, $H = W = 64$. The two grid branches use
-**different** grids since Tier 3: Branch A pools onto an $8\times8$ grid
-($N_a = 64$ cells, flattened batch $BN_a = 64B$), Branch D onto a $4\times4$ grid
-($N_d = 16$ cells, flattened batch $BN_d = 16B$) — before Tier 3 they shared one $4\times4$
-grid and received a byte-identical input; separate `grid_size_a`/`grid_size_d` config keys now
-make that impossible to reintroduce silently. $D = 256$ is the fusion/embedding width,
-$K_{\text{cls}} = 90$ classes, $K_{\text{sub}} = 3$ ArcFace sub-centres per class. All shapes
-and parameter counts below are measured from a live `SpectralQuadNet.from_config` build of the
-shipped configuration (`configs/model/spectral_quadnet_v4.yaml`), not estimated.
+> **Two architectures ship since CHANGES.md IC-10.** This document describes
+> **`SpectralQuadNet`** (`configs/model/quadnet_v4_audited.yaml`, 5,194,578 parameters), which
+> is now the *control arm* rather than the default. The default is
+> **`SpectralSeedNet`** (`configs/model/seed_net.yaml`, 2,819,830 parameters) —
+> `src/spectralquadnet/models/spectral_seed_net.py`, specified in CHANGES §16.2.
+>
+> The audit's case for the reduction, in the numbers this document measures:
+>
+> | Component | Params | FLOP share | End influence | Verdict |
+> |---|---:|---:|---:|---|
+> | Branch A · SpectralProfile | 603,089 | **60.1%** | 5.6% | removed as a branch; its SNV and Savitzky–Golay λ-derivatives survive as **fixed, zero-parameter features** |
+> | Branch B · Index Bank | 94,896 | 0.0% | 3.5% | retained — 1.8% of parameters, 0.005% of compute |
+> | Branch C · Spatial CNN | 2,230,646 | 34.2% | **87.4%** | retained verbatim as the spatial path |
+> | Branch D · SpecFormer | 1,241,640 | 5.7% | 3.1% | removed — 23.9% of the model to run attention over **10 tokens** |
+> | Bilinear fusion | 496,005 | 0.0% | — | replaced by concat + MLP (A5 measures whether that was right) |
+>
+> Branch C's 87.4% is **confounded**: it was the only branch never dropped
+> (`branch_drop_profile = (0.75, 0.75, 0, 0.75)`), so the fusion gate was structurally taught to
+> route onto the always-present branch. Ablation **A3** re-runs the comparison with a symmetric
+> profile, which is what makes it a measurement of the branches rather than of the policy — and
+> if it shows the four-branch model wins by more than 2σ, CHANGES §14's removals are reversed.
+> That is why nothing below has been deleted.
 
-This is the **Tier-3 architectural redesign** (the `T3-*` items referenced throughout; the
-planning documents they were tracked in are no longer part of the repository, so this suite plus
-`tests/` is the record). It replaced a 4-branch, 7.88 M-parameter model in which two
-branches received a byte-identical input, the statistics branch read a provably rank-2 tensor,
-no module combined spectral and spatial extent, and fusion was Perceiver-style latent
-cross-attention. The current model has **5,194,578 trainable parameters** across four branches
-plus a fifth, non-spectral morphology token, fused by a gated low-rank bilinear pool, and
-classified by **one** adaptive sub-centre ArcFace head shared across all three curriculum
-stages (`04_CURRICULUM_AND_LOSSES.md`).
+Notation throughout: $B$ = batch, $C = 40$ bands, $H = W = 64$. The two grid branches use
+**different** grids: Branch A pools onto an $8\times8$ grid ($N_a = 64$ cells, flattened batch
+$BN_a = 64B$), Branch D onto a $4\times4$ grid ($N_d = 16$ cells, flattened batch $BN_d = 16B$);
+separate `grid_size_a`/`grid_size_d` config keys keep the two grids independently configurable.
+$D = 256$ is the fusion/embedding width, $K_{\text{cls}} = 90$ classes, $K_{\text{sub}} = 3$
+ArcFace sub-centres per class. All shapes and parameter counts below are measured from a live
+`SpectralQuadNet.from_config` build of the shipped configuration
+(`configs/model/quadnet_v4_audited.yaml`), not estimated.
+
+`SpectralQuadNet` has **5,194,578 trainable parameters** across four branches plus a fifth,
+non-spectral morphology token, fused by a gated low-rank bilinear pool, and classified by
+**one** adaptive sub-centre ArcFace head shared across all three curriculum stages
+(`04_CURRICULUM_AND_LOSSES.md`).
 
 ---
 
@@ -33,15 +50,17 @@ SpectralQuadNet.forward(
 
 `x`$\in\mathbb{R}^{B\times40\times64\times64}$ is required; `mask`$\in\mathbb{R}^{B\times64\times64}$
 (the persisted fill map $\alpha$) and `morph`$\in\mathbb{R}^{B\times8}$ (the persisted
-morphometrics) are both **optional with exact fallbacks** — `mask=None` reproduces the
-pre-Tier-3 `\sum_c|x_c|>10^{-5}` threshold bit-for-bit, and `morph=None` substitutes a zero
-vector. Neither array exists until `scripts/prepare_dataset.py` is re-run, so the fallbacks are
-the operative path for the archived reference run.
+morphometrics) are both **optional with exact fallbacks** — `mask=None` uses the threshold
+$\sum_c|x_c|>10^{-5}$ directly, and `morph=None` substitutes a zero vector. Both arrays are
+written by `scripts/prepare_dataset.py` and consumed when `configs/data` wires
+`masks_path`/`morphology_path` to them (`configs/data/spa40_90class_pfix.yaml`); the default
+config (`configs/data/spa40_90class.yaml`) leaves both paths unset, so the fallbacks are its
+operative path.
 
-There is **no `linear_head`.** HD-1 (T2-10) removed the second head entirely: Stage 1, Stage 2
-and Stage 3 all run the same `arcface_head`, differing only in the margin passed at each call
-(`stage1.arcface_m = 0.0` makes it a plain cosine/NormFace classifier — §4.1). The forward
-return type is a strict function of `self.training` and `return_embed`:
+There is **no `linear_head`.** Stage 1, Stage 2 and Stage 3 all run the same `arcface_head`,
+differing only in the margin passed at each call (`stage1.arcface_m = 0.0` makes it a plain
+cosine/NormFace classifier — §4.1). The forward return type is a strict function of
+`self.training` and `return_embed`:
 
 | Mode | `return_embed` | Return |
 |---|---|---|
@@ -51,8 +70,8 @@ return type is a strict function of `self.training` and `return_embed`:
 | `.eval()` | `True` | `(logits, emb)` |
 
 `tests/unit/test_unified_head.py` pins both the absence of `linear_head`/`use_arcface`/
-`freeze_head`/`init_from_linear`/`update_margins_from_f1` (all removed with the second head) and
-the presence of exactly one head, `arcface_head`.
+`freeze_head`/`init_from_linear`/`update_margins_from_f1` and the presence of exactly one head,
+`arcface_head`.
 
 ### Control API
 
@@ -105,8 +124,7 @@ m_{b,h,w} =
 \end{cases}
 $$
 
-When the persisted map is supplied it is used as a **soft weight**, not binarised; the fallback
-reproduces the pre-Tier-3 threshold exactly.
+When the persisted map is supplied it is used as a **soft weight**, not binarised.
 
 ### Regional grid spectra (`extract_grid_spectra_multi`, stateless)
 
@@ -132,13 +150,12 @@ $$
 \bar{x}_{b,c} = \frac{\sum_p x_{b,c,p}\, m_{b,p}}{\max(\sum_p m_{b,p},\, 1)} \in \mathbb{R}^{B\times40}
 $$
 
-The pre-Tier-3 nine-statistic extractor (`masked_spectral_stats`: mean/std/max/skew/kurtosis/
-percentiles) still exists in `stats_ops.py` but is **no longer consumed by any branch** — it was
-found to be a provably rank-2 tensor under a per-session gain (§2.2.5 of the plan). Only the
-mean survives, computed by the cheaper `masked_mean_spectrum` rather than the full nine-way
-reduction.
+A nine-statistic extractor (`masked_spectral_stats`: mean/std/max/skew/kurtosis/percentiles)
+also exists in `stats_ops.py` but is **not consumed by any branch** — under a per-session gain
+it reduces to a rank-2 tensor, so only the mean survives, computed by the cheaper
+`masked_mean_spectrum` rather than the full nine-way reduction.
 
-### Physical wavelength — two independent mechanisms (FE-1)
+### Physical wavelength — two independent mechanisms
 
 **`SpectralDerivatives`** (Branch A only) — exact λ-derivatives on the irregular band grid via
 local Savitzky–Golay operators, fit once from the wavelength vector:
@@ -161,7 +178,7 @@ $$
 $$
 
 invariant to $r \mapsto a\,r+b$ for $a>0$ — removes exactly the per-pixel/per-session gain that
-made the old nine-moment tensor rank-2.
+would otherwise make a raw moment tensor rank-deficient.
 
 **`LambdaConv1d`** — the continuous-wavelength kernel generator $\kappa_\phi$, replacing a
 learned-per-index convolution with one generated from physical $\Delta\lambda$:
@@ -212,10 +229,10 @@ applied additively over the channel axis of Branch A's 1-D tower. Registered buf
 
 ## 3.3 The four branches
 
-Tier 3's controlling constraint: **each branch must see something the others cannot
-reconstruct.**
+The controlling constraint across the four branches: **each must see something the others
+cannot reconstruct.**
 
-| Branch | Input after Tier 3 | Unique information |
+| Branch | Input | Unique information |
 |---|---|---|
 | A | $8\times8$ per-cell SNV spectra + $\partial_\lambda,\partial^2_\lambda$ | spectral *shape*, gain-free |
 | B | learned NDI bank + continuum-removed depths + morphometry | ratios and physical size |
@@ -294,8 +311,7 @@ $\to \mathrm{LayerNorm} \to$ MLP $\mathrm{Linear}(88{\to}256)\to\mathrm{LN}\to\m
 \mathrm{Dropout}(0.15)\to\mathrm{Linear}(256{\to}256)\to\mathrm{LN}\to\mathrm{GELU} \to
 \mathbf{b}_B\in\mathbb{R}^{B\times256}$.
 
-**Measured parameters: 94,896** — an $88{,}000\times$-smaller reduction than the pre-Tier-3
-branch's 686,424 params spent on a provably rank-2 input.
+**Measured parameters: 94,896.**
 
 ### Branch C — Spatial CNN (`SpatialCNNBranch`)
 
@@ -303,8 +319,7 @@ branch's 686,424 params spent on a provably rank-2 input.
 axes and the spectral axis jointly.
 
 **`SpectralSpatialStem3D`** — three `Conv3d` stages fold the spectral axis into the channel
-dimension while halving spatial resolution, rather than discarding it via $1{\times}1$
-convolutions as the pre-Tier-3 stem did:
+dimension while halving spatial resolution:
 
 $$
 (B,1,40,64,64) \xrightarrow{\text{Conv3d}(1\to16,\,k=(7,3,3),\,s=(2,1,1))} (B,16,20,64,64)
@@ -340,10 +355,9 @@ $$
 
 with $\mathrm{proj}=\mathrm{Linear}(512{\to}256)\to\mathrm{BatchNorm1d}\to\mathrm{GELU}$.
 
-**Measured parameters: 2,230,646** (stem 178,256 + stages 1,920,550 + proj 131,840) — up from
-1,694,158 pre-Tier-3, a deliberate capacity *increase*: the branch now performs the only joint
-spectral-spatial convolution in the network. A synthetic band/space-swap test confirms the 3-D
-stem (unlike the old $1{\times}1$ reduction) produces different outputs for cubes differing only
+**Measured parameters: 2,230,646** (stem 178,256 + stages 1,920,550 + proj 131,840) — the branch
+performs the only joint spectral-spatial convolution in the network. A synthetic
+band/space-swap test confirms the 3-D stem produces different outputs for cubes differing only
 in *which band* a spatial blob occupies.
 
 ### Branch D — SpecFormer (`SpecFormerBranch`)
@@ -380,18 +394,18 @@ now-uniform 10-token axis, channel split $\lfloor192/3\rfloor{=}64$ each, concat
 `GroupNorm`+`GELU`.
 
 **Two-stage attention**, $d_{\text{model}}=192$ (`specf_dim`), 8 heads, dropout $0.15$
-(`specf_drop`, now actually wired to the branch): Stage D1 prepends `spec_cls`, adds the position
-buffer, runs `specf_layers // 2 = 2` pre-LN blocks with the λ-bias, and token 0 becomes the
-cell's spectral summary. Stage D2 re-assembles the 16 cell summaries, prepends `spatial_cls`,
-runs 2 more pre-LN blocks (no bias — cells have no natural spatial ordering), and token 0 is
-`LayerNorm`ed and projected $\mathrm{Linear}(192{\to}256)\to\mathrm{BatchNorm1d}\to\mathrm{GELU}$.
+(`specf_drop`): Stage D1 prepends `spec_cls`, adds the position buffer, runs
+`specf_layers // 2 = 2` pre-LN blocks with the λ-bias, and token 0 becomes the cell's spectral
+summary. Stage D2 re-assembles the 16 cell summaries, prepends `spatial_cls`, runs 2 more pre-LN
+blocks (no bias — cells have no natural spatial ordering), and token 0 is `LayerNorm`ed and
+projected $\mathrm{Linear}(192{\to}256)\to\mathrm{BatchNorm1d}\to\mathrm{GELU}$.
 
 **Measured parameters: 1,241,640** (tokenizer 1,536 + λ-bias 1,320 + spectral blocks 594,048 +
-spatial blocks 594,048 + norm 384 + proj 49,920) — down from 2,180,866 pre-Tier-3 (`specf_dim`
-$256\to192$): with the wavelength axis now carried explicitly by token identity and the
-relative-λ bias, the branch needs less brute capacity to rediscover it. A checkpoint trained at
-40 bands loads `strict=True` into a 20-band instance and their embeddings agree on a spectrum
-both can sample, confirming the transfer property the λ-uniform tokenisation is built for.
+spatial blocks 594,048 + norm 384 + proj 49,920). With the wavelength axis carried explicitly by
+token identity and the relative-λ bias, the branch needs less brute capacity to rediscover it
+from an arbitrary index table. A checkpoint trained at 40 bands loads `strict=True` into a
+20-band instance and their embeddings agree on a spectrum both can sample, confirming the
+transfer property the λ-uniform tokenisation is built for.
 
 ### Branch masking (training-time regularisation)
 
@@ -399,10 +413,9 @@ $$
 \mathbf{p} = 0.20\times(0.75,\,0.75,\,0.0,\,0.75) = (0.15,\,0.15,\,0,\,0.15)
 $$
 
-— the **inverse** of the pre-Tier-3 profile. Before Tier 3, Branches C and D (the only
-non-duplicated branches) were dropped hardest and A/B (near-duplicates of each other) never at
-all; BR-3 inverts this: **drop the branches another branch can reconstruct, never the one that
-sees the full cube** (Branch C, factor $0$).
+Branch C — the branch that sees the full cube, and which no other branch can reconstruct — is
+never dropped; Branches A, B and D are dropped at equal, moderate rates. The policy protects the
+branch nothing else can reconstruct and drops the ones that can be.
 
 One keep/drop decision per branch is drawn **per batch** (not per sample), forced to keep at
 least one branch via a uniformly-random "safe index":
@@ -434,9 +447,7 @@ alongside — not folded into — Branch B.
 
 ### `CrossModalInteraction` — gated low-rank bilinear pool
 
-Replaces the pre-Tier-3 Perceiver-style latent cross-attention entirely (`output_proj`,
-`latents` and the attention blocks are gone). With $M=5$ modality tokens
-$\{\mathbf{b}_A,\mathbf{b}_B,\mathbf{b}_C,\mathbf{b}_D,\mathbf{b}_E\}$:
+With $M=5$ modality tokens $\{\mathbf{b}_A,\mathbf{b}_B,\mathbf{b}_C,\mathbf{b}_D,\mathbf{b}_E\}$:
 
 **Per-modality normalisation** is a **dataset statistic**, not a per-sample rescale —
 `BatchNorm1d`, one per modality, so a low-confidence sample's small-norm branch output stays
@@ -485,10 +496,7 @@ $$
 dropout.
 
 **Measured parameters: 496,005** (branch\_norms 2,560 · modality\_gate 165,253 · bilinear
-163,840 · bilinear\_out 33,024 · output 131,328) — a $\mathbf{-1.64\,M}$ reduction from the
-pre-Tier-3 fusion's 2,190,916, the single largest saving in the redesign. `model.fusion_heads`,
-which named the deleted Perceiver's attention head count, has **no home in the schema anymore**
-(deleted, not merely unwired — §3.8).
+163,840 · bilinear\_out 33,024 · output 131,328).
 
 ### `EmbedNet` — pre-norm residual refinement
 
@@ -497,12 +505,11 @@ $$
 \qquad \mathrm{MLP}: 256\to512\to256
 $$
 
-The only post-fusion refinement block (Tier 3 deleted the Perceiver's duplicate `output_proj`,
-which was this same block applied twice to the same vector). $\mathbf{e}$ is $\ell_2$-normalised
-to $\hat{\mathbf{e}}$ before the head, and consumed identically by SupCon/ProtoNCE (§4.4) and the
-t-SNE figure. Its terminal `LayerNorm` pins $\|\mathbf{e}\|\approx\sqrt{256}=16$ — the reason a
-zero-margin ArcFace head (Stage 1) is nearly what a plain linear head already was: the linear
-head was implicitly scoring a near-constant-norm embedding all along.
+The only post-fusion refinement block. $\mathbf{e}$ is $\ell_2$-normalised to $\hat{\mathbf{e}}$
+before the head, and consumed identically by SupCon/ProtoNCE (§4.4) and the t-SNE figure. Its
+terminal `LayerNorm` pins $\|\mathbf{e}\|\approx\sqrt{256}=16$ — the reason a zero-margin
+ArcFace head (Stage 1) is nearly what a plain linear head would be: the linear head would be
+implicitly scoring a near-constant-norm embedding all along.
 
 263,936 measured parameters.
 
@@ -537,11 +544,10 @@ $$
 
 `subcenter_tau_init = 0.20 \to subcenter_tau_final = 0.02` anneals across each stage, so every
 sub-centre receives gradient early (none can die before seeing data) and the assignment hardens
-back to the $\max_k$ it started as. $\varepsilon=10^{-3}$ (not the pre-Tier-1 $10^{-6}$) bounds
-$|d/dc\sqrt{1-c^2}|$ at $22.4$ rather than $707$ at the clamp boundary — a numerical-conditioning
-fix, not a gradient-amplification one: both embedding and weight are normalised, so the ArcFace
-gradient reaching either is $s\sin(\theta+m)$, bounded by $s$, with no singularity regardless of
-the clamp.
+back to the $\max_k$ it started as. $\varepsilon=10^{-3}$ bounds $|d/dc\sqrt{1-c^2}|$ at $22.4$
+at the clamp boundary — a numerical-conditioning choice, not a gradient-amplification one: both
+embedding and weight are normalised, so the ArcFace gradient reaching either is
+$s\sin(\theta+m)$, bounded by $s$, with no singularity regardless of the clamp.
 
 **Sub-centre load-balancing** (`subcenter_balance_weight = 0.01`) — a soft assignment
 $\pi_{i,k}=\operatorname{softmax}_k(\cos\theta_{i,y_i,k}/\tau)$ (or a one-hot at $\tau\le0$),
@@ -552,10 +558,10 @@ $$
 $$
 
 A uniform assignment costs exactly $0$; a fully-collapsed one costs $|\mathcal{C}|\log K$. This
-term keeps sub-centres from dying — sub-centres are seeded by spherical $k$-means over real
+term keeps sub-centres from dying: sub-centres are seeded by spherical $k$-means over real
 training embeddings (`init_subcentres_from_embeddings`, run once at Stage-2 entry on both the
-live model and the EMA shadow), not by the old "one vector plus $0.01k$ Gaussian jitter"
-bootstrap, which under hard-max assignment left decoy sub-centres permanently unreachable.
+live model and the EMA shadow), so the balance term and the seeding scheme together keep every
+sub-centre reachable under hard-max assignment.
 
 **Margined target logit**, with the classic "easy-margin" guard generalised to a hard cap on
 $\theta+m$ at $\pi/2$ (past which $-s\sin(\theta+m)$ would start decreasing rather than
@@ -584,7 +590,7 @@ $$
 (bit-identical to running the full computation at a vanishing margin) — this is the code path
 Stage 1 always runs.
 
-### The per-class margin — a signed precision/recall rule (HD-3)
+### The per-class margin — a signed precision/recall rule
 
 Computed **once per stage**, at Stage-2 entry, from precision/recall measured on the fit split
 (calibration split if carved, else `val`):
@@ -594,11 +600,9 @@ $$
 \qquad m_{\text{base}}{=}0.35,\; m_\Delta{=}0.20,\; m_{\min}{=}0.20,\; m_{\max}{=}0.50
 $$
 
-This **replaces** the pre-Tier-2 F1-driven rule $M(c)=m_{\text{base}}+m_\Delta(1-F_1^{(c)})$, and
-the sign is the whole point: an additive angular margin *shrinks* a class's decision region, so
+The sign is the whole point: an additive angular margin *shrinks* a class's decision region, so
 an **over-claiming** class ($R_c > P_c$) should have its margin *raised*, and an
-**under-claiming** one ($R_c < P_c$, losing recall) should have it *lowered* — the F1-driven rule
-moved every low-F1 class the same direction regardless of which error it was making. Two classes
+**under-claiming** one ($R_c < P_c$, losing recall) should have it *lowered*. Two classes
 sharing the same $F_1$ can therefore land on opposite sides of $m_{\text{base}}$.
 
 Stages 1/2/3 read this vector through three different lenses (§4.1–§4.3): Stage 1 always passes
@@ -693,31 +697,30 @@ Input contract: $x\in\mathbb{R}^{B\times40\times64\times64}$, `float32`.
 
 ## 3.7 Parameter budget
 
-Measured on the shipped configuration (`configs/model/spectral_quadnet_v4.yaml`):
+Measured on the shipped configuration (`configs/model/quadnet_v4_audited.yaml`):
 
-| Component | Parameters | Share | Pre-Tier-3 |
-|---|---:|---:|---:|
-| `se` (MaskedSpectralECA) | 6 | 0.00 % | 6 |
-| `wl_pe_cnn` (buffer only, shared) | 0 | 0.00 % | 0 |
-| `branch_a` — Spectral Profile | 603,089 | 11.6 % | 592,753 |
-| `branch_b` — Index Bank | 94,896 | 1.8 % | 686,424 |
-| `branch_c` — Spatial CNN | 2,230,646 | 42.9 % | 1,694,158 |
-| `branch_d` — SpecFormer | 1,241,640 | 23.9 % | 2,180,866 |
-| `morphology_embed` | 17,216 | 0.3 % | — (new) |
-| `cross_interaction` — fusion | 496,005 | 9.6 % | 2,190,916 |
-| `aux_head_{a,b,c,d}` — $4\times44{,}506$ | 178,024 | 3.4 % | 178,024 |
-| `embed_net` | 263,936 | 5.1 % | 263,936 |
-| `linear_head` | — (removed) | — | 23,130 |
-| `arcface_head` ($270\times256$) | 69,120 | 1.3 % | 69,120 |
-| **Total (all trainable)** | **5,194,578** | 100 % | **7,879,333** |
+| Component | Parameters | Share |
+|---|---:|---:|
+| `se` (MaskedSpectralECA) | 6 | 0.00 % |
+| `wl_pe_cnn` (buffer only, shared) | 0 | 0.00 % |
+| `branch_a` — Spectral Profile | 603,089 | 11.6 % |
+| `branch_b` — Index Bank | 94,896 | 1.8 % |
+| `branch_c` — Spatial CNN | 2,230,646 | 42.9 % |
+| `branch_d` — SpecFormer | 1,241,640 | 23.9 % |
+| `morphology_embed` | 17,216 | 0.3 % |
+| `cross_interaction` — fusion | 496,005 | 9.6 % |
+| `aux_head_{a,b,c,d}` — $4\times44{,}506$ | 178,024 | 3.4 % |
+| `embed_net` | 263,936 | 5.1 % |
+| `arcface_head` ($270\times256$) | 69,120 | 1.3 % |
+| **Total (all trainable)** | **5,194,578** | 100 % |
 
-A $-2.68\text{M}$ ($-34\%$) reduction overall, dominated by fusion ($-1.64\text{M}$, the Perceiver
-replacement) and Branch B ($-0.59\text{M}$, dropping the rank-2 moment tensor), partially spent
-back on Branch C ($+0.54\text{M}$, the new joint spectral-spatial 3-D stem) and a new
-`morphology_embed` (+17k). Checkpoint-persisted buffer elements: 25,013 (state\_dict element
-total: 5,219,591). A further $\sim$253k buffer elements exist at runtime but are **not**
-persisted — dominated by `ContinuumDepths`' four $(40,40,40)$ chord-interpolation tensors,
-recomputed from the wavelength grid on every construction rather than checkpointed.
+Branch C (the joint spectral-spatial CNN) accounts for the largest single share of the budget
+(42.9 %), followed by Branch D's SpecFormer (23.9 %) and Branch A's spectral-profile stem
+(11.6 %); fusion, the two spectral branches' MLP heads and the auxiliary/embedding stack make up
+the remainder. Checkpoint-persisted buffer elements: 25,013 (state\_dict element total:
+5,219,591). A further $\sim$253k buffer elements exist at runtime but are **not** persisted —
+dominated by `ContinuumDepths`' four $(40,40,40)$ chord-interpolation tensors, recomputed from
+the wavelength grid on every construction rather than checkpointed.
 
 ---
 
@@ -725,13 +728,13 @@ recomputed from the wavelength grid on every construction rather than checkpoint
 
 1. **Attribute names are checkpoint schema.** The 14 top-level names — `se`, `wl_pe_cnn`,
    `branch_{a,b,c,d}`, `morphology_embed`, `cross_interaction`, `aux_head_{a,b,c,d}`,
-   `embed_net`, `arcface_head` — are the keys of every schema-v3 checkpoint (`SCHEMA_VERSION =
-   3`). There is no `linear_head`.
-2. **v1/v2 → v3 checkpoints cannot be migrated — this is a hard refusal, not a partial load.**
-   `engine/checkpoint.py::remap_state_dict` raises `SchemaTooOldError` for any bundle at schema
-   $\le2$: Branches B, C and D changed what they *consume*, not merely how many parameters they
-   consume it with, so no tensor-level remap exists. The only paths are retraining or checking
-   out the Tier-2 tree to re-score an archived checkpoint.
+   `embed_net`, `arcface_head` — are the keys of every checkpoint written by this model
+   (`SCHEMA_VERSION = 3`). There is no `linear_head`.
+2. **Checkpoints are schema-checked on load, not partially loaded.**
+   `engine/checkpoint.py::load_ckpt` reads the bundle's `schema_version` and only accepts the
+   current schema; an older or otherwise mismatched bundle raises `SchemaTooOldError` rather
+   than being loaded partially, since a shape match on some tensors does not imply the
+   remaining ones mean the same thing.
 3. **Construction order is initialisation.** Every `_init_weights` draws from the same global
    torch RNG stream, in `__init__` order: `se → wl_pe_cnn → branch_a → branch_b → branch_c →
    branch_d → morphology_embed → cross_interaction → aux_head_{a,b,c,d} → embed_net →
@@ -775,16 +778,12 @@ recomputed from the wavelength grid on every construction rather than checkpoint
 
 ### Config keys — full coverage, one call-site-level exception
 
-Unlike the pre-Tier-3 model, `tests/unit/test_config_wiring.py` currently asserts **every**
-`cfg.model.*` key is either forward-observable (perturbing it changes eval-mode logits),
-train-mode-only observable (a dropout rate), or has an explicit, named reason it cannot be
-(`branch_drop_prob`: eval never masks; `subcenter_tau_final`: the endpoint of an epoch-driven
-schedule, not a constructor argument; `subcenter_balance_weight`: read by the loss, not the
-model). There is no known dead `cfg.model.*` key today. One call-site-level parameter — not a
-config key — is unused: `SpectralQuadNet` computes `stride = cfg.model.specf_patch // 2` and
-passes it to `SpecFormerBranch.__init__`, but the branch derives its token count directly from
-`patch_size` and never reads the `stride` argument it receives.
-
-`model.fusion_heads`, which named the deleted Perceiver fusion's attention head count, is
-**deleted from the schema entirely** (not merely unwired) — there is nothing left in the gated
-bilinear pool for a head count to parameterise.
+`tests/unit/test_config_wiring.py` asserts **every** `cfg.model.*` key is either
+forward-observable (perturbing it changes eval-mode logits), train-mode-only observable (a
+dropout rate), or has an explicit, named reason it cannot be (`branch_drop_prob`: eval never
+masks; `subcenter_tau_final`: the endpoint of an epoch-driven schedule, not a constructor
+argument; `subcenter_balance_weight`: read by the loss, not the model). There is no known dead
+`cfg.model.*` key today. One call-site-level parameter — not a config key — is unused:
+`SpectralQuadNet` computes `stride = cfg.model.specf_patch // 2` and passes it to
+`SpecFormerBranch.__init__`, but the branch derives its token count directly from `patch_size`
+and never reads the `stride` argument it receives.

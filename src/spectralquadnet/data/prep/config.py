@@ -129,6 +129,36 @@ class BandSelectionConfig:
     svc_C: float = 0.1  # Conservative C; avoids overfit on mean spectra
     elbow_pct: float = 0.98  # Fraction of peak accuracy used for elbow
 
+    # ── IC-4 / CHANGES §4.1 — selection inside the resampling loop ────
+    #
+    # mRMR relevance was `mutual_info_classif(X, y)` over **every** patch,
+    # including the 1,294 that become test. The 40 selected bands are a
+    # hyperparameter of the input representation, chosen with test labels in
+    # scope. Feature selection outside the resampling loop is a known and
+    # quantified source of optimism — Ambroise & McLachlan, PNAS
+    # 99(10):6562-6566 (2002), who show cross-validated error estimates become
+    # severely optimistic when gene selection precedes CV, and obtain near-zero
+    # apparent error on *random labels*. This is genuine label leakage,
+    # independent of the split protocol, and it contaminates `grouped` too.
+    #
+    #: Which fold's training rows the selection is restricted to. ``None``
+    #: reproduces the leaky whole-corpus selection, kept because A2's control
+    #: arm is exactly that. An integer restricts every step — decorrelation,
+    #: FDR, mRMR, SPA and the CV curve — to that fold's training patches.
+    fold: int | None = None
+    #: ``(N,)`` scan ids, required when :attr:`fold` is set: the training rows
+    #: have to be the ones the *training run* will use, and under the grouped
+    #: protocol that is a group-disjoint selection.
+    groups_path: str = "./dataset/groups.npy"
+    #: Split parameters, mirrored from ``cfg.data`` so the selector reproduces
+    #: the training run's partition exactly rather than approximating it.
+    split_scheme: str = "grouped"
+    split_eval_frac: float = 0.30
+    calib_frac: float = 0.15
+    #: Subdirectory of :attr:`output_dir` per-fold artifacts are written to, so
+    #: a fold's band array cannot be mistaken for the whole-corpus one.
+    fold_subdir: str = "folds"
+
     # Memory
     chunk_size: int = 2048
     seed: int = 42

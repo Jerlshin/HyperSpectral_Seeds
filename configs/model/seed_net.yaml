@@ -1,0 +1,106 @@
+# SpectralSeedNet — the proposed replacement (CHANGES §16.2 / IC-10).
+#
+# Two information pathways, because the evidence supports exactly two:
+#
+#   LDA on 40-band mean spectra ......... 0.5916 accuracy   (leaky protocol)
+#   the full 5.19 M model ............... ~0.845            (same protocol)
+#
+# ~59 points are available from the global spectrum alone and ~25 more from
+# everything beyond it, of which the fusion gate assigns 87% to the joint
+# spectral-spatial operator. So: a joint spectral-spatial CNN, and the mean
+# spectrum. Everything the audited model had besides those two was a variation
+# on one of them, competing for the same gradient.
+#
+#   ≈2.80 M parameters, ≈1.40 GFLOP/sample
+#   = 54% of the parameters and 34% of the compute of quadnet_v4_audited.
+defaults:
+  - base_model
+  - _self_
+
+arch: spectral_seed_net
+
+# ── Branch dropout: off ───────────────────────────────────────────────
+# Two pathways remain, and the audited evidence is that an asymmetric policy
+# biases the fusion gate rather than regularising it (CHANGES §5.2). Dropping
+# one of two pathways is an ablation, not a regulariser.
+branch_drop_prob: 0.0
+branch_drop_profile: [1.0, 1.0, 1.0, 1.0]
+# Unread by this architecture (it has no lettered branches) but part of the
+# shared schema; `[a, b, c, d]` keeps a config diff against the audited model
+# readable.
+enabled_branches: [a, b, c, d]
+# Concatenation + MLP. A rank-128 second-order pool over ten modality pairs is
+# a large hypothesis class to fit from 6,036 samples in service of combining
+# one strong signal and one weak one (CHANGES §5.3). A5 measures whether the
+# bilinear term earns its 0.50 M parameters back.
+fusion_mode: concat_mlp
+
+# ── Head: K=1, single global margin (IC-9) ────────────────────────────
+# The seeded sub-centres were near-collinear (worst within-class cosine 0.987),
+# so K=3 tripled the head's parameters to keep degenerate structure alive. At
+# K=1 the pooling temperature and the KL load-balancing term are both
+# meaningless, so both are off.
+subcenter_K: 1
+subcenter_tau_init: 0.0
+subcenter_tau_final: 0.0
+subcenter_balance_weight: 0.0
+# Retained in code, off by default, each measured in isolation by A7.
+per_class_margin: false
+pairwise_penalty: false
+
+# ── Auxiliary supervision: one head, fixed weight (IC-5) ──────────────
+# Four heads under a saturating GradNorm controller made the auxiliary term
+# ≈7.8x the main classification loss at epoch 20, so the fused head — the only
+# path that produces an evaluation logit — carried ≈11% of the gradient signal
+# for the first third of training (CHANGES §7.1). One head, on the spatial
+# path, at a weight nothing adapts.
+aux_head_hidden: 128
+aux_head_weight: 0.2
+
+# ── Spatial path — Branch C verbatim (BR-3 / T3-2) ────────────────────
+# The only component with convergent evidence of contribution: rising fused
+# influence, the largest parameter share, and the only operator in the network
+# that can see texture x spectral position.
+stem_channels: 192
+# A10's capacity lever. 1.0 is the §16.2 network; the ablation sweeps
+# {0.5, 0.75, 1.0, 1.5} to answer "is the model too big" with data.
+spatial_width_mult: 1.0
+
+# ── Spectral path ─────────────────────────────────────────────────────
+# [SoftIndexBank(64) || ContinuumDepths(16) || snv(x̄)(40) || D1(40) || D2(40)
+#  || morph(8)] -> LayerNorm -> MLP(208 -> 256 -> 256).
+#
+# The three SNV/derivative blocks are Branch A's physics, kept as FIXED,
+# zero-parameter features. That is what makes removing Branch A a relocation
+# rather than a loss: the branch cost 60% of the forward FLOPs to replicate a
+# six-block tower stack over 64 grid cells, and ended at 5.6% influence, but
+# the Savitzky-Golay operators it was built around are exact on the irregular
+# λ grid and cost one matmul.
+index_bank_size: 64
+continuum_depths: 16
+spectral_hidden: 256
+
+# Morphometrics enter the model ONCE, here. In the audited model they were
+# concatenated into Branch B *and* embedded as a fifth fusion token, which is
+# double-counting rather than a design.
+n_morphometrics: 8
+
+# ── Shared front end ──────────────────────────────────────────────────
+# MaskedSpectralECA is 6 parameters. Free. Kept.
+wl_embed_dim: 16
+fusion_drop: 0.10
+
+# ── Keys belonging to removed branches ────────────────────────────────
+# Unread by this architecture. Retained in the schema — not deleted — because
+# `quadnet_v4_audited` still reads them and A3 is what decides whether the
+# removal stands. `tests/unit/test_config_wiring.py` excuses them for this
+# arch specifically, so a key dead in *both* architectures is still caught.
+grid_size_a: 8
+grid_size_d: 4
+specf_patch: 8
+specf_dim: 192
+specf_heads: 8
+specf_layers: 4
+specf_drop: 0.15
+fusion_rank: 128
+fusion_gate_hidden: 128

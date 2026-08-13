@@ -14,12 +14,34 @@ Requires the ``prep`` extra::
 
 Usage
 ─────
-    python scripts/select_bands.py
+    python scripts/select_bands.py                       # whole corpus (LEAKY)
+    python scripts/select_bands.py --fold 0              # inside fold 0
+    python scripts/select_bands.py --per-fold            # every protocol fold
     python scripts/select_bands.py --n-candidates 5 10 20 40
     python scripts/select_bands.py --patches-path ./dataset/patches.npy --seed 0
 
-Produces the reduced patch array and wavelength CSV that
-``configs/data/spa40_90class.yaml`` points at.
+IC-4 / CHANGES §4.1 — where the selection sits relative to the split
+────────────────────────────────────────────────────────────────────
+Without ``--fold``, mRMR relevance is ``mutual_info_classif(X, y)`` over **every
+patch**, including the ones that become test. The 40 selected bands are a
+hyperparameter of the input representation, chosen with test labels in scope.
+Feature selection outside the resampling loop is a known and quantified source
+of optimism (Ambroise & McLachlan, PNAS 99(10):6562-6566, 2002 — who obtain
+near-zero apparent error on *random labels* that way), and it is genuine label
+leakage independent of the split protocol: it contaminates ``grouped`` too.
+
+``--fold k`` restricts every step — the correlation pre-filter, the FDR
+diagnostic, mRMR, SPA and the cross-validated curve — to fold ``k``'s training
+patches, and writes to ``dataset/folds/patches_fold<k>_40b.npy``. The reduced
+cube still covers every row, because the model has to score eval patches; what
+changes is whose labels chose the bands.
+
+``--per-fold`` runs both protocol folds, which is what ablation A2 compares
+against the whole-corpus arm.
+
+Produces the reduced patch array and wavelength CSV a data config points at:
+``configs/data/spa40_90class*.yaml`` for the flat names, and A2's
+``bands_within_fold`` arm for the per-fold ones.
 """
 
 from __future__ import annotations
@@ -70,30 +92,65 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Fraction of peak accuracy that defines the elbow.",
     )
 
+    protocol = parser.add_argument_group("protocol (IC-4)")
+    protocol.add_argument(
+        "--fold",
+        type=int,
+        default=None,
+        help=(
+            "Restrict the selection to this fold's TRAINING patches. Omitted, the "
+            "selection sees every patch's label including the eval ones — which is "
+            "leakage, and is kept only as ablation A2's control arm."
+        ),
+    )
+    protocol.add_argument(
+        "--per-fold",
+        action="store_true",
+        help="Run --fold for every fold in --folds, writing one band set each.",
+    )
+    protocol.add_argument("--folds", type=int, nargs="+", default=[0, 1])
+    protocol.add_argument("--groups-path", default=d.groups_path)
+    protocol.add_argument(
+        "--split-scheme", default=d.split_scheme, choices=["grouped", "stratified"]
+    )
+    protocol.add_argument("--split-eval-frac", type=float, default=d.split_eval_frac)
+    protocol.add_argument("--calib-frac", type=float, default=d.calib_frac)
+
     parser.add_argument("--chunk-size", type=int, default=d.chunk_size)
     parser.add_argument("--seed", type=int, default=d.seed)
     return parser.parse_args(argv)
 
 
+def _config_for(args: argparse.Namespace, fold: int | None) -> BandSelectionConfig:
+    return BandSelectionConfig(
+        patches_path=args.patches_path,
+        labels_path=args.labels_path,
+        wavelength_path=args.wavelength_path,
+        output_dir=args.output_dir,
+        corr_threshold=args.corr_threshold,
+        n_select_max=args.n_select_max,
+        n_candidates=list(args.n_candidates),
+        mi_neighbors=args.mi_neighbors,
+        cv_folds=args.cv_folds,
+        svc_C=args.svc_C,
+        elbow_pct=args.elbow_pct,
+        chunk_size=args.chunk_size,
+        seed=args.seed,
+        fold=fold,
+        groups_path=args.groups_path,
+        split_scheme=args.split_scheme,
+        split_eval_frac=args.split_eval_frac,
+        calib_frac=args.calib_frac,
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
-    select_bands(
-        BandSelectionConfig(
-            patches_path=args.patches_path,
-            labels_path=args.labels_path,
-            wavelength_path=args.wavelength_path,
-            output_dir=args.output_dir,
-            corr_threshold=args.corr_threshold,
-            n_select_max=args.n_select_max,
-            n_candidates=list(args.n_candidates),
-            mi_neighbors=args.mi_neighbors,
-            cv_folds=args.cv_folds,
-            svc_C=args.svc_C,
-            elbow_pct=args.elbow_pct,
-            chunk_size=args.chunk_size,
-            seed=args.seed,
-        )
-    )
+    folds: list[int | None] = list(args.folds) if args.per_fold else [args.fold]
+    for fold in folds:
+        if len(folds) > 1:
+            print(f"\n{'#' * 70}\n#  FOLD {fold}\n{'#' * 70}")
+        select_bands(_config_for(args, fold))
 
 
 if __name__ == "__main__":

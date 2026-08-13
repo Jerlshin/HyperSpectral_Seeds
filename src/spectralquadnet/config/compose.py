@@ -16,7 +16,15 @@ from omegaconf import DictConfig
 
 from spectralquadnet.config.schema import register_configs
 
-DEFAULT_EXPERIMENT = "experiment/output_v12_spa40"
+#: The composition ``python train.py`` runs with no arguments — CHANGES §16-§19:
+#: ``SpectralSeedNet``, one stage, leave-one-bundle-out, selection on ``calib``.
+DEFAULT_EXPERIMENT = "experiment/seednet_grouped"
+
+#: The audited four-branch / three-stage / stratified configuration, kept as the
+#: control arm for A1, A3 and A8. Named here rather than spelled at each call
+#: site so the regression tests, the ablation registry and the docs cannot
+#: disagree about which config *is* the baseline.
+AUDITED_EXPERIMENT = "experiment/quadnet_audited"
 
 
 def config_dir() -> Path:
@@ -45,7 +53,8 @@ def load_experiment_config(
     Parameters
     ----------
     experiment
-        Config name relative to ``configs/`` — e.g. ``"experiment/output_v12_spa40"``.
+        Config name relative to ``configs/`` — e.g. :data:`DEFAULT_EXPERIMENT`
+        or :data:`AUDITED_EXPERIMENT`.
     overrides
         Hydra override strings, e.g. ``["stage1.max_lr=1e-4"]``.
     config_path

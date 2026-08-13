@@ -1,29 +1,39 @@
-"""Final test-set evaluation, with and without 12-view TTA.
+"""Score the held-out split **once**, with and without TTA (CHANGES §19.4).
 
-Writes ``test_preds_noTTA.npy``, ``test_preds_TTA.npy`` and
-``test_targets.npy`` under ``cfg.output_dir``. Two details that matter for
-reproducing a reported number: the checkpoint loaded is whichever stage
-``_pick_best_checkpoint`` ranks highest by ``val_f1`` — not necessarily Stage 3
-— and the weights evaluated are the ones that **won that ``val_f1``**.
+Two things this function is careful about, and both were defects in the audited
+project:
 
-Every stage saves on ``max(F1_live, F1_ema)`` and writes the max to the sidecar
-as ``val_f1``, but this function used to evaluate the EMA shadow
-unconditionally. When the live model won the max, the shipped test number came
-from a model that had never scored it, and the artifacts did not record which
-had won, making the mismatch unfalsifiable after the fact (IMPROVEMENT_PLAN
-§2.1.4, T1-8). The stages now record ``best_source`` in the bundle and this
-function honours it. Bundles written before Tier 1 carry no such key and fall
-back to ``"ema"``, which is exactly the behaviour they were produced under —
-so the archived ``output_v12_spa40`` numbers still reproduce.
+**It evaluates the weights that won the selection score.** Every stage saves on
+``max(F1_live, F1_ema)`` and writes that max to the sidecar as ``val_f1``, but
+this function used to evaluate the EMA shadow unconditionally. When the live
+model won the max, the reported number came from a model that had never scored
+it, and the artifacts did not record which had won — making the mismatch
+unfalsifiable after the fact. The stages record ``best_source`` and this honours
+it. Bundles written before that key default to ``"ema"``, which is exactly the
+behaviour they were produced under.
+
+**It reports an interval, a confusion matrix and a per-class table, not a
+number.** Sampling noise on a ~1,300-patch split is ±0.020 at 95%; the audited
+run's entire Stage-2 + Stage-3 gain was +0.005. A bare macro-F1 on this dataset
+is not interpretable and this function refuses to emit one.
+
+Reporting discipline
+────────────────────
+The split scored here is ``cfg.evaluation.report_split``, and under the grouped
+protocol that is ``val ∪ test`` **together**: they are two halves of the same
+held-out acquisition bundle, so they are not independent of each other and
+scoring one after selecting on the other would still be partially
+self-fulfilling. Selection happened on ``calib``. This runs once, after every
+design decision is frozen — that ordering is the claim, and nothing in the code
+can enforce it, so the run records which split selected and which was reported
+and the paper states it.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
 import torch
-from sklearn.metrics import accuracy_score, classification_report, f1_score
 from torch.utils.data import DataLoader
 
 from spectralquadnet.engine.batch import side_inputs, unpack_batch
@@ -31,12 +41,16 @@ from spectralquadnet.engine.checkpoint import load_ckpt
 from spectralquadnet.engine.diagnostics import hardest_classes_report
 from spectralquadnet.engine.tta import tta_predict
 from spectralquadnet.models.ema import ModelEMA
+from spectralquadnet.reporting.artifacts import RunArtifacts, publish
+from spectralquadnet.reporting.figures import render_run_figures
+from spectralquadnet.reporting.metrics import ClassificationResult, score
 from spectralquadnet.tracking.base import ExperimentTracker, NullTracker
 from spectralquadnet.utils.distributed import DistContext, gather_concat
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    import torch.nn as nn
+
     from spectralquadnet.config.schema import ExperimentConfig
-    from spectralquadnet.models.spectral_quadnet import SpectralQuadNet
 
 #: What a bundle without a recognised ``best_source`` is assumed to have been
 #: selected on — the pre-Tier-1 behaviour, so archived runs keep reproducing.
@@ -50,28 +64,28 @@ KNOWN_BEST_SOURCES = frozenset({"live", "ema", "swa"})
 
 def final_evaluation(
     cfg: ExperimentConfig | Any,
-    model: SpectralQuadNet,
+    model: nn.Module,
     ema: ModelEMA,
     test_ldr: DataLoader[Any],
     device: torch.device,
     best_ckpt: str,
     tracker: ExperimentTracker | None = None,
     dist: DistContext | None = None,
-) -> None:
-    """Load the best checkpoint's selected weights and report test-set metrics with/without TTA.
+    run_summary: dict[str, Any] | None = None,
+) -> dict[str, ClassificationResult]:
+    """Load the selected weights and score the reporting split, ±TTA.
 
     Args:
-        cfg: Composed experiment config.
-        model: Model instance to load the checkpoint's live weights into.
-            Evaluated when the bundle's ``best_source`` is ``"live"``.
-        ema: EMA wrapper; its shadow is loaded from the checkpoint and
-            evaluated when ``best_source`` is ``"ema"`` or ``"swa"`` (the
-            default for bundles that predate the key).
-        test_ldr: Test-set loader.
-        device: Device to evaluate on.
-        best_ckpt: Path to the checkpoint to load and evaluate.
-        tracker: Experiment tracker for reporting metrics/tables; ``None``
-            logs nowhere.
+        best_ckpt: Checkpoint to load. Its ``best_source`` decides which of the
+            two weight sets is evaluated.
+        run_summary: Run identity — architecture, protocol, fold, seed,
+            parameter count — written into ``results/run.json`` so an
+            aggregator can build a table from the results tree alone.
+
+    Returns:
+        ``{"no_tta": …, "tta": …}`` (the second only when
+        ``cfg.evaluation.tta``), so a caller in-process can compare arms
+        without re-reading the files.
     """
     trk = tracker if tracker is not None else NullTracker()
     dist = dist or DistContext()
@@ -87,78 +101,126 @@ def final_evaluation(
     eval_model = model if source == "live" else ema.shadow
     eval_model.eval()
 
+    report_split = str(getattr(cfg.evaluation, "report_split", "test"))
+    select_split = (run_summary or {}).get("select_split", "?")
+    want_tta = bool(getattr(cfg.evaluation, "tta", True))
+    n_boot = int(getattr(cfg.evaluation, "bootstrap_samples", 0))
+    epoch = int(ckpt.get("epoch", 0))
+
     trk.banner(
-        "FINAL TEST EVALUATION",
+        "FINAL EVALUATION — scored once, after freezing",
         [
-            f"Schema v{ckpt.get('schema_version', 1)}  |  "
-            f"Checkpoint: ep {ckpt['epoch']} | {ckpt['stage']} | "
-            f"F1={ckpt.get('val_f1', 0):.3f}  Acc={ckpt.get('val_acc', 0):.1%}",
+            f"Schema v{ckpt.get('schema_version', 1)} ({ckpt.get('arch', 'spectral_quadnet')})  |  "
+            f"Checkpoint: ep {epoch} | {ckpt['stage']} | "
+            f"selection F1={ckpt.get('val_f1', 0):.4f}",
             f"Selected weights: {source}"
             + (
                 "" if recorded in KNOWN_BEST_SOURCES else "  (assumed — not recorded in the bundle)"
             ),
-            f"TTA: {cfg.tta_spatial} spatial + {cfg.tta_spectral} spectral "
-            f"= {cfg.tta_spatial + cfg.tta_spectral} total views",
+            f"Selected on: {select_split}  →  Reported on: {report_split} "
+            f"({len(test_ldr.dataset)} patches)",  # type: ignore[arg-type]
+            (
+                f"TTA: {cfg.tta_spatial} spatial + {cfg.tta_spectral} spectral "
+                f"= {cfg.tta_spatial + cfg.tta_spectral} views, reported separately"
+                if want_tta
+                else "TTA: off"
+            ),
+            (
+                f"Bootstrap: {n_boot} resamples, 95% percentile CI"
+                if n_boot
+                else "Bootstrap: off — the reported number carries no interval"
+            ),
         ],
     )
 
-    results = {}
-    for tag, use_tta in [("No TTA", False), ("TTA   ", True)]:
-        preds, targets = [], []
-        # `inference_mode` and on-device accumulation, for the same reason as
-        # `engine/evaluate.py::_run_eval`: a `.cpu()` per batch is a queue drain
-        # per batch, and the TTA pass runs twelve forwards for each of them.
-        with torch.inference_mode():
-            for batch in test_ldr:
-                x, y, mask, morph = unpack_batch(batch, device)
-                side = side_inputs(mask, morph)
-                logits = (
-                    tta_predict(eval_model, x, cfg.tta_spatial, cfg.tta_spectral, **side)
-                    if use_tta
-                    else eval_model(x, **side)
-                )
-                preds.append(logits.argmax(1))
-                targets.append(y)
-        p = gather_concat(dist, torch.cat(preds)).cpu().numpy()
-        t = gather_concat(dist, torch.cat(targets)).cpu().numpy()
-        results[tag] = (p, t)
-        f1_macro = f1_score(t, p, average="macro", zero_division=0)
-        f1_weighted = f1_score(t, p, average="weighted", zero_division=0)
-        acc = accuracy_score(t, p)
+    artifacts = RunArtifacts.for_run(cfg.output_dir) if dist.is_main else None
+    results: dict[str, ClassificationResult] = {}
+
+    variants: list[tuple[str, bool]] = [("no_tta", False)]
+    if want_tta:
+        variants.append(("tta", True))
+
+    for key, use_tta in variants:
+        preds, targets = _predict(cfg, eval_model, test_ldr, device, dist, use_tta)
+        split_tag = f"{report_split}_{key}"
+        result = score(
+            targets,
+            preds,
+            num_classes=int(cfg.data.num_classes),
+            split=split_tag,
+            n_boot=n_boot,
+            seed=int(cfg.seed),
+            context={**(run_summary or {}), "tta": use_tta, "epoch": epoch},
+        )
+        results[key] = result
+
+        ci = f"  CI95={result.macro_f1_ci}" if result.macro_f1_ci else ""
         trk.log_message(
-            f"[{tag}]  F1(macro)={f1_macro:.4f}  F1(wt)={f1_weighted:.4f}  Acc={acc:.1%}",
+            f"[{'TTA   ' if use_tta else 'No TTA'}]  "
+            f"macroF1={result.macro_f1:.4f}{ci}  "
+            f"balAcc={result.balanced_accuracy:.4f}  Acc={result.accuracy:.1%}",
             level="plain",
         )
-        prefix = "test_tta" if use_tta else "test"
-        trk.log_scalars(
-            {
-                f"{prefix}/f1_macro": float(f1_macro),
-                f"{prefix}/f1_weighted": float(f1_weighted),
-                f"{prefix}/acc": float(acc),
-            },
-            step=int(ckpt["epoch"]),
+        trk.log_table(
+            f"hardest_classes/{split_tag}",
+            hardest_classes_report(result.per_class_f1),
+            step=epoch,
         )
+        if artifacts is not None:
+            artifacts.write_predictions(split_tag, preds, targets)
+            publish(artifacts, result, trk, step=epoch, prefix=split_tag)
 
-    p_tta, t_tta = results["TTA   "]
-    trk.log_message("Classification Report (TTA):", level="plain")
-    trk.log_message(classification_report(t_tta, p_tta, zero_division=0), level="plain")
+    if artifacts is not None:
+        artifacts.write_manifest(
+            {
+                "run": dict(run_summary or {}),
+                "checkpoint": {
+                    "path": best_ckpt,
+                    "epoch": epoch,
+                    "stage": ckpt.get("stage"),
+                    "best_source": source,
+                    "selection_f1": float(ckpt.get("val_f1", 0.0)),
+                    "arch": ckpt.get("arch", "spectral_quadnet"),
+                    "schema_version": ckpt.get("schema_version"),
+                },
+                "results": {k: v.as_dict() for k, v in results.items()},
+            }
+        )
+        if bool(getattr(cfg.evaluation, "save_artifacts", True)):
+            written = render_run_figures(artifacts, results)
+            trk.log_message(f"Figures ({len(written)}) → {artifacts.figures}", level="plain")
+        trk.log_message(f"Results → {artifacts.results}", level="plain")
 
-    # Per-class failure analysis — the bottom-K of the same per-class F1
-    # the report above already tabulates.
-    per_class = f1_score(
-        t_tta, p_tta, average=None, zero_division=0, labels=list(range(cfg.data.num_classes))
-    )
-    trk.log_table(
-        "hardest_classes/test_tta",
-        hardest_classes_report({i: float(v) for i, v in enumerate(per_class)}),
-        step=int(ckpt["epoch"]),
-    )
+    return results
 
-    if not dist.is_main:
-        return
 
-    out = cfg.output_dir
-    np.save(f"{out}/test_preds_noTTA.npy", results["No TTA"][0])
-    np.save(f"{out}/test_preds_TTA.npy", p_tta)
-    np.save(f"{out}/test_targets.npy", t_tta)
-    trk.log_message(f"Outputs saved → {out}", level="plain")
+@torch.inference_mode()
+def _predict(
+    cfg: ExperimentConfig | Any,
+    eval_model: nn.Module,
+    loader: DataLoader[Any],
+    device: torch.device,
+    dist: DistContext,
+    use_tta: bool,
+) -> tuple[Any, Any]:
+    """One pass over ``loader``, returning ``(preds, targets)`` as numpy arrays.
+
+    ``inference_mode`` and on-device accumulation for the same reason
+    ``engine/evaluate.py::_run_eval`` uses them: a ``.cpu()`` per batch is a
+    queue drain per batch, and the TTA pass runs twelve forwards for each.
+    """
+    preds, targets = [], []
+    for batch in loader:
+        x, y, mask, morph = unpack_batch(batch, device)
+        side = side_inputs(mask, morph)
+        logits = (
+            tta_predict(eval_model, x, cfg.tta_spatial, cfg.tta_spectral, **side)
+            if use_tta
+            else eval_model(x, **side)
+        )
+        preds.append(logits.argmax(1))
+        targets.append(y)
+        del x, mask, morph, logits
+    p = gather_concat(dist, torch.cat(preds)).cpu().numpy()
+    t = gather_concat(dist, torch.cat(targets)).cpu().numpy()
+    return p, t

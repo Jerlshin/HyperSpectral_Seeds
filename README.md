@@ -1,364 +1,330 @@
-# SpectralQuadNet
+# SpectralSeedNet — rice-variety classification from VIS-NIR hyperspectral seed images
 
-A four-branch hyperspectral CNN/Transformer that classifies **90 rice seed varieties** from
-40-band VIS-NIR (385–1000 nm) 64×64 patches, trained with a three-stage curriculum and evaluated
-with 12-view test-time augmentation.
+90 rice varieties, 8,624 single-kernel patches, 40 SPA-selected bands, 64×64 spatial.
+Source: [Zenodo 3241923](https://zenodo.org/records/3241923) (Vu et al., Strathclyde).
 
-| Metric (held-out test split, 1,294 patches) | Score |
+---
+
+## Read this first
+
+This repository was restructured in response to an independent audit
+([`CHANGES.md`](CHANGES.md)). The audit's central finding was not about the architecture:
+
+> The source dataset images each variety as **two bundles of 48 kernels, each bundle a tray of
+> one single variety**. The original run split at the **patch** level, so all 180 acquisition
+> bundles appeared in training *and* in evaluation. A model that learns "this tray's residual
+> radiometric signature ⇒ class X" scores correctly. The reported 0.847 macro-F1 was a mixture
+> of variety recognition and acquisition-bundle recognition, and the mixing ratio had never been
+> measured.
+
+So the headline number this project aims to produce is **not** an accuracy. It is:
+
+> *How much of rice-seed HSI classification performance on this dataset is variety recognition,
+> and how much is acquisition recognition?*
+
+No published work on this dataset that the audit could access answers that. Everything below is
+organised around making that question answerable.
+
+**Consequences you should expect:**
+
+- The **grouped** (leave-one-acquisition-bundle-out) number will be **lower** than the
+  patch-level one, probably substantially. That is the correct direction — the previous number
+  was measuring something else.
+- Published work on this exact dataset reports 92.73–96.17% precision
+  ([Taheri et al. 2024](https://doi.org/10.1007/s12652-023-04716-4)) without stating a
+  bundle-disjoint protocol. Those figures are comparable to this project's **stratified** arm,
+  not its grouped arm.
+- Chasing >95% by keeping the patch-level split would reproduce the field's error rather than
+  correct it. See `CHANGES.md` Q11.
+
+---
+
+## Quick start
+
+```bash
+# 1. Install (Python ≥ 3.10)
+pip install -e ".[tracking,figures]"
+
+# 2. Build the dataset (~hours, ~36 GB; writes patches/labels/groups/masks/morphology/gain)
+pip install -e ".[prep]"
+python scripts/prepare_dataset.py
+
+# 3. Reduce 256 bands to 40, INSIDE each fold (see "Band selection" below)
+python scripts/select_bands.py --per-fold
+
+# 4. Train the default experiment
+python train.py
+```
+
+`python train.py` with no arguments runs the **default composition**:
+
+| | |
 |---|---|
-| Macro F1 — 12-view TTA | **0.8933** |
-| Macro F1 — no TTA | 0.8770 |
-| Best validation Macro F1 (Stage 1 checkpoint) | 0.8877 |
-
-Reference artifacts live in `outputs/output_v12_spa40/` (three checkpoints + metadata sidecars +
-recorded predictions).
-
-> **These are pre-Tier-3 numbers and can no longer be regenerated from the checkpoints.**
-> Tier 3 (T3-1 … T3-4) changed what three of the four branches *consume*, so those weights have
-> no home in the current model and `load_ckpt` refuses them rather than partially loading —
-> see `MIGRATION_PROGRESS.md` → Tier 3 → "The v1/v2 → v3 refusal". The recorded predictions in
-> `outputs/` are still checked against their own reported metrics. A fresh number arrives with
-> the first Tier-3 run.
-
-> **The TTA number is superseded.** Tier 1 (T1-1) fixed the spectral TTA view, which rescaled
-> about the whole-patch mean and did not re-mask, so the zero background every masked operator
-> in the model relies on was filled in. Re-running the same checkpoint through the corrected
-> transform gives **0.8889**, not 0.8933; the no-TTA figure is unchanged. The difference is
-> inside the ±0.017 bootstrap interval, but 0.8889 is the number a fresh run produces. See
-> `MIGRATION_PROGRESS.md` → Tier 1 → T1-1.
-
----
-
-## Architecture
-
-`SpectralQuadNet` (5.19M parameters) fuses four **genuinely disjoint** views of the same patch,
-plus the seed's morphometry:
-
-| Branch | Module | Sees |
-|---|---|---|
-| **A** — continuum & derivative profile | `models/branches/spectral_profile.py` | per-cell SNV spectra on an 8×8 grid, with their 1st and 2nd λ-derivatives |
-| **B** — scale-invariant index bank | `models/branches/spectral_stats.py` | 64 learned normalised-difference indices + 16 continuum-removed depths + 8 morphometrics |
-| **C** — spectral–spatial CNN | `models/branches/spatial_cnn.py` | the full `(40, 64, 64)` cube through a 3-D stem that keeps the band axis alive |
-| **D** — λ-aware SpecFormer | `models/branches/specformer.py` | raw 4×4 grid spectra as λ-uniform tokens, with a relative-λ attention bias |
-| **E** — morphology | `models/fusion.py::MorphologyEmbed` | the 8 persisted morphometrics as a fifth fusion token |
-
-The five are fused by a gated low-rank bilinear pool (`models/fusion.py::CrossModalInteraction`)
-— an independent sigmoid gate per modality, fed the branches' pre-normalisation log-norms, plus a
-second-order term over all ten modality pairs — then classified by a single adaptive sub-centre
-ArcFace head (`models/heads.py`) shared by all three stages; Stage 1 runs it at zero margin,
-which makes it a plain cosine classifier. Branches A–D each carry an auxiliary head for deep
-supervision. Wavelength is a first-class axis throughout: band-axis convolutions use kernels
-generated from Δλ (`models/front_end.py`), derivatives are fitted on the irregular λ grid, and
-token positions are derived from wavelength rather than learned by index.
-
-> The architecture above is the Tier-3 redesign (`IMPROVEMENT_PLAN.md` §3.2–§3.4). It replaces
-> a 7.88M-parameter model in which two of the four branches received a byte-identical input, the
-> statistics branch read a provably rank-2 tensor with 686k parameters, no module combined
-> spectral and spatial extent, and the fusion spent 2.19M parameters to mix four vectors.
-> `MIGRATION_PROGRESS.md` → Tier 3 records what moved and what each change was measured on.
-
-### Training curriculum
-
-| Stage | Module | What it does |
-|---|---|---|
-| 1 | `engine/stages/stage1_progressive.py` | 3-phase progressive augmentation (heavy → medium → very light), phase-aware LR, mixup, hard-class oversampling and contrastive losses in phase 3 |
-| 2 | `engine/stages/stage2_arcface.py` | sub-centre ArcFace with a warmed-up adaptive per-class margin, SGDR, SupCon + ProtoNCE, class-difficulty-weighted sampling |
-| 3 | `engine/stages/stage3_sam_swa.py` | Sharpness-Aware Minimisation with greedy SWA snapshotting |
-| — | `engine/stages/final_eval.py` | 8 spatial + 4 spectral TTA views, per-class report |
-
----
-
-## Install
-
-Requires Python ≥ 3.10.
-
-```bash
-git clone <this-repo> && cd Code
-pip install -e .                 # training + evaluation
-pip install -e ".[dev]"          # + pytest, ruff, black, mypy
-pip install -e ".[tracking]"     # + wandb, tensorboard backends
-pip install -e ".[prep]"         # + opencv, scikit-image, spectral, scipy (offline data prep only)
-```
-
-The core install deliberately excludes the data-prep stack: `spectralquadnet.data.prep.*` is the
-only thing that imports it, and training never touches that path.
-
-### Data
-
-Training reads three files, all configured in `configs/data/spa40_90class.yaml`:
-
-```
-dataset/patches_spa_40b.npy      # (8624, 40, 64, 64) float32 — 5.65 GB, memory-mapped
-dataset/labels.npy               # (8624,)
-dataset/wavelengths_spa_40b.csv  # 40 band centres in nm
-```
-
-To rebuild them from the raw Zenodo archive:
-
-```bash
-python scripts/prepare_dataset.py   # download → Otsu segmentation → 64×64 patch extraction (256 bands)
-python scripts/select_bands.py      # mRMR + SPA + validated elbow → the 40-band subset
-```
-
-The patch cube is **never loaded into RAM**. `data/mmap_store.py` opens it with `mmap_mode="r"` and
-`RiceSeedDataset.__getitem__` copies exactly one `(40, 64, 64)` patch per item, so resident memory
-stays bounded rather than scaling with the cube. Measured over a full 3-stage run against the real
-5.65 GB file: **peak RSS 1.39 GB, median 0.65 GB**, with mean usage *falling* from 0.71 GB in the
-first half of the run to 0.55 GB in the second — clean mapped pages being reclaimed, not a dataset
-accumulating in memory.
-
----
-
-## Usage
-
-```bash
-python train.py                                   # the reference experiment
-python train.py stage1.max_lr=1e-4                # single override
-python train.py -m stage1.max_lr=1e-4,5e-4,1e-3   # Hydra sweep
-python train.py run_name=my_run stage1.epochs=20  # short run into outputs/my_run
-
-torchrun --standalone --nproc_per_node=2 train.py # two CUDA GPUs (e.g. T4 x2)
-```
-
-### Multi-GPU (CUDA)
-
-DDP, launched by `torchrun`. Nothing engages under a plain `python train.py`; the single-device path
-is byte-for-byte the code it was.
-
-The design constraint is that a two-GPU run must report the **same number** as a one-GPU run, and
-that is what rules out `DataParallel`. Both schemes split the batch, and the model has five
-`BatchNorm1d` layers in the fusion plus one in each of Branches C and D — so each replica would
-normalise by *its shard's* statistics rather than the batch's, which is a different function that no
-amount of gradient averaging repairs. `torch.nn.SyncBatchNorm` all-reduces the per-shard sums so
-every replica normalises by the global batch, and it is available for DDP only.
-
-The rest follows from the same rule:
-
-| Concern | Handling |
-| --- | --- |
-| Batch size | Each rank draws `batch // world_size`, so the **global** batch stays `stage1.batch`. A world size that does not divide it is refused, not rounded. |
-| Balanced batches | `ClassBalancedBatchSampler` is seeded under DDP so every rank composes the same batch, then `DistributedBatchShardSampler` gives each rank its slice — class balance survives the split. |
-| Gradients | DDP's mean all-reduce over equal shards is the global-batch gradient. |
-| Evaluation | Sharded, then re-joined by `gather_concat` before any metric is computed. A macro-F1 over half the classes is not half of the macro-F1. |
-| Checkpoints, console | Rank 0 only. Other ranks get a `NullTracker`. |
-| Decisions | Early stopping and Stage 3's greedy SWA accept/reject are broadcast from rank 0 — a rank that decided differently would deadlock the next collective. |
-
-`runtime.multi_gpu=ddp` demands the launcher and raises without it, so a mistyped launch fails
-immediately instead of quietly training on one GPU for eight hours. `runtime.sync_batchnorm=false`
-is the documented, **non-invariant** opt-out.
-
-### Hardware and mixed precision
-
-`device: auto` selects the fastest local accelerator — **Metal (MPS) → CUDA → CPU** — so an Apple
-Silicon machine trains on its GPU. Override with `device=cuda`, `device=cpu` or `device=mps`; an
-explicit choice is never overridden. On an M-series Air this is worth roughly a **12× speedup** over
-the CPU fallback (a 7-epoch 3-stage run: ~18 min on Metal vs. ~3.5 h on CPU).
-
-Stage 1 trains under `torch.amp.autocast` with a `GradScaler` bound to the active device. Stages 2
-and 3 run in fp32 by the existing `use_amp = (supcon is None) and (scaler is not None)` rule — the
-contrastive losses and SAM's two-step gradient are why, and that is unchanged from the original
-script.
-
-Two Metal-specific details are handled in `utils/device.py`:
-
-- **`GradScaler(device=...)`** — the original bare `GradScaler()` binds to CUDA, so on any other
-  accelerator it disables itself and AMP silently becomes a no-op.
-- **`update_bn_stats` keeps grad enabled on Metal.** It is the only place the model runs in
-  `train()` mode under `no_grad`, and Metal routes attention through a fused inference kernel that
-  raises `scaled_dot_product_attention for MPS does not support dropout`. Grad mode selects the math
-  path; forward values, and so the BatchNorm statistics being estimated, are identical.
-
-### Execution knobs (`cfg.runtime`)
-
-Every field under `runtime` is a **throughput** knob, and the invariant that separates it from every
-other config group is that changing it must not change a reported metric. That is why the group
-carries real defaults instead of `MISSING`: the values are not part of the experiment's identity, so
-a config that never mentions them is not under-specified. `-1` means "decide from the hardware".
-
-| Field | Default | Notes |
-| --- | --- | --- |
-| `num_workers` / `eval_num_workers` | `-1` | Half the usable cores (≤8) on CUDA; 2 on Metal/CPU, where the accelerator is the bottleneck and `spawn` start-up is not free. Budgeted **per rank**. |
-| `pin_memory` | `-1` | Page-locked staging, so the H2D copy is an overlapping DMA. CUDA only — there is no Metal equivalent, and an explicit request elsewhere is refused with a reason. |
-| `persistent_workers`, `prefetch_factor` | `-1`, `4` | Stage 1 restarts its loader 600 times; under `spawn` a worker costs seconds to start. |
-| `compile` | `auto` | `torch.compile` on CUDA, **off on Metal**. That is a measurement, not a preference: on this model at batch 32 the Metal inductor backend produced 983 ms per forward against eager's 437 ms, because it cannot fuse the Branch-C 3-D stem. |
-| `fused_optimizer` | `auto` | AdamW's fused multi-tensor kernel on CUDA. The one performance default that is **not** bit-exact — same math, same precision, different accumulation order. `off` reproduces eager AdamW exactly. |
-| `allow_tf32` | `false` | Off on purpose: TF32 cuts a matmul's mantissa from 24 bits to 11. It is a precision change, and Turing (the T4) has no TF32 path anyway. |
-| `channels_last` | `false` | Off on purpose: NHWC re-selects convolution kernels whose reduction order differs. |
-| `multi_gpu`, `sync_batchnorm` | `auto`, `true` | See above. |
-| `progress` | `auto` | Whether the per-epoch line is rendered at all (`off` suppresses it). There is no choice of *rendering*: one appended line per epoch, on every stdout. A redrawing bar is legible only on a real terminal, and the two environments that cannot drive one — a piped SSH session, a Kaggle/Colab cell — turn it into an unreadable log rather than a degraded one. |
-| `diagnostics_interval` | `50` | Epoch stride for the hardest-class block and the branch-influence ablation behind it (five forward passes). A new best checkpoint also renders them, off-stride, since that is the epoch the saved weights describe. The numbers training consumes — per-class F1, the CDWS weights — are computed whenever a checkpoint needs them; only the rendering and the ablation are throttled. |
-| `empty_cache_interval` | `0` | Periodic allocator sweep. Stage boundaries always sweep regardless, since that is where Stage 3's two extra model copies are freed. |
-
-Configuration is Hydra-composed from `configs/`, with dataclass schemas in
-`config/schema.py` giving startup-time validation — a typo in a YAML field fails immediately
-instead of hours into Stage 1.
-
-```
-configs/
-├── data/spa40_90class.yaml        paths, num_bands, num_classes
-├── model/spectral_quadnet_v4.yaml branch/fusion/head hyperparameters
-├── stage{1,2,3}/*.yaml            one file per curriculum stage
-├── tracking/*.yaml                none | console | wandb | tensorboard
-└── experiment/output_v12_spa40.yaml   composes the above; sets seed and output_dir
-```
-
-`runtime` has no YAML file: its dataclass defaults are the configuration, and it is overridden on
-the command line (`python train.py runtime.num_workers=8 runtime.compile=on`).
-
-### Auto-resume
-
-`train.py` probes for completed stages (3 → 2 → 1; a stage counts as done only when **both** its
-`best_stage{n}.pth` and `stage{n}_meta.json` exist) and loads rather than retrains them. Pointing
-`output_dir` at a directory with all three present skips straight to final evaluation:
-
-```bash
-python train.py output_dir=outputs/output_v12_spa40
-```
-
-The checkpoint the final evaluation runs on is chosen by validation F1, not by stage order.
-
-### Experiment tracking
-
-The default `console` backend renders the same information the original script printed, with no
-external service, as **append-only lines** — one per epoch, written once and never redrawn:
-
-```
-[Stage 1 | Ep 181/600]  Time: 00:12:45  ETA: 00:41:12  dt: 42.1s  Loss: 15.2508  Tr: 61.2%  F1 live/ema: 0.771/0.685  Acc live/ema: 78.1%/72.0%  Best: 0.780  LR: 3.00e-04  LS: 0.084  auxW: 0.42  τ: 0.35  Ph: P2  m: 0.00  ckpt ✓
-```
-
-The same lines are mirrored into `output_dir/training.log`, so the file is the record of the run
-rather than a file of crashes, and they render identically in a macOS terminal, an SSH session
-piped to a file and a Kaggle/Colab cell. `wandb` and `tensorboard` implement the same
-`ExperimentTracker` protocol and are machine-channel only, so pair them with the console renderer
-to keep terminal output:
-
-```bash
-python train.py tracking.backend=multi tracking.backends=[console,wandb]
-```
-
-Beyond scalar losses and metrics, the trackers receive per-branch auxiliary losses, per-branch
-gradient norms sampled before clipping, leave-one-branch-out influence percentages, a bottom-K
-hardest-classes table, and per-epoch bookkeeping (`train/steps`, `train/skipped_batches`,
-`train/epoch_s`). The last of those is also raised as a `[WARN]` line whenever it is non-zero: a
-batch dropped for a non-finite loss contributes nothing, but the epoch mean divides by the loader's
-length regardless, so a diverging run otherwise reads as a *falling* loss.
-
-Third-party warning noise (pynvml's deprecation, torch's `use_reentrant` checkpoint notice, …) is
-filtered in `utils/warning_filters.py`, entry by entry with a reason each; anything not filtered is
-routed through `logging` so it lands on its own line instead of inside an epoch line.
-
-### Running on a rented GPU (e.g. vast.ai) with W&B online
-
-A rented instance is headless and ephemeral, so authenticate with an environment variable instead
-of the interactive `wandb login` prompt — there is no terminal left to answer it after the shell
-disconnects, and an unattended `wandb.init()` with no key on the box will otherwise block startup
-waiting for one.
-
-```bash
-git clone <this-repo> && cd Code
-pip install -e ".[tracking]"        # pulls in wandb (and tensorboard)
-
-export WANDB_API_KEY=...            # from https://wandb.ai/authorize — never put this in a config
-                                     # file or commit it; export it in the shell each session, or
-                                     # source it from a local .env that stays out of git
-
-python train.py \
-  tracking.backend=multi tracking.backends=[console,wandb] \
-  tracking.project=spectralquadnet run_name=vastai_run
-```
-
-`WandbTracker` (`tracking/wandb_tracker.py`) calls `wandb.init()` with no `mode=` argument, so it
-follows wandb's own resolution: a `WANDB_API_KEY` in the environment (or a prior `wandb login`)
-makes the run **online**, streaming to wandb.ai as it trains; without one, `wandb.init()` is left to
-prompt for a login it cannot get from a non-interactive shell. Exporting the key before
-`python train.py` is what makes the run land online rather than stalling at startup. `wandb` alone
-is machine-channel only and prints nothing to stdout by design (see the module docstring), so pair
-it with `console` — as above — to keep the per-epoch line in your SSH session while W&B records the
-run; `tracking.entity=<your-team-or-username>` selects the destination if the API key's default
-account isn't it.
+| Architecture | `SpectralSeedNet` — 2.82 M parameters, two pathways |
+| Curriculum | one stage, ~150 epochs, early stop on `calib` |
+| Split | `grouped` — leave-one-acquisition-bundle-out, fold 0 |
+| Selection | on `calib` (carved from train, by group) |
+| Reported | `val ∪ test`, scored **once**, ±TTA, with a bootstrap CI |
+| Runtime | bf16, TF32 **off**, workers auto, compile auto |
 
 ---
 
 ## Repository layout
 
 ```
-├── train.py                      Hydra entrypoint (auto-resume orchestration)
-├── configs/                      Hydra config groups
-├── src/spectralquadnet/
-│   ├── config/                   dataclass schemas + programmatic composition
-│   ├── data/                     DataStore (mmap), dataset, samplers, loaders
-│   │   └── prep/                 offline: download, segmentation, patches, band selection
-│   ├── models/                   blocks/, branches/, fusion, heads, stats_ops, SpectralQuadNet
-│   ├── losses/                   focal, contrastive, mixup, cdws, auxiliary
-│   ├── optim/                    SAM, param groups, schedulers
-│   ├── engine/                   train_epoch, evaluate, tta, checkpoint, diagnostics
-│   │   └── stages/               one module per curriculum stage + final_eval
-│   ├── tracking/                 ExperimentTracker protocol + 4 backends
-│   └── utils/                    seed, device
-├── scripts/                      thin CLIs + migration verification tooling
-├── tests/                        unit/ + regression/ (+ golden/ captures)
-├── docs/config_rename_table.md   every pre-refactor CONFIG key → its new home
-└── REFACTOR_PLAN.md              the migration spec this structure was built to
+configs/                    Hydra composition
+  data/                     spa40_90class{,_pfix,_stratified}
+  model/                    seed_net | quadnet_v4_audited
+  single/                   one_stage            ← the collapsed curriculum
+  stage{1,2,3}/             the audited three-stage curriculum (kept for A8)
+  evaluation/               held_out_once | audited_replica
+  experiment/               seednet_grouped (default) | quadnet_audited (control)
+
+src/spectralquadnet/
+  config/                   typed schema + programmatic composition
+  data/                     mmap store, splits, samplers, augmentation
+    prep/                   offline: download → segment → extract → band-select
+  models/
+    registry.py             cfg.model.arch  →  a network
+    spectral_seed_net.py    the proposed model (CHANGES §16.2)
+    spectral_quadnet.py     the audited model — retained as the control arm
+    branches/, blocks/      shared components
+  engine/
+    pipelines/              context + single | three_stage dispatch
+    stages/                 single_stage, stage1/2/3, final_eval
+    train_epoch.py          the AdamW and SAM epoch loops
+  losses/, optim/           objectives, param groups, schedules
+  reporting/                metrics + CIs, results tree, figures, tables
+  experiments/              the ablation grid, protocol sweep, baselines, A9
+  tracking/                 console | wandb | tensorboard | multi
+
+scripts/                    thin CLI wrappers over the package
+tests/unit/ regression/ smoke/
 ```
 
 ---
 
-## Development
+## Running experiments
+
+Everything is driven by one CLI. **Start with `--dry-run`** — it costs nothing and prints the
+exact per-cell command, which is the artifact a reviewer should see before a GPU-day is spent.
 
 ```bash
-pytest tests/                              # fast tier only — seconds, not minutes
-pytest tests/ --run-all                    # + regression, slow and requires_dataset tests
-pytest tests/ --run-regression             # just the config/numerics regression gates
-ruff check src scripts train.py tests
-black --check src scripts train.py tests
-mypy                     # --strict, configured in pyproject.toml
+python -m spectralquadnet.experiments.cli list          # the grid, its cost, its ordering
 ```
 
-Tests marked `regression`, `slow` or `requires_dataset` are collected but skipped by default
-(`tests/conftest.py::pytest_collection_modifyitems`), so a bare `pytest tests/unit/` finishes in
-a few seconds. Pass the matching `--run-<marker>` flag, or `--run-all` for everything, to opt them
-back in — that's what CI and pre-release checks should run.
+### The primary protocol (CHANGES §19)
 
-This package was mechanically decomposed from a single 2,857-line script (`hsi_training.py`, plus
-three root-level data scripts), all of which Phase 5 deleted. The decomposition is still
-machine-verifiable: every check reads the originals from git at SHA `886560f` via `git show`, never
-from the working tree, so they keep working with the files gone. Three checks enforce that the move
-introduced no behavioural drift:
+2 folds × 3 seeds under `grouped`, plus a matched `stratified` contrast arm:
 
-| Check | Guarantees |
-|---|---|
-| `pytest tests/regression/ --run-all` | the three real checkpoints load `strict=True`; a fixed-seed forward pass matches its pre-refactor golden logits; the recorded metrics regenerate |
-| `python scripts/check_ast_no_op_move.py` | every relocated class/method is AST-identical to the pre-refactor original, or carries a written deviation reason |
-| `python scripts/check_config_roundtrip.py` | all 81 keys of the original `CONFIG` dict map 1:1 onto `configs/`, with identical values |
+```bash
+python scripts/run_protocol.py --dry-run
+python scripts/run_protocol.py --baseline          # + LDA/LinearSVC on mean spectra
+python scripts/run_protocol.py --include-audited   # + the 5.19 M model, same protocol
+```
 
-Current status: **107 tests passing**, AST check **133 identical / 41 declared / 3 new / 0 drift**,
-config round-trip **81/81**, and `ruff` / `black --check` / `mypy --strict` clean.
+Produces, under `outputs/experiments/protocol/`:
 
-### Known non-determinism (pre-existing, deliberately preserved)
+- `protocol.md` / `.csv` — mean ± range per arm, **never a maximum**
+- `leakage_gap.md` — `F1_stratified − F1_grouped`, the headline result
+- `per_cell.md` — every individual run, so the means are auditable
+- `protocol.png` — the comparison figure
 
-A full training run was never bit-reproducible, and the refactor did not change that:
-`set_seed()` sets `cudnn.benchmark=True`, and both custom samplers draw from an unseeded RNG. What
-*is* pinned and tested: weight initialisation, every scheduler and margin value, and the loss of one
-fixed-seed forward+backward step.
+### Ablations (CHANGES §20)
 
-One thing the throughput work **did** move, and it is worth stating plainly. `RiceSeedDataset` now
-builds every sample on the host instead of directly on the training device, which is what removed
-the per-sample host-to-device copy and what makes `num_workers > 0` possible at all — a worker
-process cannot hand a CUDA tensor back through the queue. The augmentation *call order* is
-unchanged, every profile probability is unchanged, and every augmentation's distribution is
-unchanged; but the noise tensors are now drawn from the host RNG rather than the accelerator's, and
-at `num_workers > 0` each worker seeds its own stream from the loader's base seed. A run is still
-reproducible at a fixed `cfg.seed` and a fixed worker count. It does not reproduce the *realised
-draws* of a `num_workers=0`, on-device run. Set `runtime.num_workers=0` if you need that stream.
+```bash
+python -m spectralquadnet.experiments.cli ablate A12   # ← RUN THIS FIRST
+python -m spectralquadnet.experiments.cli ablate A1
+python -m spectralquadnet.experiments.cli ablate A3 --arms abcd bc --dry-run
+```
 
-Everything else on the hot path was verified bit-identical rather than argued to be: the EMA update
-(50 steps, every tensor equal), the SAM ascent/descent/restore (15 steps, both ASAM modes), the
-`ProtoNCE` label vectorisation, and the epoch loss/accuracy reduction.
+| | Question | Runs |
+|---|---|---:|
+| **A12** | What is run-to-run variance? **Run first** — until σ is known, no delta means anything | 10 |
+| **A1** | How much of the score is bundle recognition? **Blocks every other claim** | 12 |
+| **A2** | Does band selection outside the fold leak materially? | 12 |
+| **A3** | Is the four-branch design justified? (symmetric dropout) | 24 |
+| **A4** | Is Branch A's 64-cell replication necessary? | 18 |
+| **A5** | Is the rank-128 bilinear fusion worth 0.5 M parameters? | 18 |
+| **A6** | Does SupCon help, with the sampler controlled? | 12 |
+| **A7** | Does any margin machinery help? | 24 |
+| **A8** | Do Stages 2 and 3 add anything at all? | 24 |
+| **A10** | Is capacity actually harmful? | 24 |
+| **A11** | Is mixup the load-bearing regulariser? | 36 |
+
+Each ablation carries a **pre-registered decision rule** — printed by `list` — because an
+ablation without one is an invitation to read whichever number is convenient afterwards.
+
+### A9 — what *are* the hard classes? (no training run)
+
+Classes {41, 49, 51, 52, 70} were the bottom-5 at Stage-1 epoch 46 and still the bottom-5 at
+Stage 3, invariant to 470 epochs, three loss regimes, two samplers and four difficulty-targeted
+mechanisms. A9 asks whether that is **spectrally inseparable varieties** (a ceiling worth
+publishing) or **segmentation failure** (a fixable bug that would explain the whole thing).
+
+```bash
+python -m spectralquadnet.experiments.cli analyse --run outputs/seednet_grouped_f0_s42
+```
+
+### Baselines and the leakage probe
+
+```bash
+python -m spectralquadnet.experiments.cli baseline --data spa40_90class_pfix
+python -m spectralquadnet.experiments.cli leakage
+```
+
+The LDA-on-mean-spectra baseline costs seconds and is *the paper's most important baseline*: it
+reaches 0.5916 under the leaky protocol, so ~59 points are available with no spatial information
+at all. The leakage probe fits a 10-feature linear model on **residual brightness alone** and
+reports how well it recovers the acquisition bundle — a model-free measurement of the nuisance.
+
+### Assembling the report
+
+```bash
+python -m spectralquadnet.experiments.cli aggregate   # rebuild every table, no GPU
+python -m spectralquadnet.experiments.cli report      # → outputs/experiments/REPORT.md
+```
 
 ---
 
-## References
+## Overriding anything
 
-The band-selection pipeline implements mRMR (Peng et al., *IEEE TPAMI* 2005) and SPA (Araújo et al.,
-*Chemom. Intell. Lab. Syst.* 2001); see `src/spectralquadnet/data/prep/band_selection.py` for the
-full rationale.
+Standard Hydra. The composition groups are the ones in `configs/`:
+
+```bash
+python train.py data.split_fold=1 seed=1
+python train.py model=quadnet_v4_audited pipeline=three_stage
+python train.py data=spa40_90class_stratified          # the contrast arm
+python train.py single.max_lr=1e-4 single.epochs=80
+python train.py -m seed=0,1,2                          # Hydra multirun
+python train.py --config-name=experiment/quadnet_audited   # the full control arm
+```
+
+Multi-GPU (DDP with `SyncBatchNorm`, so two GPUs compute the same function as one):
+
+```bash
+torchrun --standalone --nproc_per_node=2 train.py
+```
+
+### Experiment tracking
+
+```bash
+python train.py tracking.backend=wandb
+python train.py tracking.backend=multi tracking.backends=[console,wandb]
+```
+
+W&B receives a **monotone global step** across every stage (CHANGES IC-1). In the audited run,
+Stage 2 and Stage 3 restarted their step counters at 1 and W&B discarded every scalar they
+logged — ~200 warnings, and seven panels that stop at Stage 1. Series now include
+`progress/stage` and `progress/stage_epoch` so the flattened axis can be split back apart.
+
+Logged throughout: `train/*`, `val/*`, `sched/*`, `loss/branch_*_{raw,weighted}`,
+`grad_norm/{preclip,postclip,clipped}_*`, `grad_norm/clip_fraction`, `influence/branch_*`,
+per-class tables, the confusion matrix and the final metrics with their intervals.
+
+---
+
+## What changed, and why
+
+| | Change | Reason |
+|---|---|---|
+| IC-1 | Monotone cross-stage W&B step | Stage 2/3 telemetry did not exist |
+| IC-2 | Log raw **and** weighted per-branch aux losses | The panel tracked the controller, not the branch |
+| IC-3 | Default to `grouped` + `calib_frac=0.15` + `single_group_policy=error` | The largest correctness change in the audit |
+| IC-4 | Band selection restricted to training rows, per fold | Label leakage independent of the split |
+| IC-5 | `aux_gradnorm_alpha=0`, one aux head at a fixed 0.2 | Aux term was ≈7.8× the main loss; controller saturated at its clip bounds |
+| IC-6 | `grad_clip` 1.0 → 5.0, + clip-fraction telemetry | The clip fired every step; the LR schedule was decorative |
+| IC-7 | bf16 kept through the contrastive phases | Passing SupCon dropped the whole epoch to fp32 → 5–10× slower |
+| IC-8 | `allow_tf32=False`, `num_workers=-1`, `compile=auto` | The one knob that changes numerics was on; the two that only change speed were off |
+| IC-9 | `subcenter_K=1`, balance/per-class-margin/Ω off by default | Sub-centres were collinear at seeding (cos 0.987) |
+| IC-10 | `SpectralSeedNet` (2.82 M) alongside `SpectralQuadNet` (5.19 M) | Branch D: 23.9% of params, 3.1% influence. Branch A: 60% of FLOPs, 5.6% influence |
+| IC-11 | One stage replaces three | Stages 2+3: +0.005 macro-F1 for 65% of the wall clock |
+| IC-12 | Ablation registry + protocol driver + aggregation | 21 levers documented, zero pulled |
+| IC-13 | 107 → **180** acquisition bundles in the docs | 107 is not divisible by 90 |
+| IC-14 | Dead paths removed or wired | `stride`, Stage-3 ProtoNCE, `sched/proto_weight`, `gain.npy` |
+
+`SpectralQuadNet` and the three-stage curriculum are **kept, unmodified**. A3 and A8 are the
+experiments that decide whether the removals above were right, and deleting the thing an
+ablation exists to falsify would reproduce the exact defect this revision corrects.
+
+---
+
+## Reporting rules
+
+These are enforced by the code, not by convention:
+
+1. **Selection never happens on the reported split.** `calib` selects; `val ∪ test` is scored
+   once. The run banner prints both.
+2. **`val` and `test` are two halves of the same held-out bundle** and are therefore *not*
+   independent of each other. They are scored together.
+3. **Mean ± range over folds × seeds. Never a maximum.** A running maximum over ~944 correlated
+   selection events was worth an estimated +0.042 macro-F1 in the audited run.
+4. **Every reported number carries an interval.** Sampling noise on ~1,300 patches is ±0.020 at
+   95%; the audited run's entire Stage-2 + Stage-3 gain was +0.005.
+5. **A delta whose interval crosses zero has not been shown to do anything** — and is reported
+   that way, in grey, on the forest plot.
+
+Three constraints belong in the paper rather than a footnote:
+
+- Training sees **one** acquisition bundle per class, so there is **zero within-class acquisition
+  variance in training**. The model cannot learn acquisition invariance because it never observes
+  two acquisitions of one class. This is a data-collection ceiling, not a method limitation.
+- Two folds is the maximum. There is no third bundle.
+- Band selection must be inside the fold, or declared as a fixed a-priori choice.
+
+---
+
+## Testing
+
+```bash
+pytest                       # fast tier — unit tests only (~10 s)
+pytest --run-all             # + regression, slow and dataset-dependent tiers
+pytest --run-slow tests/smoke/   # end-to-end runs on a synthetic dataset (~2 min)
+```
+
+The smoke tier builds a miniature dataset with the real one's load-bearing structure — **two
+class-pure bundles per class** — and runs the actual `train.py` composition end to end, because
+both of the audited run's most consequential defects were integration failures that no
+component test could have caught.
+
+```bash
+ruff check . && black --check . && mypy       # lint / format / types
+python scripts/check_config_roundtrip.py      # every config key has a home
+```
+
+### Known state
+
+- `tests/regression/test_golden_forward_pass.py` has **two pre-existing failures** on the
+  Stage-1 epoch loss and weight digests. They reproduce identically before and after this
+  revision (loss `23.06525230407715` vs a golden `23.080477237701416`), so they are environment
+  drift — a torch/BLAS version difference against the machine that captured the goldens — not a
+  regression introduced here. Re-capture with `python scripts/capture_golden.py` on the target
+  environment to clear them.
+
+---
+
+## Hardware
+
+Trains on CPU, CUDA and Apple Metal. Device selection is automatic (`device=auto`).
+`cfg.runtime` holds every throughput knob and none of them may change a reported number — the
+two that would (`allow_tf32`, `channels_last`) are off by default, and `amp_dtype` is recorded in
+the startup banner precisely because it *is* part of what a number means.
+
+Expected: ≈45 min/run for the default single-stage configuration on an RTX 3060, against the
+audited 19 h. That arithmetic is the point — it converts a project that could afford one run into
+one that can afford the whole grid.
+
+---
+
+## Documentation
+
+| | |
+|---|---|
+| [`CHANGES.md`](CHANGES.md) | The audit. The authoritative specification for this revision. |
+| [`docs/01_ABSTRACT_AND_OVERVIEW.md`](docs/01_ABSTRACT_AND_OVERVIEW.md) | System overview |
+| [`docs/02_DATASET_AND_PREPROCESSING.md`](docs/02_DATASET_AND_PREPROCESSING.md) | Dataset, segmentation, splits |
+| [`docs/03_MODEL_ARCHITECTURE.md`](docs/03_MODEL_ARCHITECTURE.md) | Branch-by-branch architecture |
+| [`docs/04_CURRICULUM_AND_LOSSES.md`](docs/04_CURRICULUM_AND_LOSSES.md) | Objectives and schedules |
+| [`docs/05_EXPERIMENTS_AND_ABLATIONS.md`](docs/05_EXPERIMENTS_AND_ABLATIONS.md) | Diagnostics and logging |
+| [`docs/06_EXECUTION_AND_HARDWARE.md`](docs/06_EXECUTION_AND_HARDWARE.md) | Runtime, DDP, profiling |
+| [`docs/config_rename_table.md`](docs/config_rename_table.md) | Config field reference |

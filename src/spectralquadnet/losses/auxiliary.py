@@ -7,10 +7,19 @@ Stage 3 does not use :func:`_aux_loss_weight`'s decay schedule at all; it
 passes a fixed ``cfg.stage3.aux_loss_weight`` straight to
 ``train_one_epoch_sam``.
 
-:func:`_compute_aux_loss` can optionally return the weighted per-branch terms
-alongside the summed total (``return_components=True``), for the per-branch
-loss diagnostic in ``engine/diagnostics.py``; the summed total is identical
-either way.
+:func:`_compute_aux_loss` can optionally return the per-branch terms alongside
+the summed total (``return_components=True``), for the per-branch loss
+diagnostic in ``engine/diagnostics.py``; the summed total is identical either
+way.
+
+**IC-2 — both the raw and the weighted term are returned.** The components used
+to be :math:`\\omega_b \\mathcal L_b` alone, and CHANGES.md §10.2 is what that
+cost: :math:`\\omega_b` is itself non-stationary and spends most of training
+pinned at a clip bound, so ``loss/branch_a`` collapsing from 11 to ~1 at epoch
+10 was *the weight hitting its 0.25 floor*, not Branch A learning anything. A
+reader judging branch health from that panel was reading the controller acting
+on the branch. :class:`AuxComponents` carries both, and the loops log both under
+``loss/branch_{a,b,c,d}_{raw,weighted}``.
 
 :class:`GradNormAuxWeights` is OP-2 / T2-6. :data:`DEFAULT_BRANCH_WEIGHTS` is a
 constant chosen to compensate for a *measured* gradient collapse in the
@@ -25,7 +34,8 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 import torch
@@ -50,7 +60,51 @@ DEFAULT_BRANCH_WEIGHTS: dict[str, float] = {
 #: Bounds on any single GradNorm weight. Without them one epoch in which a
 #: branch's gradient is near zero — a frozen head, a batch that skipped — sends
 #: its weight to infinity and the update is not recoverable.
+#:
+#: **These bounds are the measured output of the controller, not a safety net**
+#: (CHANGES.md §8.2). ``aux_weight/branch_{b,c}`` sat pinned at 4.0 for hundreds
+#: of epochs and ``branch_a`` at 0.25 from epoch ~10, so the "adaptive" vector
+#: was in practice the constant ``(0.25, 4, 4, ~1–4)`` chosen here. That is why
+#: :data:`~spectralquadnet.losses.auxiliary.GradNormAuxWeights` now defaults off
+#: (``aux_gradnorm_alpha = 0.0``) rather than being re-tuned.
 AUX_WEIGHT_BOUNDS: tuple[float, float] = (0.25, 4.0)
+
+
+@dataclass(frozen=True)
+class AuxComponents(Mapping[str, torch.Tensor]):
+    """Per-branch auxiliary terms, both before and after the weight (IC-2).
+
+    Iterating, indexing and ``.values()`` all address the **weighted** terms, so
+    every caller written against the plain ``dict[str, Tensor]`` this replaces
+    keeps working and the summed total is still ``sum(components.values())``.
+    :attr:`raw` is the addition: :math:`\\mathcal L_b` itself, unmultiplied.
+
+    Logging both is what makes the branch panels readable. With only the
+    weighted term, a curve falling by 16× is indistinguishable between "the
+    branch learned" and "the controller drove :math:`\\omega_b` to its floor" —
+    and in the audited run it was always the second (CHANGES.md §10.2).
+    """
+
+    raw: dict[str, torch.Tensor] = field(default_factory=dict)
+    weighted: dict[str, torch.Tensor] = field(default_factory=dict)
+
+    def __getitem__(self, key: str) -> torch.Tensor:
+        return self.weighted[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.weighted)
+
+    def __len__(self) -> int:
+        return len(self.weighted)
+
+    def scalars(self) -> dict[str, torch.Tensor]:
+        """Both series as tracker tags: ``loss/branch_a_raw``, ``…_weighted``, …"""
+        tags: dict[str, torch.Tensor] = {}
+        for key, value in self.raw.items():
+            tags[f"loss/branch_{key.removeprefix('aux_')}_raw"] = value
+        for key, value in self.weighted.items():
+            tags[f"loss/branch_{key.removeprefix('aux_')}_weighted"] = value
+        return tags
 
 
 class GradNormAuxWeights:
@@ -186,7 +240,7 @@ def _compute_aux_loss(
     use_mixup: bool,
     return_components: Literal[True],
     weights: Mapping[str, float] | None = None,
-) -> tuple[torch.Tensor, dict[str, torch.Tensor]]: ...
+) -> tuple[torch.Tensor, AuxComponents]: ...
 
 
 def _compute_aux_loss(
@@ -198,7 +252,7 @@ def _compute_aux_loss(
     use_mixup: bool,
     return_components: bool = False,
     weights: Mapping[str, float] | None = None,
-) -> torch.Tensor | tuple[torch.Tensor, dict[str, torch.Tensor]]:
+) -> torch.Tensor | tuple[torch.Tensor, AuxComponents]:
     """Compute the summed auxiliary head loss across all four branches.
 
     Handles both standard cross-entropy and mixup-interpolated targets.
@@ -217,8 +271,11 @@ def _compute_aux_loss(
         lam: Mixup interpolation coefficient; ignored if ``use_mixup`` is False.
         use_mixup: Whether to interpolate via :func:`~spectralquadnet.losses.mixup.mixed_loss`
             instead of applying ``criterion`` directly.
-        return_components: Also return the weighted per-branch terms, keyed
-            by ``aux_a``..``aux_d``. The summed total is identical either way.
+        return_components: Also return an :class:`AuxComponents` carrying the
+            per-branch terms keyed ``aux_a``..``aux_d``, **both** raw
+            (:math:`\\mathcal L_b`) and weighted
+            (:math:`\\omega_b \\mathcal L_b`). The summed total is identical
+            either way.
         weights: Per-branch weights keyed ``aux_a``..``aux_d``; defaults to
             :data:`DEFAULT_BRANCH_WEIGHTS`. Iteration order comes from the
             default table either way, so the summation order — and therefore
@@ -230,15 +287,32 @@ def _compute_aux_loss(
     """
     active = DEFAULT_BRANCH_WEIGHTS if weights is None else weights
     branch_weights = {k: float(active.get(k, v)) for k, v in DEFAULT_BRANCH_WEIGHTS.items()}
+    # Any other `aux_*` head the model emitted — `SpectralSeedNet` has exactly
+    # one, `aux_spatial`. Appended in sorted order *after* the four known keys,
+    # so the summation order for a four-branch model is byte-for-byte the one
+    # the golden Stage-1 loss was captured under.
+    branch_weights.update(
+        {
+            k: float(active.get(k, 1.0))
+            for k in sorted(out)
+            if k.startswith("aux_") and k not in branch_weights
+        }
+    )
     total = torch.zeros((), device=ya.device)
-    components: dict[str, torch.Tensor] = {}
+    raw: dict[str, torch.Tensor] = {}
+    weighted: dict[str, torch.Tensor] = {}
     for k, w in branch_weights.items():
         if k not in out:
             continue
-        if use_mixup:
-            term = w * mixed_loss(criterion, out[k], ya, yb, lam)
-        else:
-            term = w * criterion(out[k], ya)
+        # The raw CE is materialised first and the weight applied to it, rather
+        # than the two being fused: `term` must stay bit-identical to what the
+        # single-expression form produced, and `w * base` is that expression.
+        base = mixed_loss(criterion, out[k], ya, yb, lam) if use_mixup else criterion(out[k], ya)
+        term = w * base
         total = total + term
-        components[k] = term
-    return (total, components) if return_components else total
+        if return_components:
+            raw[k] = base
+            weighted[k] = term
+    if not return_components:
+        return total
+    return total, AuxComponents(raw=raw, weighted=weighted)

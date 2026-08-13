@@ -1,5 +1,28 @@
 # 6 · Execution Engine and Hardware Performance
 
+> **CHANGES.md IC-8 restored this document's own invariant.** The rule stated below is that
+> *every* field under `cfg.runtime` is a throughput knob and changing one must never change a
+> reported metric — which is why `allow_tf32` defaults to `false`, since it cuts matmul
+> mantissas from 24 bits to 11.
+>
+> The audited run set `allow_tf32=True`, `num_workers=0` (auto would give 8) and `compile=off`
+> (auto would give on). The two knobs that only change speed were disabled and the one that
+> changes numerics was enabled, so that run is **not comparable to a run at the shipped
+> defaults**. `configs/experiment/seednet_grouped.yaml` sets all three back;
+> `configs/experiment/quadnet_audited.yaml` deliberately keeps the run's actual values, because
+> its job is to reproduce what was audited.
+>
+> Two related fixes documented in CHANGES §9.2 land here:
+>
+> * **IC-7** — passing a SupCon module no longer disables autocast for the whole epoch. Phase 3
+>   cost 190–405 s/epoch against Phases 1–2's 39 s on identical data, because fp32 roughly
+>   doubles activation memory on a working set already at 91% of an 11 GB card and the allocator
+>   starts paging against a host page cache holding the 5.65 GB mmapped cube. The fp32 region is
+>   now confined to the similarity matrix.
+> * **IC-6** — `grad_clip` moves 1.0 → 5.0, and `grad_norm/clip_fraction` is logged so "does the
+>   clip bind?" is a measurement rather than an inference. At the old threshold the backbone's
+>   pre-clip norm was 25–50 for the entire run.
+
 Everything in this document is governed by one invariant, stated in `RuntimeConfig`'s own
 docstring: **every field under `cfg.runtime` is a throughput knob, and changing one must never
 change a reported metric.** That is why `runtime` carries real defaults instead of
@@ -116,7 +139,7 @@ Pointing `output_dir` at a directory with all three stages present makes `latest
 evaluation:
 
 ```bash
-python train.py output_dir=outputs/output_v12_spa40
+python train.py output_dir=<existing_run_dir>
 ```
 
 ---
@@ -431,9 +454,8 @@ same function.
 
 ## 6.5 Checkpointing and auto-resume
 
-Full checkpoint bundle schema, schema versioning (`SCHEMA_VERSION = 3`), and the v1/v2 → v3
-refusal are documented at the architecture level in §3.8 (they follow directly from what the
-branches consume, not from execution mechanics). The execution-facing rules:
+Full checkpoint bundle schema and schema versioning (`SCHEMA_VERSION = 3`) are documented at the
+architecture level in §3.8. The execution-facing rules:
 
 - `stage_ckpt_path(cfg, s)` → `{output_dir}/best_stage{s}.pth`;
   `stage_meta_path(cfg, s)` → `{output_dir}/stage{s}_meta.json`.

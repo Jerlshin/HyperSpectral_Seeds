@@ -19,10 +19,22 @@ masks_path: ""
 morphology_path: ""
 
 # ── Split protocol (P-1, P-5 / T4-1, T4-5) ────────────────────────────
-# This file reproduces the *reference run's* protocol, which is the leaky one:
-# `stratified` splits at patch level, so all 107 capture scans appear in train,
-# val and test alike (Phase 0, 0-H). It is kept because the three archived
-# checkpoints were trained and selected on exactly this partition.
+# This file reproduces the *audited run's* protocol, which is the leaky one:
+# `stratified` splits at patch level, so all 180 acquisition bundles appear in
+# train, val and test alike — the executed run measured `180 of 180 scans are in
+# train and in val/test`. (Docs previously said 107; that figure was wrong and
+# is not divisible by 90 — see CHANGES §3.1 / IC-13.)
+#
+# The source dataset images each variety as TWO bundles of 48 kernels, each
+# bundle a tray of one single variety. So every class's two — and only two —
+# acquisition conditions are present in training, and a model that learns
+# "this tray's residual radiometric signature => class X" scores correctly.
+# The 0.847 macro-F1 is a mixture of variety recognition and acquisition-bundle
+# recognition, and the mixing ratio has never been measured.
+#
+# Kept because the archived checkpoints were trained and selected on exactly
+# this partition, and because A1 needs it as the leaky arm of the comparison.
+# It is NOT a defensible reporting protocol. Use `spa40_90class_pfix`.
 #
 # `configs/data/spa40_90class_pfix.yaml` is the same dataset under the P-fix
 # protocol (grouped + calib). Select it with `python train.py data=spa40_90class_pfix`
@@ -31,6 +43,10 @@ split_scheme: stratified
 split_eval_frac: 0.30
 split_fold: 0
 calib_frac: 0.0
+# Meaningless under `stratified` (there are no groups to be short of), but the
+# key is required by the schema and a value of `error` states the intent.
+single_group_policy: error
+gain_path: ""
 
 # ── Geometry ──────────────────────────────────────────────────────────
 num_bands: 40

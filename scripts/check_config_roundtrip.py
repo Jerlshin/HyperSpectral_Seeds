@@ -36,7 +36,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 BASELINE_REF = "886560fe531c99197f20c2ebd06e0bc7ded8ac8f"
 BASELINE_PATH = "HSI_modality_training/hsi_training.py"
 
-EXPERIMENT = "experiment/output_v12_spa40"
+EXPERIMENT = "experiment/quadnet_audited"
 
 # ══════════════════════════════════════════════════════════════════════
 #  The rename table  (old CONFIG key → new dotted config path)
@@ -288,6 +288,113 @@ INTENDED_ADDITIONS: dict[str, str] = {
         "T3-4 / FU-1(b)+FU-2 — hidden width of the sigmoid gate MLP, which reads "
         "the five normalised tokens and the five pre-normalisation log-norms."
     ),
+    # ── CHANGES.md (IC-3 … IC-14) ─────────────────────────────────────
+    "pipeline": (
+        "IC-11 / §17 — which curriculum runs: `single` (one stage, one objective, "
+        "one schedule) or the audited `three_stage`, plus A8's two intermediate "
+        "arms. The monolith had exactly one curriculum and therefore no key."
+    ),
+    "model.arch": (
+        "IC-10 / §16.2 — selects `spectral_seed_net` (2.82 M, two pathways) or "
+        "`spectral_quadnet` (5.19 M, four branches). A3 and A8 need the second as "
+        "their control arm, so both ship and one key chooses."
+    ),
+    "model.enabled_branches": (
+        "A3 / §20 — which branches are constructed at all. Not a mask: a disabled "
+        "branch costs no parameters, no auxiliary head and no fusion modality, so "
+        "an ablation arm is genuinely the smaller model."
+    ),
+    "model.branch_drop_profile": (
+        "A3 / §5.2 — the per-branch drop *ratio*, previously a module constant. "
+        "The audited (0.75, 0.75, 0, 0.75) never dropped Branch C and taught the "
+        "fusion gate to route onto it, so C's 87% influence is confounded. Making "
+        "the vector a config key is what lets A3 measure branches instead of "
+        "the dropout policy."
+    ),
+    "model.fusion_mode": (
+        "A5 / §5.3 — `bilinear_gate` | `gate` | `concat_mlp`. The rank-128 "
+        "second-order pool over ten modality pairs is 0.50 M parameters fitted "
+        "from 6,036 samples; this is the key that measures whether it earns them."
+    ),
+    "model.spatial_width_mult": (
+        "A10 / §20 — scales the spatial path's ResBlock widths. Answers 'is "
+        "5.19 M too big' with data instead of intuition."
+    ),
+    "model.spectral_hidden": (
+        "IC-10 / §16.2 — hidden width of SpectralSeedNet's spectral MLP over "
+        "[index bank || continuum depths || SNV(x̄) || D1 || D2 || morph]."
+    ),
+    "model.aux_head_weight": (
+        "IC-5 / §7.1 — fixed weight on the single auxiliary head. Four heads "
+        "under a saturating GradNorm controller made the auxiliary term ≈7.8x the "
+        "main classification loss at epoch 20, so the fused head carried ≈11% of "
+        "the gradient signal for the first third of training."
+    ),
+    "model.per_class_margin": (
+        "IC-9 / A7 — gates the signed R-P margin rule. Off by default: Stage 2's "
+        "best checkpoint was epoch 19 and the per-class vector took over at 21, "
+        "so the mechanism was never active at the model that was reported."
+    ),
+    "model.pairwise_penalty": (
+        "IC-9 / A7 — gates the row-normalised confusion penalty. Off by default: "
+        "it was fitted on the same split that selected the checkpoint."
+    ),
+    "data.single_group_policy": (
+        "IC-3 / §19.1 — `error` refuses to run rather than silently accepting a "
+        "class whose eval patches share an acquisition bundle with its training "
+        "patches. The protocol failure was not that a leak was tolerated; it is "
+        "that nothing stopped it."
+    ),
+    "data.gain_path": (
+        "IC-14 — the per-pixel brightness the SNV divided out. **Never a model "
+        "input**: it is the strongest single carrier of acquisition-bundle "
+        "identity (§3.3), so feeding it to the classifier would hand the model "
+        "the nuisance the grouped protocol exists to exclude. Consumed by "
+        "`spectralquadnet.experiments.leakage`, which measures the leak instead."
+    ),
+    # `single.*` — the collapsed curriculum (IC-11 / §17). Individually
+    # justified rather than excluded as a subtree, because these ARE experiment
+    # identity: they are the 14 hyperparameters that replace the audited 69.
+    "single.epochs": "IC-11 / §17 — 150, replacing 400/150/120 across three stages.",
+    "single.batch": "IC-11 / §17 — 128, unchanged from Stage 1.",
+    "single.accum": "IC-11 / §17 — gradient accumulation; 1 at the shipped batch.",
+    "single.patience": (
+        "IC-11 / §17 — 25, on `calib`. Fewer selection events is the point: "
+        "~472 epochs x {live, EMA} was ~944 correlated draws (§4.5)."
+    ),
+    "single.max_lr": "IC-11 / §17 — 5e-4, deliberately unchanged while grad_clip moves (§8.1).",
+    "single.min_lr": "IC-11 / §17 — cosine floor.",
+    "single.warmup_ep": "IC-11 / §17 — 5-epoch linear warm-up, then one cosine decay.",
+    "single.dropout": "IC-11 / §17 — 0.15 throughout; removes an untested 0.15/0.25/0.10 schedule.",
+    "single.label_smooth_hi": "IC-11 / §17 — 0.10, decaying linearly.",
+    "single.label_smooth_lo": "IC-11 / §17 — 0.04.",
+    "single.focal_gamma": (
+        "IC-11 / §7.4 — 0.0 (plain CE). Focal addresses 1000:1 imbalance; here it "
+        "is 96:91, so gamma>0 was down-weighting easy examples, untested."
+    ),
+    "single.aux_loss_weight": "IC-11 / §7.1 — 0.2, fixed, on one head.",
+    "single.mixup": "IC-11 / §5.5 — 0.35; the one demonstrably load-bearing regulariser.",
+    "single.mixup_epochs": (
+        "IC-11 / §17 — last epoch mixup is active. Mixup and a non-zero margin are "
+        "mutually exclusive by construction, which is the ONLY reason Stage 2 "
+        "needed to be a separate stage."
+    ),
+    "single.aug_profile": (
+        "IC-11 / §6 — one profile throughout. The three-phase curriculum's "
+        "profiles differed by 2-4 pp of trigger probability."
+    ),
+    "single.arcface_m": "IC-11 / §17 — 0.30 target margin, warmed after mixup stops.",
+    "single.arcface_s": "IC-11 / §18 — 32.0; 48 is high for d=256 at 90 classes and was untuned.",
+    "single.margin_warmup_start": "IC-11 / §17 — first epoch of the margin ramp (111).",
+    "single.margin_warmup_end": "IC-11 / §17 — the ramp reaches its target here (130).",
+    "single.supcon_epochs": (
+        "IC-11 / §17 — optional Phase B length. 0 until A6 shows SupCon beats "
+        "plain CE by more than run-to-run variance WITH the sampler controlled."
+    ),
+    "single.supcon_weight": "IC-11 / §17 — Phase B's contrastive weight.",
+    "single.supcon_temp": "IC-11 / §17 — Phase B's temperature.",
+    "single.bal_n_cls": "IC-11 / §17 — Phase B's classes per batch.",
+    "single.bal_n_spc": "IC-11 / §17 — Phase B's samples per class.",
 }
 
 #: Config subtrees that are net-new capabilities rather than relocated CONFIG keys.
@@ -302,6 +409,15 @@ EXCLUDED_SUBTREES: dict[str, str] = {
         "invariant that nothing in it may change a reported number, which is what "
         "keeps it out of the experiment's identity — the two fields that *would* "
         "change one (allow_tf32, channels_last) default to off."
+    ),
+    "evaluation": (
+        "CHANGES §19 — which split selects the checkpoint and which is scored, "
+        "plus the bootstrap and the artifact switches. Excluded as a subtree "
+        "because the monolith had no counterpart to map to: it fitted its "
+        "margins, its sampling weights, its checkpoint decision and its headline "
+        "number on one 1,294-patch split (§4.4), so there was no *choice* to "
+        "record. Every field here is a reporting-protocol decision rather than a "
+        "training hyperparameter."
     ),
 }
 
@@ -335,6 +451,27 @@ INTENDED_VALUE_CHANGES: dict[str, str] = {
         "Phase 5 widens that lookup from the baseline's cuda-or-cpu to "
         "Metal → CUDA → CPU, so an Apple Silicon host uses its GPU instead of "
         "falling through to the CPU. An explicit device=cuda/cpu/mps still wins."
+    ),
+    # ── Budgets the audited run actually used ─────────────────────────
+    # These three drifted from the pinned baseline before CHANGES.md and were
+    # never declared, so the gate has been failing on them. They are declared
+    # rather than reverted because `configs/experiment/quadnet_audited.yaml`
+    # exists to reproduce **the run that was audited**, and CHANGES §2.4
+    # records that run's budgets as 400 / 150 / 120 with Stage-1 patience 50
+    # and Stage-2 patience 30. The baseline's 600/160/80 describe an earlier
+    # configuration that no artifact in this repository corresponds to.
+    "s1_epochs": (
+        "The audited run's Stage-1 budget: 600 → 400. CHANGES §2.4 records "
+        "400 (early-stopped at 336), which is what quadnet_audited reproduces."
+    ),
+    "s1_patience": (
+        "160 → 50, matching the audited run. CHANGES §4.5 prices the cost of "
+        "many selection events: ~944 correlated draws at an expected +0.042 "
+        "macro-F1 of upward bias, so a large patience is not a free choice."
+    ),
+    "s2_patience": (
+        "80 → 30, matching the audited run, which early-stopped Stage 2 at "
+        "epoch 49 with its best at 19."
     ),
 }
 

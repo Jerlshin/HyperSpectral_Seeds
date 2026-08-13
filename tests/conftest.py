@@ -50,7 +50,11 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     run_all = config.getoption("--run-all")
-    enabled = {name for name in _OPT_IN_MARKERS if run_all or config.getoption(f"--run-{name.replace('_', '-')}")}
+    enabled = {
+        name
+        for name in _OPT_IN_MARKERS
+        if run_all or config.getoption(f"--run-{name.replace('_', '-')}")
+    }
     for marker in _OPT_IN_MARKERS:
         if marker in enabled:
             continue
@@ -58,6 +62,8 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         for item in items:
             if marker in item.keywords:
                 item.add_marker(skip)
+
+
 #: Schema-v1 goldens — the pinned reference implementation's values, frozen.
 GOLDEN_V1 = Path(__file__).resolve().parent / "regression" / "golden"
 #: Schema-v2 goldens — the Tier-2 architecture. Frozen at Tier-3 completion and
@@ -138,7 +144,20 @@ def baseline_src() -> str:
 
 @pytest.fixture(scope="session")
 def cfg():
-    """The composed ``output_v12_spa40`` experiment config."""
+    """The composed **audited** experiment config — SpectralQuadNet, three stages.
+
+    The golden regression gates are digests of *that* architecture's weights and
+    Stage-1 loss, so this fixture must keep composing it. `cfg_default` below is
+    the new default composition (`SpectralSeedNet`, one stage, grouped protocol).
+    """
+    from spectralquadnet.config.compose import AUDITED_EXPERIMENT, load_experiment_config
+
+    return load_experiment_config(AUDITED_EXPERIMENT)
+
+
+@pytest.fixture(scope="session")
+def cfg_default():
+    """The composed default experiment — `SpectralSeedNet`, single stage, grouped."""
     from spectralquadnet.config.compose import load_experiment_config
 
     return load_experiment_config()

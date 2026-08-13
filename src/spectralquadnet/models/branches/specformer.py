@@ -35,6 +35,18 @@ capacity, so ``specf_dim`` drops 256 → 192 and the branch with it: 2.18 M →
 ≈ 1.24 M. ``model.specf_drop`` (dead since the reference implementation, N-1b)
 is wired to the transformer dropout, and ``model.specf_patch`` now sets the
 token count rather than a stride nothing consumed.
+
+**IC-14 — the ``stride`` constructor argument is gone.** Tier 3 stopped reading
+it (the tokenizer is constructed at ``stride=1`` unconditionally, because the
+λ-uniform windows already set the token count) but the parameter stayed in the
+signature and ``SpectralQuadNet`` kept computing ``specf_patch // 2`` to pass
+it. An argument that is accepted, computed and discarded is worse than one that
+does not exist: it reads at the call site as a live knob. Removed at both ends.
+
+CHANGES §5.1 additionally notes that ``set_dropout`` cannot reach
+``nn.MultiheadAttention``'s internal dropout, which therefore ignores the stage
+schedule. That is *not* fixed by hiding it — :meth:`SpecFormerBranch.set_dropout`
+below now reaches it, so the configured rate is the rate that runs.
 """
 
 from __future__ import annotations
@@ -230,7 +242,6 @@ class SpecFormerBranch(nn.Module):
         physical_wl: torch.Tensor,
         num_bands: int = 40,
         patch_size: int = 8,
-        stride: int = 4,
         d_model: int = 192,
         n_heads: int = 4,
         n_layers: int = 4,

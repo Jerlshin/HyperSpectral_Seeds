@@ -1,0 +1,86 @@
+# The collapsed curriculum — one stage, one objective, one schedule.
+# CHANGES §17 / §18, IC-11.
+#
+#   Epochs 1-150 (early stop, patience 25 on CALIB macro-F1)
+#
+#     Loss:      CE + label smoothing 0.10 -> 0.04 (linear)
+#                + 0.2 x aux CE on the spatial path (fixed, no GradNorm)
+#                + mixup(alpha=0.35) for epochs 1-110, off for 111-150
+#     Head:      ArcFace K=1, margin 0 -> 0.30 warmed over epochs 111-130
+#                (margin only after mixup is off — mutually exclusive by
+#                 construction, which is the *only* reason Stage 2 ever existed)
+#     Sampler:   plain shuffled, batch 128   (classes are already 91-96/class)
+#     Aug:       one `medium` profile throughout + D4 + same-class CutMix
+#     Optimiser: AdamW, lr 5e-4, wd 2e-4, cosine to 5e-6, 5-epoch warm-up
+#     Clipping:  per-group, threshold 5.0
+#     Precision: bf16 autocast throughout
+#     EMA:       d_max 0.999, no re-init
+#     Select:    max(F1_live, F1_ema) on CALIB, never on the reported split
+#
+# Stage hyperparameter count: 69 -> 14. Every one of the 14 either has evidence
+# in the audited run or is a standard default.
+#
+# Expected wall clock ≈40-55 min/run against 19 h, which is the real prize: it
+# converts a project that can afford one run into one that can afford forty.
+defaults:
+  - base_single
+  - _self_
+
+epochs: 150
+batch: 128
+accum: 1
+# On calib, and lower than Stage 1's 50. Fewer selection events is itself the
+# point: 336 + 49 + 87 epochs x {live, EMA} was ~944 correlated draws, worth an
+# expected +0.042 macro-F1 of pure selection bias (CHANGES §4.5).
+patience: 25
+
+# ── Optimiser ─────────────────────────────────────────────────────────
+# max_lr is UNCHANGED from the audited run on purpose. `grad_clip` moves 1.0 ->
+# 5.0 in the experiment config, and CHANGES §8.1 is explicit that these must
+# not be co-tuned in the same run: at the old threshold the backbone was doing
+# normalised-gradient descent, so the LR's *shape* was interacting with a
+# direction-only update. Change one thing, measure, then re-tune.
+max_lr: 5.0e-4
+min_lr: 5.0e-6
+warmup_ep: 5
+dropout: 0.15
+
+# ── Objective ─────────────────────────────────────────────────────────
+label_smooth_hi: 0.10
+label_smooth_lo: 0.04
+# Plain CE. Focal loss addresses foreground/background imbalance at 1000:1;
+# here the imbalance is 96:91, so gamma>0 was down-weighting easy examples
+# rather than correcting anything (CHANGES §7.4). Untested in the audited run,
+# so removed rather than kept.
+focal_gamma: 0.0
+aux_loss_weight: 0.2
+
+# ── Regularisation ────────────────────────────────────────────────────
+# The one demonstrably load-bearing regulariser: switching it off at the Phase
+# 2->3 boundary moved training accuracy 42% -> 96.6% in a single epoch while
+# validation macro-F1 moved 0.816 -> 0.816. A ~14-point train/val gap opened
+# and never closed (CHANGES §5.5).
+mixup: 0.35
+mixup_epochs: 110
+aug_profile: medium
+
+# ── Head schedule ─────────────────────────────────────────────────────
+# 0 -> 0.30 over epochs 111-130, i.e. starting the epoch after mixup stops.
+# At m=0 this is NormFace, which is what Stage 1 already ran to 0.842 — so the
+# margin is worth TESTING (A7), not assuming.
+arcface_m: 0.30
+# 48 is high for a 256-d embedding at 90 classes and was never tuned.
+arcface_s: 32.0
+margin_warmup_start: 111
+margin_warmup_end: 130
+
+# ── Optional Phase B — appended only if A6 earns it ───────────────────
+# 0 disables. Turn on only if SupCon at 16x8 balanced batches beats plain CE by
+# more than run-to-run variance under the grouped protocol; the audited design
+# confounded the contrastive term with an augmentation change and a sampler
+# change at the same epoch, so it measured none of the three.
+supcon_epochs: 0
+supcon_weight: 0.30
+supcon_temp: 0.10
+bal_n_cls: 16
+bal_n_spc: 8

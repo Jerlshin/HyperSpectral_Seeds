@@ -17,13 +17,25 @@ gradients are amplified by ``s = 48`` relative to the backbone's. A single
 saturated batch in the head therefore divided the whole model's effective
 learning rate (§2.5.8 M-10). Clipping the three groups independently decouples
 them.
+
+**IC-6 — the threshold, and measuring whether it binds.** At ``grad_clip = 1.0``
+the backbone's pre-clip norm was 25–50 for the entire audited run, so the clip
+fired on essentially every step and the backbone was doing normalised-gradient
+descent at a fixed step size rather than AdamW-with-a-schedule (CHANGES.md
+§8.1). The elaborate three-regime LR schedule was, in magnitude terms, largely
+decorative. The default moves to 5.0 — clip *outliers*, which is a clip's job —
+and :class:`ClipReport` adds the measurement that was missing: the post-clip
+norm and the fraction of groups actually clipped, logged as
+``grad_norm/postclip_*`` and ``grad_norm/clip_fraction``. The validation
+criterion for the change is that ``clip_fraction`` falls from ≈1.0 to <0.2.
 """
 
 from __future__ import annotations
 
 import inspect
 import weakref
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator, Mapping
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -112,7 +124,56 @@ def split_by_clip_group(model: nn.Module) -> dict[str, list[torch.nn.Parameter]]
     return groups
 
 
-def clip_grad_norm_by_group(model: nn.Module, max_norm: float) -> dict[str, torch.Tensor]:
+@dataclass(frozen=True)
+class ClipReport(Mapping[str, torch.Tensor]):
+    """What one per-group clip did, as on-device 0-dim tensors (IC-6).
+
+    Iterating and indexing address the **pre-clip** norms, so the callers and
+    tests written against the plain ``dict[str, Tensor]`` this replaces are
+    unaffected. :attr:`postclip` and :attr:`clipped` are the addition.
+
+    Everything stays on the device deliberately: this runs on the inner loop and
+    a ``.item()`` here would be a queue drain per step. The training loops
+    accumulate these and resolve one epoch's worth in a single transfer.
+    """
+
+    #: Pre-clip L2 norm per group — what ``clip_grad_norm_`` returns.
+    preclip: dict[str, torch.Tensor] = field(default_factory=dict)
+    #: ``min(preclip, max_norm)`` — the norm the optimiser actually stepped on.
+    postclip: dict[str, torch.Tensor] = field(default_factory=dict)
+    #: 1.0 where the clip bound, 0.0 where it did not.
+    clipped: dict[str, torch.Tensor] = field(default_factory=dict)
+
+    def __getitem__(self, key: str) -> torch.Tensor:
+        return self.preclip[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.preclip)
+
+    def __len__(self) -> int:
+        return len(self.preclip)
+
+    def scalars(self) -> dict[str, torch.Tensor]:
+        """Tracker tags for all three series plus the aggregate clip fraction.
+
+        ``grad_norm/clip_fraction`` is the mean of :attr:`clipped` over the
+        groups — the single number CHANGES.md §8.1 asks to watch, since "the
+        clip binds on every step" is a statement about the model, not about any
+        one group.
+        """
+        tags: dict[str, torch.Tensor] = {}
+        for label, value in self.preclip.items():
+            tags[f"grad_norm/preclip_{label}"] = value
+        for label, value in self.postclip.items():
+            tags[f"grad_norm/postclip_{label}"] = value
+        for label, value in self.clipped.items():
+            tags[f"grad_norm/clipped_{label}"] = value
+        if self.clipped:
+            tags["grad_norm/clip_fraction"] = torch.stack(list(self.clipped.values())).mean()
+        return tags
+
+
+def clip_grad_norm_by_group(model: nn.Module, max_norm: float) -> ClipReport:
     """Clip head, fusion and backbone gradients independently (OP-3 / T2-5).
 
     Call it exactly where the single global ``clip_grad_norm_`` used to be:
@@ -124,15 +185,23 @@ def clip_grad_norm_by_group(model: nn.Module, max_norm: float) -> dict[str, torc
             global clip used, now applied three times rather than once.
 
     Returns:
-        ``{"head": tensor, "fusion": tensor, "backbone": tensor}`` — each
-        group's **pre-clip** norm, left on the device as a 0-dim tensor so a
-        caller running this every step is not forced into a host
-        synchronisation. Groups owning no parameter are absent.
+        A :class:`ClipReport` over ``head``/``fusion``/``backbone``. Indexing it
+        gives each group's **pre-clip** norm, as before; ``.postclip`` and
+        ``.clipped`` carry IC-6's additions. Groups owning no parameter are
+        absent from all three.
     """
-    return {
-        label: nn.utils.clip_grad_norm_(params, max_norm)
-        for label, params in split_by_clip_group(model).items()
-    }
+    preclip: dict[str, torch.Tensor] = {}
+    postclip: dict[str, torch.Tensor] = {}
+    clipped: dict[str, torch.Tensor] = {}
+    for label, params in split_by_clip_group(model).items():
+        norm = nn.utils.clip_grad_norm_(params, max_norm)
+        preclip[label] = norm
+        # Derived from the returned pre-clip norm rather than re-measured: a
+        # second pass over the gradients would double the cost of the clip to
+        # compute a number `min` already determines exactly.
+        postclip[label] = norm.clamp(max=max_norm)
+        clipped[label] = (norm > max_norm).to(norm.dtype)
+    return ClipReport(preclip=preclip, postclip=postclip, clipped=clipped)
 
 
 def adamw_kwargs(fused: bool, params: list[dict[str, Any]] | None = None) -> dict[str, Any]:

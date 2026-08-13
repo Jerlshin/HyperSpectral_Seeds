@@ -59,6 +59,58 @@ from spectralquadnet.data.prep.config import BandSelectionConfig
 # =====================================================================
 # STEP 1 — Mean spectra extraction
 # =====================================================================
+def resolve_train_indices(cfg: BandSelectionConfig) -> npt.NDArray[np.int64] | None:
+    """The rows band selection is allowed to see (IC-4).
+
+    ``None`` when ``cfg.fold`` is ``None``, which reproduces the whole-corpus
+    selection — leaky, and retained deliberately as A2's control arm.
+
+    When a fold is named, the training rows come from the *same* split builder
+    the training run uses, driven by the same parameters. Approximating the
+    partition here would leave the two selections describing different data and
+    make A2 uninterpretable.
+
+    Note:
+        ``calib`` is excluded along with ``val`` and ``test``. Calib is a
+        held-out split — it carries fitted parameters — so a band chosen with
+        its labels in scope is chosen with information the training gradient
+        never had.
+
+    Raises:
+        FileNotFoundError: A fold was requested but ``groups_path`` is absent.
+    """
+    if cfg.fold is None:
+        return None
+
+    labels = np.load(cfg.labels_path)
+    if cfg.split_scheme == "stratified":
+        from spectralquadnet.data.loaders import _stratified_split
+
+        bundle = _stratified_split(labels, cfg.split_eval_frac, cfg.calib_frac, None)
+        return np.asarray(bundle.train, dtype=np.int64)
+
+    groups_path = Path(cfg.groups_path)
+    if not groups_path.exists():
+        raise FileNotFoundError(
+            f"band selection at fold {cfg.fold} needs the scan ids at {groups_path}, which "
+            "does not exist. It is written by `python scripts/prepare_dataset.py`. Without "
+            "it there is no group-disjoint training set to restrict the selection to, and "
+            "the selection would silently fall back to the leaky whole-corpus one."
+        )
+    from spectralquadnet.data.loaders import grouped_split
+
+    bundle = grouped_split(
+        labels,
+        np.load(groups_path),
+        eval_frac=cfg.split_eval_frac,
+        calib_frac=cfg.calib_frac,
+        fold=int(cfg.fold),
+        seed=cfg.seed,
+        single_group_policy="patch_split",
+    )
+    return np.asarray(bundle.train, dtype=np.int64)
+
+
 def extract_mean_spectra(
     cfg: BandSelectionConfig,
 ) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.int64]]:
@@ -68,6 +120,11 @@ def extract_mean_spectra(
 
     Background detection: pixels whose band-sum absolute value < 1e-5
     are treated as padded zeros from the segmentation pipeline.
+
+    Every row is computed — the reduced cube written at the end has to cover
+    the whole dataset, since the model scores eval patches too. Restricting the
+    *selection* to training rows is :func:`resolve_train_indices`'s job and
+    happens on the returned arrays, not here.
 
     Returns
     -------
@@ -571,6 +628,27 @@ def load_deployed_curve(path: str | Path) -> dict[int, float]:
 # =====================================================================
 # STEP 7 — Save reduced dataset
 # =====================================================================
+def output_paths(cfg: BandSelectionConfig, tag: str, n_bands: int) -> tuple[Path, Path]:
+    """Where this selection's cube and wavelength CSV go.
+
+    Whole-corpus selections keep the historical flat names
+    (``patches_spa_40b.npy``), so existing configs are unaffected. A per-fold
+    selection goes to ``<output_dir>/<fold_subdir>/patches_fold<k>_<n>b.npy`` —
+    a *different filename*, because the two arrays are not interchangeable and
+    a run that silently picked up the wrong one would be exactly the leak IC-4
+    exists to close, wearing the name of the fix.
+    """
+    out = Path(cfg.output_dir)
+    if cfg.fold is None:
+        return out / f"patches_{tag}_{n_bands}b.npy", out / f"wavelengths_{tag}_{n_bands}b.csv"
+    fold_dir = out / cfg.fold_subdir
+    fold_dir.mkdir(parents=True, exist_ok=True)
+    return (
+        fold_dir / f"patches_fold{cfg.fold}_{n_bands}b.npy",
+        fold_dir / f"wavelengths_fold{cfg.fold}_{n_bands}b.csv",
+    )
+
+
 def save_outputs(
     final_bands: npt.NDArray[Any], wl_df: pd.DataFrame, tag: str, cfg: BandSelectionConfig
 ) -> None:
@@ -578,14 +656,18 @@ def save_outputs(
     Writes the reduced patch array and the selected wavelength CSV.
     Reads the full patches via memory-map and writes only the optimal
     band subset in chunks to avoid peak memory usage.
+
+    **Every row is written**, not only the training ones: the bands were chosen
+    from training patches (IC-4), but the model still has to score val and test,
+    and slicing the array down to the training split would make that impossible.
+    Restricting *selection* and restricting *data* are different things and only
+    the first is the leak.
     """
     patches = np.load(cfg.patches_path, mmap_mode="r")
     N, _, H, W = patches.shape
     n = len(final_bands)
-    out = Path(cfg.output_dir)
 
-    patch_path = out / f"patches_{tag}_{n}b.npy"
-    wl_path = out / f"wavelengths_{tag}_{n}b.csv"
+    patch_path, wl_path = output_paths(cfg, tag, n)
 
     print(f"\n[6/6]  Saving  {patch_path.name}  shape = ({N}, {n}, {H}, {W})...")
     reduced = np.zeros((N, n, H, W), dtype=np.float32)
@@ -630,7 +712,25 @@ def select_bands(cfg: BandSelectionConfig | None = None) -> None:
 
     # ── Load ──────────────────────────────────────────────────────
     wl_df = pd.read_csv(cfg.wavelength_path)
-    X, y = extract_mean_spectra(cfg)
+    X_all, y_all = extract_mean_spectra(cfg)
+
+    # ── IC-4: restrict the SELECTION to training rows ─────────────
+    # Everything below this line — the correlation matrix, the FDR diagnostic,
+    # the mutual information, SPA's Gram-Schmidt residuals and the CV curve —
+    # sees `X`/`y` and therefore sees training patches only. The reduced cube
+    # written at the end still covers every row; what changed is whose labels
+    # were allowed to choose the bands.
+    train_idx = resolve_train_indices(cfg)
+    if train_idx is None:
+        X, y = X_all, y_all
+        scope = "ALL 8,624 patches — including every eval patch (LEAKY, A2 control arm)"
+    else:
+        X, y = X_all[train_idx], y_all[train_idx]
+        scope = (
+            f"{len(train_idx):,} TRAINING patches of fold {cfg.fold} "
+            f"({cfg.split_scheme}); val/test/calib labels are out of scope"
+        )
+    print(f"\n  Selection scope: {scope}")
 
     # ── Pre-filter ────────────────────────────────────────────────
     candidates = decorrelation_prefilter(X, cfg)
@@ -694,7 +794,15 @@ def select_bands(cfg: BandSelectionConfig | None = None) -> None:
         for k in shared
     ]
     report = pd.DataFrame(rows)
-    rpath = Path(cfg.output_dir) / "band_selection_report.csv"
+    # Per-fold selections write their own report next to their own cube; a
+    # single shared filename would let fold 1 silently overwrite fold 0's
+    # evidence, and the two curves are the artifact A2 compares.
+    suffix = "" if cfg.fold is None else f"_fold{cfg.fold}"
+    report_dir = (
+        Path(cfg.output_dir) if cfg.fold is None else Path(cfg.output_dir) / cfg.fold_subdir
+    )
+    report_dir.mkdir(parents=True, exist_ok=True)
+    rpath = report_dir / f"band_selection_report{suffix}.csv"
     report.to_csv(rpath, index=False)
     print(f"\n  Accuracy table:\n{report.to_string(index=False)}")
     print(f"\n  Report → {rpath}")
@@ -703,8 +811,22 @@ def select_bands(cfg: BandSelectionConfig | None = None) -> None:
     # Written next to the curve, not only printed: M-14 is a defect of an
     # *artifact* — a report that stops at its own chosen k — so the artifact
     # has to carry the answer.
-    vpath = Path(cfg.output_dir) / "band_selection_elbow.json"
-    vpath.write_text(json.dumps({"estimator": estimator, **verdict.__dict__}, indent=2))
+    vpath = report_dir / f"band_selection_elbow{suffix}.json"
+    vpath.write_text(
+        json.dumps(
+            {
+                "estimator": estimator,
+                # IC-4: recorded in the artifact, because "were the eval labels
+                # in scope when these bands were chosen?" is the first question
+                # a reviewer asks and it must be answerable from the file.
+                "selection_scope": scope,
+                "fold": cfg.fold,
+                "n_selection_rows": int(len(X)),
+                **verdict.__dict__,
+            },
+            indent=2,
+        )
+    )
     print("\n".join(verdict.lines()))
     print(f"  Verdict → {vpath}")
     if not verdict.demonstrable:

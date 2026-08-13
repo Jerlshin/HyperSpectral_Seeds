@@ -30,6 +30,13 @@ groups_path: ./dataset/groups.npy
 masks_path: ./dataset/masks.npy
 morphology_path: ./dataset/morphology.npy
 
+# IC-14. Written by prepare_dataset.py and NEVER fed to a model — it is the
+# per-pixel brightness the SNV divided out, which is also the strongest single
+# carrier of acquisition-bundle identity. `spectralquadnet.experiments.leakage`
+# reads it to *measure* how much bundle signal survives preprocessing, which is
+# the A1-adjacent question. Empty disables that probe.
+gain_path: ./dataset/gain.npy
+
 # ── Geometry ──────────────────────────────────────────────────────────
 num_bands: 40
 num_classes: 90
@@ -54,7 +61,16 @@ cutmix_spatial: 24
 # half of the data.
 split_scheme: grouped
 split_eval_frac: 0.30
+# Sweeping {0, 1} is the COMPLETE leave-one-bundle-out cross-validation this
+# dataset supports. There is no third bundle, so there is no third fold. Report
+# both folds; never their maximum. `scripts/run_protocol.py` does the sweep.
 split_fold: 0
+
+# IC-3. `error` refuses to run rather than silently accepting a class whose
+# eval patches share a scan with its training patches. The audited run's
+# protocol failure was not that a leak was tolerated — it is that nothing
+# stopped it — so the grouped arm now fails loudly instead of degrading.
+single_group_policy: error
 
 # Fraction of the *training pool* held out for calibration. The margins, the
 # CDWS weights and the Phase-3 oversampling weights are fitted here, so that

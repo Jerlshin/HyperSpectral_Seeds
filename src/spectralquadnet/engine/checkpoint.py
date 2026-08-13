@@ -56,6 +56,7 @@ from torch.utils.data import DataLoader
 
 from spectralquadnet.engine.batch import side_inputs, unpack_batch
 from spectralquadnet.models.ema import ModelEMA
+from spectralquadnet.models.registry import describe
 from spectralquadnet.utils.device import unwrap_model
 from spectralquadnet.utils.distributed import DistContext
 
@@ -72,7 +73,29 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: 3 → Tier 3 (T3-1 … T3-7): every branch's *input* changed, so most branch
 #: tensors changed shape or ceased to exist. This one is not migratable — see
 #: :func:`remap_state_dict`.
+#: 4 → IC-10: ``SpectralSeedNet``. Not a migration of 3 at all but a *different
+#: architecture*, which is why :data:`SCHEMA_VERSION` is no longer the whole
+#: story — see below.
 SCHEMA_VERSION: int = 3
+
+#: Since IC-10 the schema version belongs to the **model class**, not to this
+#: module: ``SpectralQuadNet.SCHEMA_VERSION == 3`` and
+#: ``SpectralSeedNet.SCHEMA_VERSION == 4``, and a bundle records both the version
+#: and the :attr:`ARCH` that wrote it. The module constant above is retained as
+#: the value for a model that declares neither, which is exactly what every
+#: pre-IC-10 bundle was, so the archived ``output_v12_spa40`` checkpoints keep
+#: loading and every existing reader of this name keeps working.
+#:
+#: The version alone was never sufficient and now visibly is not: two
+#: architectures can both be "current" simultaneously, and their state dicts
+#: share no tensor names. A v3 bundle handed to ``SpectralSeedNet`` is not an
+#: old checkpoint to migrate, it is the wrong model — :func:`load_ckpt` raises
+#: rather than loading whatever happens to match.
+
+
+class ArchitectureMismatchError(RuntimeError):
+    """A bundle was written by a different architecture than the one loading it."""
+
 
 #: State-dict prefixes that exist only in schema v1.
 _V1_ONLY_PREFIXES: tuple[str, ...] = ("linear_head.",)
@@ -93,7 +116,10 @@ class SchemaTooOldError(RuntimeError):
 
 
 def remap_state_dict(
-    sd: dict[str, Any], reference: dict[str, torch.Tensor], version: int
+    sd: dict[str, Any],
+    reference: dict[str, torch.Tensor],
+    version: int,
+    target_version: int = SCHEMA_VERSION,
 ) -> dict[str, Any]:
     """Upgrade a checkpoint's ``state_dict`` from ``version`` to :data:`SCHEMA_VERSION`.
 
@@ -120,6 +146,9 @@ def remap_state_dict(
         reference: The live model's ``state_dict()``, used only for the shape
             and dtype of any buffer being added.
         version: The bundle's recorded ``schema_version`` (absent → 1).
+        target_version: The schema the loading model writes. Defaults to
+            :data:`SCHEMA_VERSION` so pre-IC-10 callers are unaffected;
+            :func:`load_ckpt` passes the model's own.
 
     Returns:
         A new dict loadable with ``strict=True``.
@@ -127,14 +156,25 @@ def remap_state_dict(
     Raises:
         SchemaTooOldError: ``version`` predates the Tier-3 architecture.
     """
-    if version >= SCHEMA_VERSION:
+    if version >= target_version:
         return sd
     if version <= _MIGRATABLE_THROUGH:
         raise SchemaTooOldError(
-            f"checkpoint schema v{version} predates Tier 3 (v{SCHEMA_VERSION}). Branches B, C "
+            f"checkpoint schema v{version} predates Tier 3 (v{target_version}). Branches B, C "
             "and D changed what they consume, not just how many parameters they consume it "
             "with (IMPROVEMENT_PLAN §3.3 BR-1/BR-3/BR-4), so no tensor-level remap exists. "
             "Retrain, or check out the Tier-2 tree to re-score the archived checkpoints."
+        )
+    if version < target_version:
+        # v3 → v4 is `SpectralQuadNet` → `SpectralSeedNet`, which `load_ckpt`
+        # has already rejected by architecture. Reaching here means a caller
+        # bypassed that check, so say the same thing rather than silently
+        # returning a state dict that will fail `strict=True` with a wall of
+        # missing keys.
+        raise SchemaTooOldError(
+            f"checkpoint schema v{version} cannot be upgraded to v{target_version}: they are "
+            "different architectures (CHANGES IC-10), not two versions of one. Load it into "
+            "the model that wrote it."
         )
     out = {k: v for k, v in sd.items() if not k.startswith(_V1_ONLY_PREFIXES)}
     for key in _V2_ADDED_BUFFERS:
@@ -222,19 +262,25 @@ def save_ckpt(
     """
     if dist is not None and not dist.is_main:
         return
+    core = unwrap_model(model)
+    identity = describe(core)
     bundle = {
         "epoch": epoch,
         "stage": stage,
         # Unwrapped, so a compiled or DDP-wrapped run writes the same key names
         # a plain one does and the bundle stays loadable anywhere.
-        "model": unwrap_model(model).state_dict(),
+        "model": core.state_dict(),
         "ema": ema.state_dict(),
         "val_f1": val_f1,
         "val_acc": val_acc,
         # Constant since HD-1 removed the second head; kept in the schema so
         # every existing reader of this key keeps working.
         "use_arcface": True,
-        "schema_version": SCHEMA_VERSION,
+        # Read from the model rather than from a module constant (IC-10): with
+        # two architectures live, a bundle that records only a version number
+        # does not identify what wrote it.
+        "schema_version": identity.schema_version,
+        "arch": identity.arch,
         **metadata,
     }
     torch.save(bundle, path)
@@ -285,10 +331,18 @@ def load_stage_meta(cfg: ExperimentConfig | Any, s: int) -> dict[str, Any]:
 def load_ckpt(path: str, model: nn.Module, ema: ModelEMA, device: torch.device) -> dict[str, Any]:
     """Load a checkpoint bundle into ``model`` and its EMA shadow in place.
 
-    Bundles older than :data:`SCHEMA_VERSION` are passed through
-    :func:`remap_state_dict` first, so the three archived
-    ``output_v12_spa40`` checkpoints — schema v1, with a ``linear_head`` this
-    model no longer has — still load ``strict=True``.
+    Bundles older than the target model's schema are passed through
+    :func:`remap_state_dict` first, so the three archived ``output_v12_spa40``
+    checkpoints — schema v1, with a ``linear_head`` this model no longer has —
+    still load ``strict=True``.
+
+    Raises:
+        ArchitectureMismatchError: The bundle names a different ``arch`` than
+            the model being loaded into. This is checked *before* the version,
+            because "old" and "wrong" are different failures with different
+            fixes and a v3 bundle handed to ``SpectralSeedNet`` is the second.
+        SchemaTooOldError: The bundle's schema predates what the target model
+            can be migrated from.
 
     Returns:
         The full deserialised bundle (including ``val_f1``/``val_acc``/metadata).
@@ -298,9 +352,23 @@ def load_ckpt(path: str, model: nn.Module, ema: ModelEMA, device: torch.device) 
     # The eager module, for the same reason `save_ckpt` unwraps: bundles are
     # written without a wrapper prefix, so they must be loaded without one.
     target = unwrap_model(model)
+    identity = describe(target)
+    # A bundle with no `arch` key predates IC-10 and is therefore a
+    # `SpectralQuadNet` one — the only architecture that existed when it was
+    # written.
+    bundle_arch = str(ckpt.get("arch", "spectral_quadnet"))
+    if bundle_arch != identity.arch:
+        raise ArchitectureMismatchError(
+            f"{path} was written by {bundle_arch!r} (schema v{version}) but is being loaded "
+            f"into {identity.arch!r} (schema v{identity.schema_version}). The two share no "
+            "tensor names, so there is no remap — point `model.arch` at the architecture that "
+            "produced the checkpoint, or train this one from scratch."
+        )
     reference = target.state_dict()
-    target.load_state_dict(remap_state_dict(ckpt["model"], reference, version))
-    ema.load_state_dict(remap_state_dict(ckpt["ema"], reference, version))
+    target.load_state_dict(
+        remap_state_dict(ckpt["model"], reference, version, identity.schema_version)
+    )
+    ema.load_state_dict(remap_state_dict(ckpt["ema"], reference, version, identity.schema_version))
     return ckpt  # type: ignore[no-any-return]
 
 

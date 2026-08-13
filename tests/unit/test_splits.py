@@ -375,7 +375,7 @@ def test_the_pfix_config_selects_the_grouped_protocol() -> None:
     register_configs()
     with initialize_config_dir(config_dir=str(repo_root / "configs"), version_base="1.3"):
         pfix = compose(
-            config_name="experiment/output_v12_spa40",
+            config_name="experiment/quadnet_audited",
             overrides=["data=spa40_90class_pfix"],
         )
     assert pfix.data.split_scheme == "grouped"
