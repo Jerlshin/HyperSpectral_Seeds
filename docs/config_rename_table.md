@@ -12,7 +12,7 @@ Maps every key of the pre-refactor `CONFIG` dict (`HSI_modality_training/hsi_tra
 | `output_dir` | `output_dir` ⚠️ | `'outputs/output_v12_spa40'` | `configs/experiment/output_v12_spa40.yaml` |
 | `num_bands` | `data.num_bands` | `40` | `configs/data/spa40_90class.yaml` |
 | `num_classes` | `data.num_classes` | `90` | `configs/data/spa40_90class.yaml` |
-| `s1_epochs` | `stage1.epochs` | `600` | `configs/stage1/progressive_3phase.yaml` |
+| `s1_epochs` | `stage1.epochs` | `400` | `configs/stage1/progressive_3phase.yaml` |
 | `s1_phase1_frac` | `stage1.phase1_frac` | `0.3` | `configs/stage1/progressive_3phase.yaml` |
 | `s1_phase2_frac` | `stage1.phase2_frac` | `0.38` | `configs/stage1/progressive_3phase.yaml` |
 | `s1_batch` | `stage1.batch` | `128` | `configs/stage1/progressive_3phase.yaml` |
@@ -21,7 +21,7 @@ Maps every key of the pre-refactor `CONFIG` dict (`HSI_modality_training/hsi_tra
 | `s1_min_lr` | `stage1.min_lr` | `5e-06` | `configs/stage1/progressive_3phase.yaml` |
 | `s1_dropout` | `stage1.dropout` | `0.15` | `configs/stage1/progressive_3phase.yaml` |
 | `s1_mixup` | `stage1.mixup` | `0.35` | `configs/stage1/progressive_3phase.yaml` |
-| `s1_patience` | `stage1.patience` | `160` | `configs/stage1/progressive_3phase.yaml` |
+| `s1_patience` | `stage1.patience` | `50` | `configs/stage1/progressive_3phase.yaml` |
 | `s1_accum` | `stage1.accum` | `1` | `configs/stage1/progressive_3phase.yaml` |
 | `s1_focal_gamma` | `stage1.focal_gamma` | `1.5` | `configs/stage1/progressive_3phase.yaml` |
 | `s1_label_smooth_hi` | `stage1.label_smooth_hi` | `0.1` | `configs/stage1/progressive_3phase.yaml` |
@@ -51,7 +51,7 @@ Maps every key of the pre-refactor `CONFIG` dict (`HSI_modality_training/hsi_tra
 | `s2_sgdr_T0` | `stage2.sgdr_T0` | `25` | `configs/stage2/arcface_supcon.yaml` |
 | `s2_sgdr_Tmult` | `stage2.sgdr_Tmult` | `2` | `configs/stage2/arcface_supcon.yaml` |
 | `s2_dropout` | `stage2.dropout` | `0.1` | `configs/stage2/arcface_supcon.yaml` |
-| `s2_patience` | `stage2.patience` | `80` | `configs/stage2/arcface_supcon.yaml` |
+| `s2_patience` | `stage2.patience` | `30` | `configs/stage2/arcface_supcon.yaml` |
 | `s2_arcface_s` | `stage2.arcface_s` | `48.0` | `configs/stage2/arcface_supcon.yaml` |
 | `s2_arcface_m` | `stage2.arcface_m` | `0.35` | `configs/stage2/arcface_supcon.yaml` |
 | `s2_arcface_m0` | `stage2.arcface_m0` | `0.18` | `configs/stage2/arcface_supcon.yaml` |

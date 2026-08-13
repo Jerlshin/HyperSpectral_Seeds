@@ -17,21 +17,24 @@ and the first Stage-2 forward agree on every non-target logit to $10^{-5}$.
 | | Stage 1 | Stage 2 | Stage 3 |
 |---|---|---|---|
 | Module | `stage1_progressive.py` | `stage2_arcface.py` | `stage3_sam_swa.py` |
-| Epochs (max) | 600 | 150 | 120 (no early stop) |
+| Epochs (max) | 400 | 150 | 120 (no early stop) |
 | Head | `arcface_head` @ $m{=}0$ | `arcface_head` @ warmed/per-class $m$ | `arcface_head` @ annealed per-class $m$ |
 | Optimiser | AdamW, per-group clip | AdamW (2 LRs), per-group clip | SAM/ASAM(AdamW), per-group clip |
 | LR schedule | phase-aware (3 phases) | warmup + SGDR | cyclic cosine, 8-epoch |
 | Batch | 128 (shuffled / oversampled) | $16\times8=128$ balanced | $16\times8=128$ balanced |
-| Patience (macro-F1) | 160 | 80 | — |
+| Patience (macro-F1) | 50 | 30 | — |
 | Mixup | Phases 1–2 only | ✗ | ✗ |
 | Same-class CutMix | all profiles except `none` | `very_light` profile | `light` profile |
 | AMP | Phases 1–2 | ✗ (SupCon forces fp32) | ✗ (SAM is fp32 by construction) |
 | Recorded best val F1 | 0.8877 (ep 488) | 0.8867 (ep 50) | 0.8745 (SWA) |
 
-> The recorded numbers above are from `outputs/output_v12_spa40/`, produced under the
-> **pre-Tier-3** architecture. Tier 3 changed what three of the four branches consume, so those
-> checkpoints do not load into the current model (§3.8) and this table's F1 column cannot be
-> regenerated from them; a fresh number arrives with the first full Tier-3 training run.
+> The recorded numbers above are from the `outputs/output_v12_spa40/` run, produced under the
+> **pre-Tier-3** architecture *and* under the then-shipped Stage-1 budget of 600 epochs — which is
+> why its Stage-1 best sits at epoch 488, past the 400 the config now runs. Tier 3 changed what
+> three of the four branches consume, so those checkpoints do not load into the current model
+> (§3.8) and this table's F1 column cannot be regenerated from them; a fresh number arrives with
+> the first full Tier-3 training run. The run directory itself is not part of the repository
+> (`outputs/` is git-ignored) — see §5.4.
 
 ---
 
@@ -40,20 +43,35 @@ and the first Stage-2 forward agree on every non-target logit to $10^{-5}$.
 ### Phase boundaries
 
 $$
-p_1 = \lfloor E\cdot0.30\rfloor = 180, \qquad p_2 = \lfloor E\cdot(0.30+0.38)\rfloor = 408, \qquad E=600
+p_1 = \lfloor E\cdot0.30\rfloor = 120, \qquad p_2 = \lfloor E\cdot(0.30+0.38)\rfloor = 272, \qquad E=400
 $$
 
 | Phase | Epochs | Augmentation | Loss | Mixup | Sampler |
 |---|---|---|---|---|---|
-| 1 · explore | 1–180 | `heavy` | CE + label smoothing | ✓ ($\alpha{=}0.35$) | shuffled |
-| 2 · consolidate | 181–408 | `medium` | CE + label smoothing | ✓ | shuffled |
-| 3 · discriminate | 409–600 | `very_light` | Focal + SupCon + ProtoNCE | ✗ | hard-class oversampled |
+| 1 · explore | 1–120 | `heavy` | CE + label smoothing | ✓ ($\alpha{=}0.35$) | shuffled |
+| 2 · consolidate | 121–272 | `medium` | CE + label smoothing | ✓ | shuffled |
+| 3 · discriminate | 273–400 | `very_light` | Focal + SupCon + ProtoNCE | ✗ | hard-class oversampled |
+
+Both boundaries are `int(...)` truncations of a float product, not rounded — at $E=400$ the two
+fractions land on exact integers, but the same expression at $E=600$ gives $p_2=407$, not the
+408 that $600\times0.68$ suggests, because `0.30 + 0.38` is $0.6799\overline{9}$ in binary. The
+schedule is computed from the truncated values, never from the fractions.
 
 At each boundary the EMA shadow is hard-reset (`ema_reinit_phases = true`) and, entering Phase 3,
 dropout is raised $0.15\to0.25$ (`p3_dropout`). The sub-centre pooling temperature $\tau$
 (§3.5) anneals continuously across the **whole stage**, independent of phase, via
 `subcentre_tau` — `subcenter_tau_init = 0.20 \to subcenter_tau_final = 0.02` — and is pushed to
 both the live model and the EMA shadow every epoch.
+
+**Leaving a phase also frees its loader.** `_release_stale_phase_loaders` deletes every strictly
+earlier phase's entry from `loaders_by_phase` at each boundary and sweeps the allocator, because
+`persistent_workers=True` keeps a loader's worker processes alive for exactly as long as
+something holds the loader — otherwise Phase 3 would run with the Phase-1 and Phase-2 pools still
+resident: four idle `spawn`-ed interpreters, each with torch imported and its own mapping of the
+patch cube. The dict is mutated in place deliberately, since it is the only reference to those
+loaders and copying it first would free nothing. Phase 3 keeps its own entry even after
+`build_phase3_loader` replaces it, because the oversampled loader is built over that entry's
+dataset — and it costs nothing, the entry never being iterated and so never spawning a worker.
 
 The Phase 2 → 3 transition is where the curriculum becomes data-adaptive: per-class $F_1$ is
 measured on the EMA shadow (`compute_class_difficulty`, using the calibration split when carved,
@@ -71,7 +89,7 @@ mixup available through Phases 1–2.
 ### Phase-aware learning rate
 
 `phase_aware_lr` returns a **multiplier** on `stage1.max_lr` $=5\times10^{-4}$, built as a
-standalone factory (not an inline closure) specifically so its whole 600-epoch trajectory can be
+standalone factory (not an inline closure) specifically so its whole trajectory can be
 pinned bit-exact against a reference implementation:
 
 $$
@@ -85,10 +103,11 @@ $$
 $$
 
 with $\rho_{\min}=\eta_{\min}/\eta_{\max}=0.01$, $\rho_{\text{mid}}=\eta_{\text{mid}}/\eta_{\max}=0.5$.
-In absolute terms: warm-up to $5\times10^{-4}$, decay to $3\times10^{-4}$ by epoch 180, to
-$1\times10^{-4}$ by epoch 408, then 30-epoch cosine restarts oscillating between $5\times10^{-6}$
-and $2.5\times10^{-4}$. `tests/unit/test_schedulers.py` checks all 600 values against a baseline
-reference across three phase-length configurations.
+In absolute terms: warm-up to $5\times10^{-4}$, decay to $3\times10^{-4}$ by epoch 120, to
+$1\times10^{-4}$ by epoch 272, then 30-epoch cosine restarts oscillating between $5\times10^{-6}$
+and $2.5\times10^{-4}$. `tests/unit/test_schedulers.py` checks all `stage1.epochs` values (400
+under the shipped config) against a baseline reference, across three phase-length
+configurations.
 
 ### Label-smoothing decay
 
@@ -106,7 +125,8 @@ $\max(F_1^{\text{live}},F_1^{\text{ema}})>F_1^{\text{best}}$ the stage records `
 {"live","ema"}`, recomputes class difficulty, and saves a bundle carrying `class_f1`,
 `cdws_weights` and `phase3_class_f1`. `arcface_init_done=False` is still written into the
 metadata for legacy-reader compatibility but is vestigial — with one head there is nothing left
-to bootstrap. Patience is 160 epochs without improvement.
+to bootstrap. Patience is 50 epochs without improvement, and the decision is broadcast under DDP
+so every rank stops on the same epoch.
 
 ---
 
@@ -430,7 +450,10 @@ $$
 w_{\text{aux}}(e) = \max\big(w_{\text{final}},\,w_{\text{init}}(1-0.7\,e/E)\big), \qquad w_{\text{init}}=0.65,\; w_{\text{final}}=0.25
 $$
 
-reaching the floor at $e\approx528$ of 600. Stage 2 uses no such decay (aux loss enters at a
+reaching the floor at $e\approx352$ of 400. Because `progress` is $e/E$, this weight is a
+function of the **stage budget** and not only of the epoch — which is why changing
+`stage1.epochs` moves epoch 1's loss and is what currently reddens the golden Stage-1 gate
+(`01_ABSTRACT_AND_OVERVIEW.md` §1.3). Stage 2 uses no such decay (aux loss enters at a
 fixed relative weight within the classification/contrastive convex combination); Stage 3 uses a
 fixed $w_{\text{aux}}=0.10$, no schedule.
 

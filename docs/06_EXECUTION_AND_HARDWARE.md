@@ -4,9 +4,24 @@ Everything in this document is governed by one invariant, stated in `RuntimeConf
 docstring: **every field under `cfg.runtime` is a throughput knob, and changing one must never
 change a reported metric.** That is why `runtime` carries real defaults instead of
 `omegaconf.MISSING` like every other config group — its values are not part of an experiment's
-identity, so a config that never mentions them is not under-specified. The two fields that
-*would* change a number if flipped (`allow_tf32`, `channels_last`) default to off for exactly
-that reason.
+identity, so a config that never mentions them is not under-specified. The two fields that would
+*materially* change a number if flipped (`allow_tf32`, dropping matmul mantissas 24 → 11 bits;
+`channels_last`, re-selecting convolution kernels with a different reduction order) default to
+off for exactly that reason.
+
+Four fields sit close enough to that line to be named rather than left implicit:
+
+- **`amp_dtype`** is the one field here that *admits* to changing numerics rather than defaulting
+  away from it. Stage 1 trains under autocast either way, and the fp16 this group used to inherit
+  from torch's per-device default is what put `NaN` in the loss (§6.2) — so the knob exists to
+  make the choice recorded and overridable instead of implicit.
+- **`fused_optimizer`** and **`decompose_conv3d`** change a *summation order*, not an arithmetic:
+  the fused AdamW step accumulates in the same precision but not the same order, and the `Conv3d`
+  decomposition moves the logits by $1.9\times10^{-7}$. Both are re-associations of the same
+  sum, not a precision trade.
+- **`checkpoint_branch_a`** is bit-exact by construction — Branch A's towers hold no dropout, no
+  BatchNorm and nothing that reads the RNG, so recomputing them in the backward reproduces the
+  gradients exactly.
 
 ---
 
@@ -57,7 +72,14 @@ non-interference reason.
   elsewhere.
 - **Splits and morphometrics**: `build_split_bundle(cfg)`; `standardised_morphometrics` fitted
   **once** on `train_idx` and threaded to every loader that needs it.
-- **Model + EMA construction** — the RNG-critical section (§6.1 above).
+- **Model construction → `apply_runtime_optimisations` → EMA** — the RNG-critical section
+  (§6.1 above). `apply_runtime_optimisations(model, plan)` sits between the two on purpose: it
+  selects the per-device execution paths *inside* the model (§6.2), and it must run **before**
+  the EMA deep-copy, the DDP wrap, `torch.compile` and Stage 3's two SWA copies, so every later
+  copy of the module inherits the same paths. It sets no parameter, no buffer, no state-dict key
+  and draws nothing from the RNG, so it neither perturbs the initialisation stream nor changes
+  what a checkpoint contains. It returns banner lines, printed as the startup block's
+  `Paths :` row beside `Kernels :`.
 - **Hardware dispatch, in this exact order** (out-of-order breaks the compiled graph or the
   BatchNorm invariant):
 
@@ -72,6 +94,14 @@ $$
 - **Stage 1 → 2 → 3**, each either run fresh or skip-loaded from an existing checkpoint,
   reloading the best checkpoint after Stages 1 and 2 (not after Stage 3 — that stage's own
   averaging logic is trusted to leave the best state, §4.3).
+- **Stage boundaries `del` their loaders, then sweep.** `release_memory(device)` alone would not
+  free them: `run_stage1` returning does not drop its loaders while `_run`'s own names still hold
+  them, and a loader holds its `persistent_workers` pool for exactly as long as something holds
+  the loader. Without the explicit `del phase_loaders, val_ldr1` (and `del tr2, va2`, `del tr3,
+  va3` at the later boundaries) the Stage-1 workers stay resident through Stages 2 and 3 —
+  processes that will never serve another batch, each a `spawn`-ed interpreter with torch
+  imported and its own mapping of the patch cube, which on a unified-memory accelerator competes
+  with the activations.
 - **Compile reset at the Stage 2 → 3 boundary**: `reset_compilation()` drops every
   `torch._dynamo` graph and its guards, because Stage 3's SAM double-backward and per-cycle
   margin vector would otherwise trigger continual recompilation; `run_stage3_swa` disables
@@ -154,7 +184,7 @@ are now filtered out and the branch holds its weight for that epoch. Pinned by
 
 ### Metal-specific handling
 
-Two Metal-only code paths exist, both in `utils/device.py::configure_backend`:
+Backend tuning lives in `utils/device.py::configure_backend`:
 
 - **SDPA watermark**: `PYTORCH_MPS_HIGH_WATERMARK_RATIO` is set to `0.0` (unbounded) while the
   low watermark stays `0.8`, because Branch A's per-cell processing (`batch × grid_size_a² =
@@ -173,6 +203,86 @@ Two Metal-only code paths exist, both in `utils/device.py::configure_backend`:
   dropout would inflate their variance. `tests/unit/test_device.py` keeps a direct reproduction of
   the underlying Metal limitation as a tripwire, so a future torch release that lifts it is
   noticed rather than silently made irrelevant.
+
+### In-model execution paths (`apply_runtime_optimisations`)
+
+`configure_backend` tunes the backend; `apply_runtime_optimisations(model, plan)` is its
+companion one level down, and tunes the two modules whose default path is wrong on some
+accelerator. It walks the unwrapped model, sets a flag on every matching module, and returns the
+banner lines that become the startup block's `Paths :` row. Both settings are execution choices
+and nothing else — no parameter, no buffer, no state-dict key, no RNG draw — so a checkpoint
+written under either loads under the other, and a resumed run may legitimately change device and
+change paths with it. It is idempotent, safe on a model that has neither module, and warns if a
+flag is set while its target module is absent (i.e. it was handed something that is not a
+`SpectralQuadNet`).
+
+| Flag | Target | Effect |
+|---|---|---|
+| `plan.decompose_conv3d` | `SpectralSpatialStem3D.decompose_conv3d` | Branch C's three `Conv3d` stages evaluate as stacks of `Conv2d` calls — identical arithmetic in a different summation order ($1.9\times10^{-7}$ on the logits), but a different *kernel*. Metal's `Conv3d` backward is a bad one: **3.12× on the stem, 2.12× on the whole step** (2103 → 994 ms at batch 32), for 9 % more activation memory. |
+| `plan.checkpoint_branch_a` | `SpectralProfileBranch.grad_checkpoint` | Branch A's three towers are recomputed in the backward instead of stored: **2.13× less activation memory** (4054 → 1901 MB at batch 32) for 4.8 % of step time, with bit-exact gradients — the towers hold no dropout, no BatchNorm and nothing that reads the RNG. |
+
+Both default to Metal-only, for two different reasons: the first is a kernel-quality defect
+specific to that backend (cuDNN's 3-D kernels have no such flaw, and `torch.compile` would rather
+be handed the fused operator), the second is unified memory making an activation peak the host's
+problem.
+
+At the batch this config actually trains at, the batch-32 figures above badly understate the
+second one. Measured on an M5 (16 GB, 12.7 GB recommended working set) at `stage1.batch = 128`:
+**49.6 ms/sample holding 9.4 GB with the recompute on, against 780.1 ms/sample holding 14.6 GB
+with it off** — 15.7× slower, because without it the step's working set clears the ceiling and
+the run pages. There it is not a memory optimisation but the thing that makes the batch
+runnable; turning it off on Metal is a decision to lower the batch too.
+
+**The same treatment does not pay for Branch C's stem**, and that has been measured rather than
+assumed — full training step on an M5, plain vs `torch.utils.checkpoint` around the stem:
+
+| `stage1.batch` | plain | stem recomputed |
+|---:|---:|---:|
+| 32 | 32.3 ms/sample | 39.7 ms/sample |
+| 64 | 34.3 ms/sample | 47.5 ms/sample |
+| 128 | 90.4 ms/sample | 173.8 ms/sample |
+
+and the allocator's high-water mark went **up** in each case rather than down (4041 → 4268 MB at
+batch 32). The reason is the decomposition itself: its `kd` gathered depth-slices are transient
+within the forward, but a recompute rebuilds all of them *during* the backward while the rest of
+the backward's buffers are live — so the peak the checkpoint was meant to lower is the one it
+raises. Gradients are bit-identical either way, so this is purely a cost question and the answer
+is no. For context on where the time goes: Branch C is **59 % of the forward pass** at batch 128
+on an M5 (1363 ms of 2323 ms), with Branch A second at 29 %.
+
+### Reporting a Metal memory overrun, which is otherwise silent
+
+Setting `PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0` removes the allocator's refusal, so a large
+`stage1.batch` cannot abort a multi-hour stage. What it converts that abort into is **paging**,
+and a run in that state looks entirely healthy: the loss falls, the epoch line prints, nothing
+complains. It is simply several times slower per sample than the same run one batch size down,
+and nothing else in the log lets a reader attribute that. Measured on the same M5 at
+`stage1.batch`: 32 → 32.3 ms/sample holding 4.0 GB, 64 → 34.3 ms/sample holding 7.9 GB, 128 →
+**90.4 ms/sample** holding 9.6 GB. The arithmetic per sample is identical at all three; the knee
+is entirely a memory effect.
+
+Three functions put that number where it can be read:
+
+| Function | Returns |
+|---|---|
+| `memory_budget(device)` | Bytes the device will hold before it pages — `torch.mps.recommended_max_memory()` on Metal, total VRAM on CUDA, `None` elsewhere and on a torch too old to expose the query. |
+| `memory_allocated(device)` | What the caching allocator currently holds from the driver — `torch.mps.driver_allocated_memory()` / `torch.cuda.memory_reserved()`. |
+| `report_memory_use(device)` | One `[MEM] peak … of a … working set (…%)` line, logged **once** per process (`reset_memory_report()` re-arms it), at `WARNING` at or above `MEMORY_WARN_FRACTION = 0.90` and `INFO` below. |
+
+`release_memory` calls it **before** the sweep, deliberately: that function runs at the epoch and
+phase boundaries, so the allocation standing there is the closest thing to the epoch's high-water
+mark that can be sampled without a per-step probe — after the sweep it is the floor, which would
+say nothing. `describe_hardware` additionally puts the budget in the startup banner next to the
+batch size (`[GPU] Apple Silicon (Metal / MPS)  |  12.7 GB recommended working set`).
+
+**It reports rather than adjudicates, and that is the design.** Note where the batch-128 figure
+sits: 9.6 GB is **76 %** of a 12.7 GB budget. That run was paging badly and was still nowhere
+near the ceiling, so a threshold tuned to catch it would have to fire well below the budget — and
+would then fire on a larger machine where the same allocation is fine. Allocation understates the
+pressure because on unified memory the budget is not the process's alone: the host's page cache
+competes for it, and this pipeline memory-maps a 5.6 GB patch cube that it reads randomly. There
+is no honest threshold here, so the line states the peak and the budget and leaves the inference
+to a reader comparing `train/epoch_s` across two batch sizes.
 
 ### Architecture-gated kernel selection (CUDA)
 
@@ -198,7 +308,7 @@ concrete value once, producing a frozen `RuntimePlan`. `-1` means "decide from t
 
 | Field | Default | Resolution |
 |---|---|---|
-| `num_workers` | `-1` | Half the usable CPU cores (capped at 8) on CUDA; `min(2, cores-1)` on Metal/CPU, where the accelerator — not host augmentation — is the bottleneck and `spawn` worker start-up is not free. **Divided again by `world_size` under DDP**, even when set explicitly, floored at 0. |
+| `num_workers` | `-1` | Half the usable CPU cores (capped at `MAX_AUTO_WORKERS = 8`) on CUDA; `NON_CUDA_AUTO_WORKERS = 2` on Metal/CPU, where the accelerator — not host augmentation — is the bottleneck and `spawn` worker start-up is not free. Measured on an M5 at `stage1.batch = 128`, `heavy` profile: the loader delivers a batch every **187 ms at two workers** (87 ms at eight) against a **9.9 s** training step, so the feed is hidden ~50× over. The per-sample host cost is 1.86 ms, of which 1.41 ms is the mmap page-in and only ~0.45 ms is augmentation — an I/O number, not a CPU one, so more workers buy latency that is already invisible while costing RAM. **Divided again by `world_size` under DDP**, even when set explicitly, floored at 0. |
 | `eval_num_workers` | `-1` | `min(⟨resolved num_workers⟩, 4)` — derived from the already-DDP-divided worker count. |
 | `pin_memory` | `-1` | Auto-enables on CUDA only. An **explicit** `pin_memory=1` off-CUDA is refused with a logged warning and coerced back to `False` rather than raising — `DataLoader`'s pinning thread would raise with a less legible message. |
 | `persistent_workers` | `-1` | Defaults to `num_workers > 0`, then unconditionally re-ANDed with it — an explicit `True` at `num_workers=0` still collapses to `False`. |
@@ -207,9 +317,11 @@ concrete value once, producing a frozen `RuntimePlan`. `-1` means "decide from t
 | `compile_backend` / `compile_mode` | `inductor` / `default` | Passed straight to `torch.compile`; `dynamic=False` is hardcoded. |
 | `channels_last` | `false` | **Not auto-resolved** — a hard opt-in, since NHWC re-selects convolution kernels with a different reduction order (a precision-adjacent change the runtime group is not allowed to make silently). |
 | `allow_tf32` | `false` | Off on purpose: cuts a matmul's mantissa from 24 bits to 11, and Turing (the T4) has no TF32 path at all. |
-| `amp_dtype` | `auto` | `auto` → **bf16** on any device that can autocast to it, fp16 only where none can; `bf16`/`fp16` force one, `off` trains in fp32. The one field in this group that admits to changing numerics rather than defaulting away from it — Stage 1 trains under autocast either way, and the fp16 this group used to inherit from torch is what produced the non-finite losses (§6.2). An unrecognised value raises at resolution time. |
+| `amp_dtype` | `auto` | `auto` → **bf16** on any device that can autocast to it, fp16 only where none can; `bf16`/`fp16` force one, `off` trains in fp32. The field that admits to changing numerics rather than defaulting away from it — Stage 1 trains under autocast either way, and the fp16 this group used to inherit from torch is what produced the non-finite losses (§6.2). An unrecognised value raises at resolution time. |
 | `cudnn_benchmark` | `true` | Autotuned convolution algorithm selection — already what `set_seed` leaves set. |
 | `fused_optimizer` | `auto` | `auto` → CUDA only. AdamW's fused multi-tensor kernel folds the whole step into one launch; it accumulates in the same precision but **not the same order** — the one runtime default here that is not bit-exact against eager AdamW. |
+| `decompose_conv3d` | `auto` | `auto` → **Metal only**. Evaluates Branch C's three `Conv3d` stages as stacks of `Conv2d` calls: same arithmetic, different summation order ($1.9\times10^{-7}$ on the logits), different kernel — **3.12× on the stem, 2.12× on the whole step** there, for 9 % more activation memory. Off on CUDA, whose 3-D kernels have no such defect and where `torch.compile` would rather see the fused operator. Applied by `apply_runtime_optimisations` (§6.2). |
+| `checkpoint_branch_a` | `auto` | `auto` → **Metal only**. Recomputes Branch A's three towers in the backward: **2.13× less activation memory** (4054 → 1901 MB at batch 32) for 4.8 % of step time, bit-exact gradients. At `stage1.batch = 128` on a 16 GB M5 it is the difference between 49.6 ms/sample and 780.1 ms/sample, because without it the working set clears the ceiling and the run pages — there it is what makes the batch runnable, not a memory optimisation. Off by default on CUDA, where dedicated VRAM makes the recompute a cost; turn it `on` there for a small card or a large batch. |
 | `multi_gpu` | `auto` | `auto`/`ddp`/`off` — full semantics in §6.4. |
 | `sync_batchnorm` | `true` | Converts every BatchNorm to SyncBatchNorm under DDP — the numerical-equivalence invariant (§6.4). |
 | `dist_timeout_s` | `1800` | NCCL/gloo rendezvous timeout. |
@@ -217,9 +329,35 @@ concrete value once, producing a frozen `RuntimePlan`. `-1` means "decide from t
 | `progress` | `auto` | Whether the per-epoch line is rendered; `off` suppresses it. One appended line per epoch on every stdout — there is no redrawing mode to select, and `bar`/`rows` are legacy spellings that both render the line (§5.3). |
 | `diagnostics_interval` | `50` | Epoch stride for the *rendering* of the hardest-class block and the branch-influence ablation; a new best checkpoint renders them off-stride too. The underlying numbers (per-class F1, CDWS weights) are computed whenever a checkpoint needs them; only the display and the ablation are throttled. |
 
-`eval_loader_kwargs` hardcodes `persistent_workers=False` regardless of the plan's own value —
-eval loaders are built and dropped repeatedly, and a persistent pool outliving its loader is a
-process leak.
+### Worker residency on the evaluation loaders
+
+`RuntimePlan.loader_kwargs` takes its residency from the plan. Evaluation loaders do not: they
+call `eval_loader_kwargs_for(persistent=…)`, and `eval_loader_kwargs` is simply the
+`persistent=False` case. The default is no resident workers, because a pool that outlives its
+loader is a process leak and most evaluation loaders here are built for exactly one pass —
+`build_natural_prior_loader`, the $k$-means seeding loader, the final test loader.
+
+Two are not throwaway, and `build_loaders`/`build_calib_loader` pass `persistent=True` for them:
+
+- the **validation** loader, constructed once per stage and then iterated *twice per epoch* (the
+  live model and the EMA shadow) for as many epochs as the stage runs;
+- the **calibration** loader, built once in `train.py` and read by every stage's per-class F1 and
+  CDWS fit — the longest-lived loader in the run.
+
+At `persistent_workers=False` every one of those passes builds a worker pool and tears it down
+again, and on macOS building one is a `spawn`: a fresh interpreter that re-imports torch before
+it can read its first patch. Measured on an M5 over the 1,294-patch validation split — six
+batches of actual work — **11.47 s per pass non-persistent against 0.08 s persistent**. The
+teardown is the larger half: the same pool costs 1.37 s to build on the persistent loader's first
+pass, so most of the 11.47 s is the shutdown join at the *end* of every pass, which is pure waste
+when the next epoch immediately wants the pool back.
+
+Residency does not raise the peak process count, which is what makes this free rather than a
+trade: the training loader's own persistent workers are idle-but-resident during evaluation
+either way, so the four-process peak is the same — persistence only stops the two evaluation
+workers being rebuilt between epochs. Nothing about the data changes either: an evaluation
+dataset runs the `none` augmentation profile, so `__getitem__` draws no randomness and the worker
+count cannot move a single value.
 
 ### `unwrap_model`
 

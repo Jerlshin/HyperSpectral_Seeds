@@ -49,9 +49,9 @@ survive.
 > `masked_mean_spectrum`) and shifted the true foreground mean by a factor of the foreground area
 > fraction, putting the view off the training manifold. The corrected transform reads the mean
 > over foreground pixels only and re-masks the result, so all four spectral views stay
-> consistent with what every masked module in the model assumes about its input. See
-> `MIGRATION_PROGRESS.md` → Tier 1 → T1-1 for the measured effect of the fix on the recorded
-> reference numbers below.
+> consistent with what every masked module in the model assumes about its input. The measured
+> effect of the fix on the recorded reference numbers is below; `tests/unit/test_tta.py` pins the
+> corrected transform.
 
 ### Ensembling rule
 
@@ -92,9 +92,10 @@ is exactly what `test_recorded_test_predictions_match_their_reported_metrics` do
 | Single view | 0.8770 | 0.8776 | 0.8779 | — |
 | 12-view TTA (corrected spectral transform, T1-1) | **0.8889** | — | — | **+0.0119** |
 
-> **Provenance.** `outputs/output_v12_spa40/` was produced under the pre-Tier-3 architecture, and
-> its checkpoints do not load into the current schema-v3 model (§3.8) — there is currently no
-> way to regenerate a TTA number against the architecture this document otherwise describes.
+> **Provenance.** The `outputs/output_v12_spa40/` run was produced under the pre-Tier-3
+> architecture, and its checkpoints do not load into the current schema-v3 model (§3.8) — there is
+> currently no way to regenerate a TTA number against the architecture this document otherwise
+> describes. `outputs/` is git-ignored and the directory is not present in this tree (§5.4).
 > The original console log for this run reported **0.8933** macro-F1 under TTA; that number was
 > produced by the *pre-T1-1* spectral view (whole-patch mean, no re-mask — the bug described
 > above), which additionally left every masked module reading a filled frame rather than a
@@ -103,7 +104,7 @@ is exactly what `test_recorded_test_predictions_match_their_reported_metrics` do
 > $+0.0163$; the single-view row itself is unaffected by the fix. Paired bootstrap on the
 > before/after TTA difference: $-0.0046$, 95% CI $[-0.0151,+0.0056]$, $p=0.40$ — within noise, but
 > 0.8889 is what a fresh evaluation against this checkpoint under the current code actually
-> produces, and is the number to cite. See `MIGRATION_PROGRESS.md` → Tier 1 → T1-1.
+> produces, and is the number to cite.
 
 Per-class outcome recorded against this checkpoint under TTA (as originally logged, precise
 per-class breakdown not re-run against the corrected transform): 23 of 90 classes at
@@ -286,7 +287,7 @@ failing backend cannot strand another's file handle or leave a W&B run unfinishe
 `ConsoleTracker` emits **one line per epoch**, written once and never redrawn:
 
 ```
-[Stage 1 | Ep 181/600]  Time: 00:12:45  ETA: 00:41:12  dt: 42.1s  Loss: 15.2508  Tr: 61.2%  F1 live/ema: 0.771/0.685  Acc live/ema: 78.1%/72.0%  Best: 0.780  LR: 3.00e-04  LS: 0.084  auxW: 0.42  τ: 0.35  Ph: P2  m: 0.00  ckpt ✓
+[Stage 1 | Ep 181/400]  Time: 00:12:45  ETA: 00:41:12  dt: 42.1s  Loss: 15.2508  Tr: 61.2%  F1 live/ema: 0.771/0.685  Acc live/ema: 78.1%/72.0%  Best: 0.780  LR: 3.00e-04  LS: 0.084  auxW: 0.42  τ: 0.35  Ph: P2  m: 0.00  ckpt ✓
 ```
 
 Deliberate design points:
@@ -301,15 +302,15 @@ Deliberate design points:
    line.
 2. **The prefix and the clocks belong to the tracker, not the caller.** `progress_start(tag,
    total, description)` opens a *span* — the stage's label and epoch budget — and `log_row`
-   builds `[Stage 1 | Ep 181/600]`, `Time` (elapsed since the tracker was built, continuous
+   builds `[Stage 1 | Ep 181/400]`, `Time` (elapsed since the tracker was built, continuous
    across stages) and `ETA` (extrapolated from the current span alone) from it. `progress_stop`
    reports where the stage actually ended, which for an early-stopped stage is the number the
    old bar threw away by completing itself to its total.
 3. **Cells are `key: value`, markers are `key value`, and empty cells are absent.** `ckpt ✓`
    appears only on epochs that saved one — that is what makes `grep ckpt training.log` the list
-   of improvements — and `stale: 3/40` is its complement. Column widths are remembered per span
-   and grow monotonically, so the columns line up down the log without any value being truncated
-   into a frozen width.
+   of improvements — and `stale: 3/50` (epochs without improvement, against `stage1.patience`)
+   is its complement. Column widths are remembered per span and grow monotonically, so the
+   columns line up down the log without any value being truncated into a frozen width.
 4. **Blocks are plain text, not `rich` renderables.** Banners and the hardest-class table are
    drawn as aligned text whose width comes from the data; a `Panel`/`Table` is measured against a
    terminal width that is 80 whenever stdout is not a TTY, which is how one diagnostic came out
@@ -340,13 +341,17 @@ Every key any backend receives, by producer:
 
 | Producer | Keys |
 |---|---|
-| `train_one_epoch` / `_sam` | `loss/branch_{a,b,c,d}`, `grad_norm/{branch_a,branch_b,branch_c,branch_d,cross_interaction,arcface_head}`, `train/{steps,skipped_batches,epoch_s}` |
-| Stage 1 | `train/{loss,acc}`, `val/{f1_live,acc_live,f1_ema,acc_ema,f1_best}`, `sched/{lr,label_smooth,aux_weight,phase}` |
-| Stage 2 | `train/{loss,acc}`, `val/{…}`, `sched/{head_lr,back_lr,arcface_margin,supcon_weight,proto_weight}` |
-| Stage 3 | `train/{loss,acc}`, `val/{f1_live,acc_live,f1_best}`, `sched/{lr,arcface_margin}`, `swa/{n_snapshots,n_rejected}`, then `swa/{f1,acc}` |
+| `train_one_epoch` / `_sam` | `loss/branch_{a,b,c,d}`, `grad_norm/{branch_a,branch_b,branch_c,branch_d,cross_interaction,arcface_head}`, `grad_norm/preclip_{head,fusion,backbone}`, `train/{steps,skipped_batches,epoch_s}`; `sam/grad_cos` from the SAM loop only |
+| Stage 1 | `train/{loss,acc}`, `val/{f1_live,acc_live,f1_ema,acc_ema,f1_best}`, `sched/{lr,label_smooth,aux_weight,subcentre_tau,phase}` |
+| Stage 2 | `train/{loss,acc}`, `val/{…}`, `sched/{head_lr,back_lr,arcface_margin,supcon_weight,proto_weight,subcentre_tau}`, `margin/{mean,min,max}` |
+| Stage 3 | `train/{loss,acc}`, `val/{f1_live,acc_live,f1_ema,acc_ema,f1_best}`, `sched/{lr,margin_kappa,arcface_margin,supcon_weight,proto_weight}`, `swa/{n_snapshots,n_rejected,f1_running}`, then once at stage end `swa/{f1,acc}` and `ema/{f1,acc}` |
 | `compute_class_difficulty` | `diag/{macro_f1,hard_classes}`, `influence/branch_{a,b,c,d}` |
 | `final_eval` | `test/{f1_macro,f1_weighted,acc}`, `test_tta/{f1_macro,f1_weighted,acc}` |
 | Tables | `hardest_classes/{Phase2→3, S1, S2, test_tta}`, `config` |
+
+Stage 3's `sched/{supcon_weight,proto_weight}` are the hardcoded `0.02`/`0.01` constants of §4.4,
+logged so a curve exists for them rather than because they vary; `sched/arcface_margin` there is
+the *mean* of the scaled per-class vector, not a scalar the stage optimises against.
 
 `flatten_hyperparams` converts the nested composed config to dotted keys
 (`stage1.max_lr → 0.0005`) for W&B/TensorBoard, stringifying lists since `hparams` accepts only
@@ -356,8 +361,14 @@ scalars.
 
 ## 5.4 The recorded reference run
 
-`outputs/output_v12_spa40/` holds a complete three-stage run — three checkpoints, three JSON
+The `outputs/output_v12_spa40/` run is a complete three-stage run — three checkpoints, three JSON
 sidecars, three prediction arrays and a baseline console log.
+
+> **It is not in this repository.** `outputs/` (and `*.pth`) are git-ignored, so the run directory
+> was never tracked, and it is not present in the working tree either. The table below is the
+> transcribed record of that run, not something a reader can re-derive from a checkout; it is kept
+> because it is the last complete three-stage run on file. Everything else in these documents *is*
+> derived from tracked sources.
 
 | Stage | Epoch saved | val Macro F1 | val Acc | Extra metadata |
 |---|---:|---:|---:|---|
@@ -367,7 +378,9 @@ sidecars, three prediction arrays and a baseline console log.
 
 Checkpoint selection ranks Stage 1 highest, so the reported test numbers come from
 `best_stage1.pth`. Stage 3's own sidecar records the outcome: *"val_f1 did not beat Stage 2;
-Stage 2 ckpt preferred for eval."*
+Stage 2 ckpt preferred for eval."* The `488 / 600` denominator is that run's `stage1.epochs`; the
+shipped config now runs 400 (§4.1), which is why the recorded Stage-1 best sits past the current
+budget.
 
 > **Schema provenance.** This run predates both Tier 2's unified head (HD-1/T2-10) and Tier 3's
 > branch redesign — its checkpoints carry a `linear_head` this model no longer has, and
@@ -445,8 +458,8 @@ has been executed in this repository; the table documents the *lever*, not a res
 Three caveats for anyone running these:
 
 - **Branch ablation is not a config lever.** The `branch_mask` argument exists for the influence
-  diagnostic, and the per-branch drop rates ($0.15, 0.15, 0, 0.15$ at the shipped
-  `branch_drop_prob = 0.20$) are a hardcoded profile in the forward pass (§3.3); removing a
+  diagnostic, and the per-branch drop rates ($0.15,\,0.15,\,0,\,0.15$ at the shipped
+  `branch_drop_prob = 0.20`) are a hardcoded profile in the forward pass (§3.3); removing a
   branch entirely requires a code change.
 - **Same-class CutMix has no single on/off flag.** Its firing probability is baked into each
   augmentation profile, not exposed as a config field; `data.cutmix_bands`/`cutmix_spatial`
