@@ -14,43 +14,58 @@ the rest of this suite.
 
 ## `data` — `configs/data/*.yaml`
 
-Three configs ship. **`spa40_90class_pfix.yaml` is the default since CHANGES IC-3** — the
-bundle-disjoint (`grouped`) protocol with a calibration split. `spa40_90class.yaml` reproduces
-the audited run's leaky patch-level protocol and is retained as ablation A1's control arm;
-`spa40_90class_stratified.yaml` is A1's *contrast* arm, identical to the pfix config in
-everything but `split_scheme`, so the gap between them measures the split and nothing else.
+Five configs ship, in two clearly separated tiers.
 
-Values below are `spa40_90class.yaml`'s (the audited replica); where the default differs, its
-value is given in the last column.
+**Primary — the complete 256-band cube, no band selection:**
 
-| Key | Value | Meaning | `spa40_90class_pfix.yaml` |
+| Config | Split | Role |
+|---|---|---|
+| **`hsi256_grouped.yaml`** | `grouped` | **The default.** Leave-one-acquisition-bundle-out + a calibration split. |
+| `hsi256_stratified.yaml` | `stratified` | A1's *contrast* arm, identical in everything but `split_scheme`, so the gap between them measures the split and nothing else. |
+
+**`configs/data/ablation/` — reduced-band arms, never on the primary path:**
+
+| Config | Bands | Split | Role |
+|---|---:|---|---|
+| `spa40_grouped.yaml` | 40 | `grouped` | A2's reduced arm — one variable against `hsi256_grouped`. |
+| `spa40_stratified.yaml` | 40 | `stratified` | Its leaky twin, if A1 is re-run at k = 40. |
+| `spa40_audited.yaml` | 40 | `stratified` | **Frozen.** Reproduces the audited run's input and partition exactly; composed only by `experiment/quadnet_audited` and the golden capture. Do not tidy it. |
+
+Values below are `hsi256_grouped.yaml`'s; the last column gives the frozen replica's, which is
+what the pre-refactor `CONFIG` keys map onto in `config_migration_table.md`.
+
+| Key | Value | Meaning | `ablation/spa40_audited.yaml` |
 |---|---|---|---|
-| `patches_data` | `./dataset/patches_spa_40b.npy` | patch cube path | — |
+| `patches_data` | `./dataset/patches.npy` | patch cube path — the direct product of `scripts/prepare_dataset.py` | `./dataset/patches_spa_40b.npy` |
 | `labels_path` | `./dataset/labels.npy` | class index per patch | — |
-| `wavelength_path` | `./dataset/wavelengths_spa_40b.csv` | 40-band wavelength axis | — |
-| `masks_path` | `""` | persisted fill map $\alpha$; empty uses the `sum_c\|x_c\|>10^{-5}` fallback (`02_DATASET_AND_PREPROCESSING.md` §2.3, `03_MODEL_ARCHITECTURE.md` §3.1) | `./dataset/masks.npy` |
-| `morphology_path` | `""` | persisted 8-column morphometrics; empty substitutes zeros | `./dataset/morphology.npy` |
-| `num_bands` | `40` | spectral bands after SPA selection | — |
+| `wavelength_path` | `./dataset/wavelengths.csv` | the 256-band wavelength axis, 383.2–1006.5 nm | `./dataset/wavelengths_spa_40b.csv` |
+| `band_indices_path` | `""` | **BS-1** — optional `.npy` of band indices sliced off the mmap as each patch is read. Empty on every primary config, and that emptiness *is* the no-band-selection methodology; the band study's neural arms set it | `""` |
+| `masks_path` | `./dataset/masks.npy` | persisted fill map $\alpha$; empty uses the `sum_c\|x_c\|>10^{-5}` fallback (`02_DATASET_AND_PREPROCESSING.md` §2.3, `03_MODEL_ARCHITECTURE.md` §3.1) | `""` |
+| `morphology_path` | `./dataset/morphology.npy` | persisted 8-column morphometrics; empty substitutes zeros | `""` |
+| `num_bands` | `256` | **every acquired band.** Checked against the cube and the wavelength CSV by `data/mmap_store.py::band_geometry` before the model is built | `40` |
 | `num_classes` | `90` | rice-seed varieties | — |
 | `groups_path` | `./dataset/groups.npy` | per-patch scan id; required by `grouped`, read under `stratified` only to measure train/eval scan overlap | — |
-| `split_scheme` | `stratified` | `stratified` — patch-level split, every scan appears in all three splits; `grouped` — scan-disjoint split (§2.8) | `grouped` |
+| `split_scheme` | `grouped` | `grouped` — scan-disjoint split (§2.8); `stratified` — patch-level, every scan in all three splits | `stratified` |
 | `split_eval_frac` | `0.30` | share held out for val∪test | — |
-| `split_fold` | `0` | which scan(s) are held out under `grouped`; must stay `0` under `stratified` | — |
-| `calib_frac` | `0.0` | share of the training pool carved into `calib`, where per-class margins/CDWS/oversampling weights are fitted; `0.0` fits them on `val` instead | `0.15` |
-| `max_cutout_bands` | `3` | max contiguous bands zeroed by the `cutout` augmentation | — |
-| `noise_std` | `0.02` | base σ of the spectral-noise augmentation | — |
-| `cutmix_bands` | `8` | band-window width of same-class spectral CutMix | — |
-| `cutmix_spatial` | `24` | side length of same-class spatial CutMix | — |
+| `split_fold` | `0` | which scan(s) are held out under `grouped`; must stay `0` under `stratified`. Sweeping `{0, 1}` is the complete leave-one-bundle-out CV this dataset supports | — |
+| `calib_frac` | `0.15` | share of the training pool carved into `calib`, where per-class margins/CDWS/oversampling weights are fitted; `0.0` fits them on `val` instead | `0.0` |
+| `max_cutout_bands` | `19` | max contiguous bands zeroed by the `cutout` augmentation — **7.5% of the band axis**, derived by `data/datasets.py::band_augmentation_widths` so the augmentation means the same thing at every band count | `3` |
+| `noise_std` | `0.02` | base σ of the spectral-noise augmentation; a per-band amplitude, band-count independent | — |
+| `cutmix_bands` | `51` | band-window width of same-class spectral CutMix — **20% of the band axis**, same derivation | `8` |
+| `cutmix_spatial` | `24` | side length of same-class spatial CutMix; band-count independent | — |
 | `single_group_policy` | `error` | **IC-3** — what `grouped` does about a class captured in a single bundle. `error` refuses and names them; `patch_split` accepts a patch-level split for those classes with the leak recorded in the report | `error` |
-| `gain_path` | `""` | **IC-14** — per-pixel `(mean, sd)` along λ. **Never a model input**: it is the residual brightness SNV divided out, and therefore the strongest single carrier of acquisition-bundle identity (CHANGES §3.3). Consumed by `spectralquadnet.experiments.leakage`, which *measures* the acquisition signal instead of feeding it to the classifier | `./dataset/gain.npy` |
+| `gain_path` | `./dataset/gain.npy` | **IC-14** — per-pixel `(mean, sd)` along λ. **Never a model input**: it is the residual brightness SNV divided out, and therefore the strongest single carrier of acquisition-bundle identity (CHANGES §3.3). Consumed by `spectralquadnet.experiments.leakage`, which *measures* the acquisition signal instead of feeding it to the classifier | `""` |
 
 ---
 
 ## `model` — `configs/model/{seed_net,quadnet_v4_audited}.yaml`
 
 Two architectures ship, selected by `model.arch`. `seed_net` (the default) is CHANGES §16.2's
-two-pathway replacement at 2.82 M parameters; `quadnet_v4_audited` is the audited four-branch
-model at 5.19 M, retained unmodified because ablations A3 and A8 are comparisons *against* it.
+two-pathway replacement — **3,052,682** parameters on the 256-band primary input;
+`quadnet_v4_audited` is the audited four-branch model — **5,260,246** at 256 bands and
+5,194,578 at the audited 40 — retained unmodified because ablations A3/A4/A5/A8 are comparisons
+*against* it. Every width in both is a function of `data.num_bands`; only three components move
+with it at all (`03_MODEL_ARCHITECTURE.md` §3.7).
 
 | Key | `seed_net` | `quadnet_v4_audited` | Meaning |
 |---|---|---|---|
@@ -90,7 +105,8 @@ that a key dead in **both** architectures is still a defect.
 | `continuum_depths` | `16` | deepest continuum-removed absorption features Branch B reads |
 | `n_morphometrics` | `8` | width of the persisted morphometric vector |
 | `stem_channels` | `192` | channel width Branch C's 3-D stem folds the spectral axis into |
-| `specf_patch` | `8` | sets Branch D's token count as `num_bands // (specf_patch // 2)` = 10 |
+| `stem_folded_depth` | `8` | **256-band native** — the spectral *depth* the stem reduces the band axis to before folding. The three spectral strides and their kernel depths are derived from this and `data.num_bands`: `(8,2,2)` with kernels `(15,5,5)` at 256 bands, `(2,2,2)` with `(7,5,5)` at 40 — the audited schedule, unchanged (`03_MODEL_ARCHITECTURE.md` §3.0(a)) |
+| `specf_tokens` | `10` / `32` | Branch D's λ-uniform window count, set **directly**. 10 on the audited replica, 32 in `experiment/quadnet_full256`. Deriving it from `num_bands` made a window's *width* a function of $k$, so token $t$ denoted a different spectral region in every arm |
 | `specf_dim` | `192` | Branch D's transformer model width |
 | `specf_heads` | `8` | Branch D's attention heads |
 | `specf_layers` | `4` | Branch D's total pre-LN blocks (2 spectral-stage + 2 spatial-stage) |
@@ -269,11 +285,13 @@ a throughput knob that must never change a reported metric — a config that nev
 
 ## Root — `configs/experiment/*.yaml`
 
-Two experiments ship: **`seednet_grouped`** (the default — `SpectralSeedNet`, one stage,
-`grouped`, selection on `calib`) and **`quadnet_audited`** (the audited run reproduced
-bit-for-bit, including the three runtime overrides that make it incomparable to the shipped
-defaults). `pipeline` selects the curriculum: `single` | `stage1_only` | `stage1_stage2` |
-`three_stage`, the last three being A8's arms.
+Three experiments ship — see the `experiment` section below for the full table.
+**`seednet_full256`** is the default (`SpectralSeedNet`, the complete 256-band cube, one stage,
+`grouped`, selection on `calib`); **`quadnet_full256`** is the four-branch control on the same
+protocol and input; **`quadnet_audited`** is the audited run reproduced bit-for-bit, including
+the three runtime overrides that make it incomparable to the shipped defaults. `pipeline`
+selects the curriculum: `single` | `stage1_only` | `stage1_stage2` | `three_stage`, the last
+three being A8's arms.
 
 | Key | Meaning |
 |---|---|
@@ -289,17 +307,28 @@ defaults). `pipeline` selects the curriculum: `single` | `stage1_only` | `stage1
 | `device` | resolution strategy string (`auto`/`cuda`/`cpu`/`mps`) — YAML cannot hold a live `torch.device`, so `utils/device.py` performs the lookup at runtime |
 | `seed` | global RNG seed (`utils/seed.py::set_seed`) |
 
-`configs/experiment/output_v12_spa40.yaml` composes `data/spa40_90class`,
-`model/spectral_quadnet_v4`, `stage1/progressive_3phase`, `stage2/arcface_supcon`,
-`stage3/sam_swa` and `tracking/console` into the config `python train.py` runs by default; every
-value in the tables above is that composition's shipped value unless noted.
+## `experiment` — the composition roots
+
+Three ship, and which one a number came from is always recorded in `results/run.json`.
+
+| Config | Composes | Role |
+|---|---|---|
+| **`seednet_full256.yaml`** | `data/hsi256_grouped` · `model/seed_net` · `single/one_stage` · `evaluation/held_out_once` · `tracking/console` | **The default.** What bare `python train.py` runs, and the only configuration whose numbers are the study's headline. |
+| `quadnet_full256.yaml` | `data/hsi256_grouped` · `model/quadnet_v4_audited` (with symmetric branch dropout, head elaborations off, `specf_tokens: 32`) · `single/one_stage` · `evaluation/held_out_once` | The four-branch control arm **on the primary protocol and the primary input**, so an ablation arm differs from the default in the architecture alone. A3/A4/A5/A8 run here. |
+| `quadnet_audited.yaml` | `data/ablation/spa40_audited` · `model/quadnet_v4_audited` · `stage{1,2,3}` · `evaluation/audited_replica` | The **frozen historical replica** of the audited run, and the subject of every golden regression digest. Not an ablation arm. |
+
+The three-stage groups (`stage1`/`stage2`/`stage3`) compose in every experiment because
+`pipeline=three_stage` reaches them for A8 and the head reads `stage2.arcface_m_*` for the
+optional per-class margin rule A7 switches on. Every value in the tables above is the shipped
+value of the composition named in that section's heading, unless noted.
 
 ---
 
 ## Maintenance
 
-This reference is hand-maintained against `config/schema.py` and the shipped `configs/*.yaml`
-files. `scripts/check_config_roundtrip.py --emit-markdown` independently verifies that every
+This reference is **hand-maintained** against `config/schema.py` and the shipped
+`configs/*.yaml` files. `scripts/check_config_roundtrip.py` independently verifies that every
 `configs/` key resolves to exactly one dataclass field, and remains the authority on config
-completeness even though its own markdown output is a different, key-mapping-oriented format
-from this table.
+completeness; its `--emit-markdown` output is a different, key-mapping-oriented artifact and is
+written to **`config_migration_table.md`**, not here. Pointing `--emit-markdown` at this file
+would silently destroy it.

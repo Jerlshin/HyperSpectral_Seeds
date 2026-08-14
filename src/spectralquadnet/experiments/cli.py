@@ -5,7 +5,7 @@
     python -m spectralquadnet.experiments.cli list
     python -m spectralquadnet.experiments.cli protocol   [--dry-run]
     python -m spectralquadnet.experiments.cli ablate A1  [--dry-run] [--arms grouped]
-    python -m spectralquadnet.experiments.cli baseline   [--data spa40_90class_pfix]
+    python -m spectralquadnet.experiments.cli baseline   [--data ablation/spa40_grouped]
     python -m spectralquadnet.experiments.cli leakage
     python -m spectralquadnet.experiments.cli analyse    --run outputs/<run>
     python -m spectralquadnet.experiments.cli aggregate  [--experiment A1]
@@ -349,7 +349,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_abl.set_defaults(func=cmd_ablate)
 
     p_base = sub.add_parser("baseline", help="LDA / LinearSVC on mean spectra")
-    p_base.add_argument("--data", default=None, help="data config, e.g. spa40_90class_pfix")
+    p_base.add_argument("--data", default=None, help="data config, e.g. ablation/spa40_grouped")
     p_base.add_argument("--override", nargs="*", help="extra Hydra overrides")
     p_base.add_argument("--n-boot", type=int, default=2000)
     _add_common(p_base)

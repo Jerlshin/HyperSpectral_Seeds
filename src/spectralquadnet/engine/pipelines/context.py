@@ -39,7 +39,7 @@ from spectralquadnet.data.loaders import (
     build_split_bundle,
     standardised_morphometrics,
 )
-from spectralquadnet.data.mmap_store import DataStore
+from spectralquadnet.data.mmap_store import DataStore, band_geometry
 from spectralquadnet.models.ema import ModelEMA
 from spectralquadnet.models.registry import build_model, count_parameters, parameter_breakdown
 from spectralquadnet.tracking.base import ExperimentTracker
@@ -94,6 +94,11 @@ class RunContext:
     #: Un-augmented loader over ``calib``, or ``None`` when no calibration
     #: split was carved. Every *fitted* quantity reads this.
     calib_loader: DataLoader[Any] | None
+    #: What :func:`~spectralquadnet.data.mmap_store.band_geometry` measured:
+    #: bands on disk, bands read, wavelengths, configured width. Recorded in the
+    #: results JSON so "this number is from the full cube" is an artifact rather
+    #: than a claim.
+    band_geometry: dict[str, int]
 
     @property
     def select_split(self) -> str:
@@ -116,7 +121,29 @@ class RunContext:
             "parameters": count_parameters(self.model, trainable_only=False),
             "parameter_breakdown": parameter_breakdown(self.model),
             "split_report": self.splits.report.as_dict(),
+            "band_geometry": dict(self.band_geometry),
+            "band_selection": self.band_geometry["selected"] != self.band_geometry["stored"],
         }
+
+
+def describe_band_geometry(geometry: dict[str, int]) -> str:
+    """The startup line that states which spectral axis this run is training on.
+
+    The primary methodology is "all 256 acquired bands, no selection", and the
+    only honest way to publish that is for every run to say on its own first
+    screen which of the two it is. A reduced arm prints the reduction; the
+    primary path prints that there is none.
+    """
+    stored, selected = geometry["stored"], geometry["selected"]
+    if selected == stored:
+        return (
+            f"Spectral: {selected} bands — the full acquired cube, no band selection "
+            "(primary methodology)"
+        )
+    return (
+        f"Spectral: {selected} of {stored} bands — REDUCED arm via data.band_indices_path. "
+        "This is the retained band-selection ablation pathway, not the primary protocol."
+    )
 
 
 def build_run_context(
@@ -154,6 +181,11 @@ def build_run_context(
         f"pin_memory={plan.pin_memory} | persistent={plan.persistent_workers}",
         level="plain",
     )
+
+    # Before the model is built, because a band-count disagreement otherwise
+    # surfaces as a shape error inside a branch that names none of its causes.
+    geometry = band_geometry(cfg.data, store)
+    tracker.log_message(describe_band_geometry(geometry), level="plain")
 
     splits = build_split_bundle(cfg)
     for line in splits.report.summary():
@@ -225,6 +257,7 @@ def build_run_context(
         morph=morph,
         clock=GlobalStep(),
         calib_loader=calib_loader,
+        band_geometry=geometry,
     )
 
 

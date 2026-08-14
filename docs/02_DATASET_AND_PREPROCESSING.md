@@ -186,7 +186,14 @@ the training split alone (`data/morphometrics.py`), and no split exists at extra
 
 ---
 
-## 2.4 Band selection: $256 \to 40$
+## 2.4 Band selection: $256 \to k$ — **not on the primary path**
+
+> **The primary pipeline does not run this step.** `scripts/prepare_dataset.py` writes
+> `dataset/patches.npy` at the full 256 bands and `python train.py` trains on it directly;
+> nothing goes between them. This section documents the retained band-selection **ablation
+> pathway** — its build step, its artifacts, and the reason it is an ablation rather than the
+> default. See `07_BAND_SELECTION_PATHWAY.md` for the experiment that surrounds it, and §2.4.1
+> below for why $k^\star = 40$ was demoted.
 
 `data/prep/band_selection.py` runs a six-step pipeline. The rationale, recorded in the module
 docstring, is that CARS is a PLS-regression method needing a continuous target and is
@@ -293,22 +300,49 @@ With $\max = 0.4755$ the threshold is $0.4660$, met only at $k = 40$; hence
 $k^{\star} = 40$, a $84.4\%$ reduction of the spectral axis. The final band set is sorted
 ascending before writing (selection *order* is discarded; only the *set* matters downstream).
 
-> **The shipped curve cannot demonstrate its own elbow.** `verify_elbow()` and its
+### 2.4.1 Why this is an ablation and not the default
+
+Two independent defects, either of which is disqualifying for a headline number.
+
+**(i) The elbow is vacuous.** `verify_elbow()` and its
 > `ElbowVerdict` explicitly check whether a chosen $k^\star$ is *demonstrable* — the curve must
 > extend past $k^\star$ and clear `elbow_pct · peak` there — rather than merely being the
 > curve's own last point. The checked-in `dataset/band_selection_report.csv` (the table above)
 > terminates at $k=40$, its own chosen value: the 98% criterion is satisfied *vacuously*, not
 > demonstrated. `tests/unit/test_band_curve.py::test_the_shipped_curve_cannot_demonstrate_its_elbow`
-> pins exactly this as a known property of the current artifact. Re-running
-> `scripts/select_bands.py` under the current, wider `n_candidates` default would produce a
-> genuinely testable curve out to $k=256$ and may move the winner/elbow; `cfg.deployed_curve_path`
-> additionally lets that curve be overridden by cross-validating the actually-deployed
-> SpectralQuadNet estimator rather than the LDA/SVC proxy.
+pins exactly this as a known property of the current artifact. The per-fold 100-band mRMR
+selection has the same defect for the same reason: its curve terminates at $k = 100$.
+
+**(ii) The selection saw test labels.** Without `--fold`, mRMR relevance is
+`mutual_info_classif(X, y)` over **every** patch, including the ones that become test. The
+selected bands are a hyperparameter of the input representation chosen with test labels in
+scope, and feature selection outside the resampling loop is a known and quantified source of
+optimism — Ambroise & McLachlan, *PNAS* 99(10):6562–6566 (2002), who obtain near-zero apparent
+error on *random labels* that way. This is genuine label leakage independent of the split
+protocol: it contaminates `grouped` too. `--fold k` restricts every step — the correlation
+pre-filter, the FDR diagnostic, mRMR, SPA and the cross-validated curve — to fold $k$'s
+training patches.
+
+Neither defect argues that 40 bands is *wrong*; both argue that nobody knows, and that a study
+about what the acquired spectrum carries must not open by discarding 84% of it on an
+undemonstrated elbow. So the full cube became the default and the question became measurable:
+ablation **A2** compares `full_256` (the reference), `spa40_whole_corpus` and
+`spa40_within_fold`, and `spectralquadnet.bandstudy` runs the curve to $k = 256$ with two null
+methods so an elbow can be demonstrated rather than asserted. `cfg.deployed_curve_path`
+additionally lets the proxy curve be overridden by cross-validating the actually-deployed
+estimator.
 
 **Outputs** — `dataset/patches_spa_40b.npy` $(8624, 40, 64, 64)$ `float32` (written in
 2,048-row chunks off the memory map), `dataset/wavelengths_spa_40b.csv`, whose 40 centres
 span $383.22$–$1006.47$ nm, and `dataset/band_selection_elbow.json`, the serialised
-`ElbowVerdict`.
+`ElbowVerdict`. Read only by `configs/data/ablation/spa40_*.yaml`.
+
+**The cheaper mechanism.** A k-band arm does not need a materialised cube at all:
+`data.band_indices_path` names a `.npy` of band indices and `RiceSeedDataset._load_patch`
+slices each patch **as it comes off the mmap**, touching only the selected bands' pages. A
+40-of-256 run therefore reads ~16% of the bytes a full read would. That is what
+`spectralquadnet.bandstudy`'s neural confirmation arms use, and it is the difference between a
+20-cell band sweep being a disk-space problem and being a config change.
 
 ---
 
@@ -323,7 +357,8 @@ non-negotiable and are asserted by `tests/unit/test_mmap_store.py`.
 | **Load once** | `load_patches` returns early when `patches is not None` |
 | **One handle per process** | `DataStore.__new__` returns a process-wide singleton; constructing it twice yields the *same object* |
 | **Copy lives in the Dataset** | `DataStore` exposes the raw `np.memmap`; only `RiceSeedDataset.__getitem__` touches it |
-| **Exactly one patch per item** | `np.array(self.patches[ri])` materialises $(40,64,64) = 655{,}360$ B $\approx 0.64$ MiB; no batched `.copy()` anywhere on the loader path |
+| **Exactly one patch per item** | `np.array(self.patches[ri])` materialises $(256,64,64) = 4{,}194{,}304$ B $= 4$ MiB on the primary path ($0.64$ MiB at $k{=}40$); no batched `.copy()` anywhere on the loader path |
+| **The spectral axis is checked, not assumed** | `band_geometry(cfg.data, store)` runs before the model is built and raises `BandGeometryError` if the cube's band axis, the optional `band_indices_path`, the wavelength CSV's row count and `data.num_bands` are not one number |
 | **The mapping survives a process boundary** | `RiceSeedDataset.__getstate__` drops `patches`/`masks` before pickling and `__setstate__` re-opens them from the recorded paths — `np.memmap` inherits `ndarray`'s pickling, which *materialises*, so sending one to a worker would copy the whole cube (four workers ≈ 22 GB). `labels` (69 kB) and the standardised `morph` (276 kB) are ordinary in-RAM arrays and do travel. A store built from arrays rather than files raises here by name rather than leaking gigabytes — valid for the unit tests, but it cannot cross into a worker, so that configuration needs `runtime.num_workers=0`. |
 
 Labels ($8624 \times 8$ B) are read fully into RAM; wavelengths are read with a sniffed
@@ -337,7 +372,8 @@ $$
 Typed accessors `require_patches()` / `require_labels()` / `require_wavelengths()` raise
 rather than return `None`, so a missing load fails at the call site.
 
-**Footprint.** The cube is $8624 \times 40 \times 64 \times 64 \times 4\,\text{B} = 5.65$ GB on
+**Footprint.** The primary cube is $8624 \times 256 \times 64 \times 64 \times 4\,\text{B} = 36.2$ GB
+on disk; the retained 40-band ablation array is $5.65$ GB on
 disk. The README records a measured **peak RSS of 1.39 GB, median 0.65 GB** across a full
 three-stage run against that file, with mean usage *falling* over the run — clean mapped
 pages being reclaimed, not a dataset accumulating.
@@ -360,7 +396,8 @@ per tensor and would make `num_workers > 0` impossible (a worker process cannot 
 tensor back through the multiprocessing queue). The batched transfer happens once, in
 `engine/batch.py::unpack_batch`. The return shape is also conditional: with neither a persisted
 mask nor morphometrics configured it is the 2-tuple
-$\big(\text{patch}\in\mathbb{R}^{40\times64\times64},\;\text{label}\in\mathbb{Z}\big)$; with
+$\big(\text{patch}\in\mathbb{R}^{C\times64\times64},\;\text{label}\in\mathbb{Z}\big)$, $C$ =
+`data.num_bands` (256 on the primary path); with
 either `data.masks_path` or `data.morphology_path` set, it is a 4-tuple
 $(\text{patch},\,\text{label},\,\text{mask\_or\_ABSENT},\,\text{morph\_or\_ABSENT})$, where
 `ABSENT = torch.zeros(0)` is a zero-length sentinel signalling "not configured" (a sentinel
@@ -388,7 +425,7 @@ Primitives, with foreground mask $m_{h,w} = \mathbb{1}[\sum_c |x_{c,h,w}| > 10^{
 | band dropout | $x_c \leftarrow x_c \cdot \mathbb{1}[u_c > p_{\text{band\_drop}}]$, $u_c \sim \mathcal{U}(0,1)$ |
 | band cutout | zero a contiguous run of $n \sim \mathcal{U}\{1,\dots,3\}$ bands at a random start ($3 = $ `data.max_cutout_bands`) |
 | spectral noise | $x \leftarrow x + \sigma\, m \odot \epsilon$, $\epsilon\sim\mathcal{N}(0,I)$, $\sigma = 0.02\,s$ ($0.02 = $ `data.noise_std`) |
-| spectral warp | resample the band axis by $\alpha \sim \mathcal{U}(1-w,\,1+w)$ (linear interpolation), then centre-crop or centre-pad back to 40 bands |
+| spectral warp | resample the band axis by $\alpha \sim \mathcal{U}(1-w,\,1+w)$ (linear interpolation), then centre-crop or centre-pad back to $C$ bands |
 | multiplicative | $x \leftarrow x \odot (1 + 0.05\,s\,\epsilon_c)\, m$, one scalar per band |
 | spatial | random horizontal flip, random vertical flip, random $k\cdot 90^\circ$ rotation — applied **unconditionally** whenever a profile is active |
 
@@ -411,7 +448,13 @@ and reproduces the exact stream of the profile with CutMix disabled:
 | `light` | 0.06 | 0.06 |
 | `none` | — | — |
 
-Configured by `data.cutmix_bands` (shipped $8$, $\approx20\%$ of the 40-band spectrum) and
+Configured by `data.cutmix_bands` — **51** on the primary path and **8** on the 40-band arm,
+which is the same $\approx20\%$ of the spectral axis in both. A band is not a fixed quantity of
+spectrum, so both band-expressed widths are derived from a fixed fraction by
+`data/datasets.py::band_augmentation_widths`; left as literals they would make the primary
+pipeline and every band-selection arm run a *different* augmentation while claiming to differ
+only in the band count. `tests/unit/test_cutmix.py` checks the YAML against the rule in both
+directions. Also configured by
 `data.cutmix_spatial` (shipped $24$, $\approx14\%$ of the $64\times64$ patch area).
 
 **Partner selection** — lazily built per dataset, only if the active profile needs it: a
@@ -522,7 +565,7 @@ mechanics are in `06_EXECUTION_AND_HARDWARE.md`.
 `cfg.data.split_scheme`, with a module-level `SPLIT_SEED = 42` deliberately decoupled from
 `cfg.seed`.
 
-**`stratified`** (`configs/data/spa40_90class.yaml`) — a two-step stratified
+**`stratified`** (`configs/data/hsi256_stratified.yaml`) — a two-step stratified
 `train_test_split` at the **patch** level, $8{,}624\to6{,}036/1{,}294/1{,}294$ (70/15/15). It
 puts every one of the dataset's **180 acquisition bundles** in train *and* in val/test — the
 executed run measured `180 of 180 scans are in train and in val/test` — so part of the reported
@@ -542,7 +585,7 @@ from `grouped` is a claim about rice varieties. `stratified` is retained as the 
 ablation A1, whose gap `F1_stratified − F1_grouped` quantifies how much of reported performance
 on this dataset is acquisition recognition.
 
-**`grouped`** (`configs/data/spa40_90class_pfix.yaml`) — holds out whole scans via
+**`grouped`** (`configs/data/hsi256_grouped.yaml`, **the default**) — holds out whole scans via
 `grouped_split`, rotating which scans are held by `data.split_fold` and targeting
 `data.split_eval_frac` of each class's **groups** (not patches) for val∪test. It requires
 `groups.npy`. On this archive every variety was captured in exactly **two** scans, so a class has
@@ -564,8 +607,9 @@ the cost of a coarser, harder-to-balance split on a dataset with only two scans 
 group under `grouped`, by patch under `stratified`), never out of val/test. The per-class
 margins (§4.2), the CDWS weights, and the Phase-3 oversampling weights are fitted there, so
 `val` — the split that also selects the checkpoint — carries no fitted parameter.
-`spa40_90class.yaml` ships `calib_frac: 0.0` (everything fitted on `val`, so that split carries
-fitted parameters as well as selecting the checkpoint); `spa40_90class_pfix.yaml` ships
+`configs/data/ablation/spa40_audited.yaml` — the frozen historical replica — ships
+`calib_frac: 0.0` (everything fitted on `val`, so that split carries fitted parameters as well
+as selecting the checkpoint); every current config ships
 `calib_frac: 0.15`.
 
 `data/morphometrics.py` fits the morphometric standardisation (`MorphometricStats`,

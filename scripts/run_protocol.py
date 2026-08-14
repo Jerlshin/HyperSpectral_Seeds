@@ -12,8 +12,10 @@ What it runs
 ────────────
 ``split_fold ∈ {0, 1} × seed ∈ {0, 1, 2}`` under the grouped protocol — the
 complete leave-one-acquisition-bundle-out cross-validation this dataset supports
-— plus a matched ``stratified`` contrast arm. Selection happens on ``calib``;
-``val ∪ test`` is scored once per cell.
+— plus a matched ``stratified`` contrast arm. Both arms read the **complete
+256-band cube**, so the only thing that differs between them is the split, which
+is what makes the gap below a measurement of the split. Selection happens on
+``calib``; ``val ∪ test`` is scored once per cell.
 
 It then aggregates to mean ± range, emits the publication tables and the pooled
 figures, and reports the ``F1_stratified − F1_grouped`` gap, which is the number
@@ -75,8 +77,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--include-audited",
         action="store_true",
         help=(
-            "also run the audited 5.19 M / three-stage model under the SAME grouped "
-            "protocol — CHANGES §21 Phase 3's like-for-like comparison"
+            "also run the four-branch / three-stage model under the SAME 256-band grouped "
+            "protocol — CHANGES §21 Phase 3's like-for-like comparison. Composes "
+            "experiment/quadnet_full256 with pipeline=three_stage, not the frozen audited "
+            "replica, whose split and band count would vary alongside the architecture"
         ),
     )
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -84,27 +88,36 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def _run_baselines(output_root: str, seeds: list[int]) -> None:
-    """The honest floor, under both protocols.
+    """The honest floor, under both protocols and on the **same input** as the arms.
 
     Costs seconds and needs no GPU, and CHANGES §19.4 calls it *"the paper's
-    most important baseline"*: LDA on 40-band mean spectra reaches 0.5916 under
+    most important baseline"*: LDA on mean spectra reaches 0.5916 at k = 40 under
     the leaky protocol, so ~59 of the model's points are available with no
-    spatial information at all. Recomputed under `grouped`, it is the control
-    every deep-learning number here is measured against.
+    spatial information at all. Recomputed on the full cube under `grouped`, it
+    is the control every deep-learning number here is measured against.
+
+    The arms are read from :data:`protocol.PROTOCOL_ARMS` rather than restated,
+    so the baseline and the runs it is a floor for cannot disagree about which
+    data config or which folds they describe — a restated list is how the
+    baseline came to be computed on a different band count from the arms.
     """
-    for data_config in ("spa40_90class_pfix", "spa40_90class_stratified"):
-        for fold in protocol.PROTOCOL_FOLDS if "pfix" in data_config else (0,):
+    for arm in protocol.PROTOCOL_ARMS:
+        for fold in arm.folds:
             cfg = load_experiment_config(
                 DEFAULT_CONFIG,
-                overrides=[f"data={data_config}", f"data.split_fold={fold}", f"seed={seeds[0]}"],
+                overrides=[
+                    f"data={arm.data_config}",
+                    f"data.split_fold={fold}",
+                    f"seed={seeds[0]}",
+                ],
             )
-            out = Path(output_root) / "baselines" / f"{cfg.data.split_scheme}_f{fold}"
+            out = Path(output_root) / "baselines" / f"{arm.name}_f{fold}"
             _log.info("baselines → %s", out)
             results = baselines.run_baselines(cfg, output_dir=out)
             for name, result in results.items():
                 ci = f" CI95={result.macro_f1_ci}" if result.macro_f1_ci else ""
                 print(
-                    f"  {cfg.data.split_scheme:11s} f{fold}  {name:24s} "
+                    f"  {arm.name:11s} f{fold}  {cfg.data.num_bands:>3d} bands  {name:24s} "
                     f"macro-F1={result.macro_f1:.4f}{ci}"
                 )
 

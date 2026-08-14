@@ -185,7 +185,7 @@ These same per-branch norms are now also a **consumer**, not just a logged quant
 weight update (§4.4) once per epoch. A second, narrower diagnostic exists for Stage 3 only:
 `sam/grad_cos` — the cosine similarity between the SAM ascent and descent gradients — sampled at
 $\sim$32 evenly-spaced steps per epoch (`GRAD_COS_SAMPLES`) rather than every step, since it
-requires a full flattened-gradient copy at 5.19 M parameters. It is computed via three dot
+requires a full flattened-gradient copy at the model's parameter count (3.05 M / 5.26 M). It is computed via three dot
 products over max-normalised inputs rather than `F.cosine_similarity`, because the latter's
 split numerator/denominator reductions can disagree by up to $5\times10^{-3}$ over that many
 elements — enough to report $1.005$ for a vector against itself.
@@ -305,7 +305,7 @@ Deliberate design points:
    would print every epoch twice. `tracking.show_diagnostics=true` echoes them.
 
 `watch` has no console equivalent of gradient histograms, so it prints the trainable parameter
-count instead (`Params : 5.19M`).
+count instead (e.g. `Params : 3.05M`).
 
 Third-party warning noise is filtered in `utils/warning_filters.py` — entry by entry, by category
 and message, each with a reason — and installed as an *import side effect* so it is in place
@@ -420,22 +420,30 @@ The system exposes ablations through Hydra overrides — no code changes require
 | Margin annealing off | `stage3.margin_kappa_final=1.0` | freezes Stage 2's calibrated margin vector for the whole of Stage 3 |
 | SWA transient rejection off | `stage3.swa_warmup_cycles=0` | the first post-Adam-warmup cycle becomes a candidate immediately |
 | Greedy SWA off | `stage3.greedy=false` | every cycle-end candidate is accepted unconditionally |
-| Split protocol | `data=spa40_90class_pfix` | scan-disjoint (`grouped`) split + calibration split, instead of the patch-level, scan-leaky `stratified` split (§2.8) |
+| Split protocol | `data=hsi256_stratified` | the patch-level, scan-leaky contrast arm, instead of the default scan-disjoint (`grouped`) split + calibration split (§2.8) |
 | TTA views | `tta_spatial=…` `tta_spectral=…` | 1–8 dihedral views, 0–$n$ spectral gains |
 | Multi-GPU | `runtime.multi_gpu=ddp` (with `torchrun`) | see `06_EXECUTION_AND_HARDWARE.md` |
 | Sweeps | `python train.py -m stage1.max_lr=1e-4,5e-4,1e-3` | Hydra multirun into `outputs/multirun/` |
-| **Architecture** (IC-10) | `model=seed_net` / `model=quadnet_v4_audited` | 2.82 M two-pathway model vs the audited 5.19 M four-branch one |
+| **Architecture** (IC-10) | `--config-name experiment/seednet_full256` / `experiment/quadnet_full256` | the 3.05 M two-pathway model vs the 5.26 M four-branch one, **at the same 256 bands and the same protocol** — overriding `model=` alone would leave the head elaborations and the asymmetric branch dropout attached to the control |
 | **Curriculum** (IC-11) | `pipeline=single` / `stage1_only` / `stage1_stage2` / `three_stage` | A8's arms — the same driver stopped at different points |
 | **Branch subset** (A3) | `model.enabled_branches=[b,c]` | the branch is not constructed at all, so its parameters, aux head and fusion modality all go |
 | **Symmetric branch dropout** (A3) | `model.branch_drop_profile=[1,1,1,1]` | removes the confound behind Branch C's 87% influence |
 | **Fusion form** (A5) | `model.fusion_mode=gate` / `concat_mlp` | drops the rank-128 bilinear term, or the gate as well |
 | **Capacity** (A10) | `model.spatial_width_mult=0.5` | scales the spatial path's ResBlock widths |
 | **Margin machinery** (A7) | `single.arcface_m=0` / `model.per_class_margin=true` / `model.pairwise_penalty=true` | four arms, one variable each |
-| **Band-selection scope** (A2/IC-4) | `data.patches_data=./dataset/folds/patches_fold0_40b.npy` | bands chosen on training rows only, per fold |
+| **Band count** (A2) | `data=ablation/spa40_grouped` | the retained 40-band reduced arm; the default reads all 256 with no selection at all, and is A2's *reference* |
+| **Band-selection scope** (A2/IC-4) | `data=ablation/spa40_grouped data.patches_data=./dataset/folds/patches_fold0_40b.npy` | bands chosen on training rows only, per fold |
+| **Arbitrary band subset** (A2) | `data.band_indices_path=… data.num_bands=k` | slices k bands off the full cube as each patch is read — no reduced cube materialised (`07_BAND_SELECTION_PATHWAY.md`) |
 | **Selection/report split** (IC-3) | `evaluation=held_out_once` / `audited_replica` | select on `calib` and score `val ∪ test` once, or reproduce the audited `val`-for-everything protocol |
 
-Three caveats for anyone running these:
+Four caveats for anyone running these:
 
+- **Vary one thing, and let the config do it.** The architecture and curriculum ablations
+  (A3/A4/A5/A8) compose `experiment/quadnet_full256`, not the frozen audited replica, precisely
+  so that an arm changes the architecture without also changing the split and the band count.
+  Overriding `model=quadnet_v4_audited` on the default experiment is *not* equivalent: it would
+  leave the audited asymmetric branch dropout and both head elaborations attached to the
+  control.
 - **Branch ablation is not a config lever.** The `branch_mask` argument exists for the influence
   diagnostic, and the per-branch drop rates ($0.15,\,0.15,\,0,\,0.15$ at the shipped
   `branch_drop_prob = 0.20`) are a hardcoded profile in the forward pass (§3.3); removing a
@@ -444,7 +452,30 @@ Three caveats for anyone running these:
   augmentation profile, not exposed as a config field; `data.cutmix_bands`/`cutmix_spatial`
   control only the window/region size. Training with `train_aug="none"` skips it along with
   every other augmentation (§2.6).
-- **Runs are not bit-reproducible** (§1.3): `cudnn.benchmark=True` and (on a single process)
+- **Runs are not bit-reproducible** (§1.7): `cudnn.benchmark=True` and (on a single process)
   unseeded sampler RNGs. A single-seed ablation delta smaller than run-to-run variance is not
   evidence. What *is* pinned is weight initialisation, every schedule value, and one fixed-seed
   forward + backward step.
+
+---
+
+## 5.6 The gates this suite is checked by
+
+Run them all with `pytest --run-all`, `ruff check . && black --check . && mypy`,
+`python scripts/check_config_roundtrip.py` and `python scripts/capture_golden.py --verify`.
+
+| Gate | What it pins |
+|---|---|
+| `tests/unit/test_branch_c_stem.py` | The 3-D stem's derived spectral schedule at 8/40/100/256 bands; that 40 bands still yields the audited `(2,2,2)`; and that **every band reaches at least one stage-1 tap**, checked band by band with a one-hot spectrum at every band count from 1 to 512 |
+| `tests/unit/test_masked_ops.py` | That the $O(C^2)$ continuum hull is **bit-identical** to a literal transcription of the $O(C^3)$ chord enumeration; that it runs at batch 64 × 256 bands with finite gradients; gain invariance at the primary band count; and that no dense chord buffer survives |
+| `tests/unit/test_mmap_store.py` | The band-geometry contract — cube ⇔ index file ⇔ wavelength CSV ⇔ `data.num_bands` — including the wavelength-vector mismatch no other check catches |
+| `tests/unit/test_cutmix.py` | That every shipped data config's band-expressed augmentation widths equal `band_augmentation_widths(num_bands)`, in both directions |
+| `tests/unit/test_protocol_guard.py` | That the default experiment reads all 256 acquired bands with no index file; that every reduced arm lives under `configs/data/ablation/` and must be named; that A1's two arms differ in the split alone; that the four-branch control differs from the default in the architecture alone |
+| `tests/unit/test_experiments.py` | That A2 takes the primary path as its reference, and that A3/A4/A5/A8 run on the primary protocol and input |
+| `tests/unit/test_spectral_seed_net.py` | The primary architecture's parameter budget against the four-branch control **at the same band count**; that both pathways influence the output; that the spectral path carries Branch A's physics |
+| `tests/unit/test_config_wiring.py` | Every `cfg.model.*` key is forward-observable, dropout-observable, or has a named reason it cannot be — `stem_folded_depth` included |
+| `tests/unit/test_schedulers.py` | Every LR multiplier and margin value across the full epoch range of every stage |
+| `tests/smoke/test_end_to_end.py` | The actual `train.py` composition end to end on a synthetic dataset with **two class-pure bundles per class** — including one run at the **shipped 256-band width** with `num_bands`, both augmentation widths and `stem_folded_depth` left untouched |
+| `tests/regression/test_golden_forward_pass.py` | Eval-mode logits, per-tensor SHA-256 of 306 initialised tensors, the Stage-1 epoch-1 loss and post-step weight digests |
+| `scripts/capture_golden.py --verify` | The same, from the capture side, against the pinned pre-refactor reference. Reports `v3/logits match (max \|Δ\| = 0.000e+00)` and `v3/init digests match (306 tensors)` — i.e. the 256-band re-architecture left the audited control arm bit-identical |
+| `scripts/check_config_roundtrip.py` | Every `configs/` key resolves to exactly one dataclass field, with every renamed key and every intentional value change declared |

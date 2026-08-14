@@ -34,10 +34,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-#: The default experiment config every arm composes unless it names another.
-DEFAULT_CONFIG = "experiment/seednet_grouped"
+#: The **primary** experiment config every arm composes unless it names another:
+#: SpectralSeedNet, the complete 256-band cube, grouped protocol, one stage.
+DEFAULT_CONFIG = "experiment/seednet_full256"
 
-#: The audited four-branch / three-stage / stratified control arm.
+#: The four-branch control arm, on the primary protocol and the primary input.
+#: Every architecture and curriculum ablation runs here, so an arm differs from
+#: :data:`DEFAULT_CONFIG` in exactly the thing it is varying. Before this config
+#: existed those ablations composed :data:`AUDITED_CONFIG`, silently varying the
+#: split and the band count alongside the treatment.
+CONTROL_CONFIG = "experiment/quadnet_full256"
+
+#: The frozen 40-band / three-stage / stratified replica of the audited run. It
+#: is a historical record and the subject of the golden gates — **not** an
+#: ablation arm. Reached only by A1's replication arm, which is asking about the
+#: audited configuration itself.
 AUDITED_CONFIG = "experiment/quadnet_audited"
 
 #: Run this before anything else. See the module docstring.
@@ -173,20 +184,22 @@ _register(
         arms=(
             Arm(
                 "grouped",
-                overrides=("data=spa40_90class_pfix",),
+                overrides=("data=hsi256_grouped",),
                 note="Leave-one-acquisition-bundle-out. Training sees one bundle per class.",
             ),
             Arm(
                 "stratified",
-                overrides=("data=spa40_90class_stratified", "data.split_fold=0"),
+                overrides=("data=hsi256_stratified", "data.split_fold=0"),
                 note="Patch-level. All 180 bundles appear in train AND in eval.",
             ),
         ),
         seeds=(0, 1, 2),
         folds=(0, 1),
         note=(
-            "The stratified arm has no folds to rotate, so its fold-1 cells repeat fold 0 "
-            "at a different seed; the runner de-duplicates them."
+            "Both arms are the primary 256-band input; only the split moves, so the gap is "
+            "the split's and not the representation's. The stratified arm has no folds to "
+            "rotate, so its fold-1 cells repeat fold 0 at a different seed; the runner "
+            "de-duplicates them."
         ),
     )
 )
@@ -194,21 +207,34 @@ _register(
 _register(
     Ablation(
         key="A2",
-        question="Does band selection outside the fold leak materially?",
+        question="What does band selection cost, and does selecting outside the fold leak?",
         decision_rule=(
-            "If the gap exceeds 2σ (from A12), every published number on this dataset that "
-            "selected bands on the full labelled corpus needs the caveat — including this "
-            "project's own."
+            "Two readings from one table. (i) `full_256 − spa40_within_fold` is what the "
+            "reduction costs; if it exceeds 2σ (from A12) the primary path's refusal to "
+            "reduce is confirmed, and if it does not, a reduced representation is a defensible "
+            "efficiency choice for deployment — but still not a defensible way to compute a "
+            "headline, because the incumbent k was never demonstrated (CHANGES M-14). "
+            "(ii) `spa40_whole_corpus − spa40_within_fold` is the selection leak; if THAT "
+            "exceeds 2σ, every published number on this dataset that chose bands on the full "
+            "labelled corpus needs the caveat — including this project's own history."
         ),
         arms=(
             Arm(
-                "bands_all_data",
-                overrides=("data.patches_data=./dataset/patches_spa_40b.npy",),
+                "full_256",
+                note=(
+                    "THE PRIMARY PATH. Every acquired band, no selection, so there is no "
+                    "selection to leak. This is the reference the other two are read against."
+                ),
+            ),
+            Arm(
+                "spa40_whole_corpus",
+                overrides=("data=ablation/spa40_grouped",),
                 note="k=40 chosen with every patch's label in scope, including eval patches.",
             ),
             Arm(
-                "bands_within_fold",
+                "spa40_within_fold",
                 overrides=(
+                    "data=ablation/spa40_grouped",
                     "data.patches_data=./dataset/folds/patches_fold{fold}_40b.npy",
                     "data.wavelength_path=./dataset/folds/wavelengths_fold{fold}_40b.csv",
                 ),
@@ -218,7 +244,14 @@ _register(
                 ),
             ),
         ),
+        reference="full_256",
         depends_on=("A12",),
+        note=(
+            "The gateway experiment for the whole band-selection pathway "
+            "(`docs/07_BAND_SELECTION_PATHWAY.md`). It is the only ablation whose arms change "
+            "the input representation, which is why the primary path is its reference rather "
+            "than one of its treatments."
+        ),
     )
 )
 
@@ -241,13 +274,15 @@ _register(
             Arm("c", overrides=("model.enabled_branches=[c]",), note="The spatial operator alone."),
             Arm("b", overrides=("model.enabled_branches=[b]",), note="The index bank alone."),
         ),
-        config=AUDITED_CONFIG,
+        config=CONTROL_CONFIG,
         reference="abcd",
         depends_on=("A12", "A1"),
         note=(
-            "Runs on the AUDITED architecture with `branch_drop_profile=[1,1,1,1]` and the "
-            "grouped protocol, so it measures the branches rather than the dropout policy "
-            "that produced Branch C's confounded 87% influence."
+            "Runs the four-branch architecture on the primary 256-band grouped composition, "
+            "with `branch_drop_profile=[1,1,1,1]`, so it measures the branches rather than "
+            "the dropout policy that produced Branch C's confounded 87% influence — and "
+            "rather than the split and the band count, which the audited replica would have "
+            "varied alongside them."
         ),
     )
 )
@@ -265,7 +300,7 @@ _register(
             Arm("grid4", overrides=("model.grid_size_a=4",), note="4× cheaper."),
             Arm("grid2", overrides=("model.grid_size_a=2",), note="16× cheaper."),
         ),
-        config=AUDITED_CONFIG,
+        config=CONTROL_CONFIG,
         reference="grid8",
         depends_on=("A3",),
     )
@@ -285,7 +320,7 @@ _register(
             Arm("gate_only", overrides=("model.fusion_mode=gate",)),
             Arm("concat_mlp", overrides=("model.fusion_mode=concat_mlp",)),
         ),
-        config=AUDITED_CONFIG,
+        config=CONTROL_CONFIG,
         reference="bilinear_gate",
         depends_on=("A3",),
     )
@@ -359,13 +394,17 @@ _register(
                 "single",
                 overrides=("pipeline=single",),
                 config=DEFAULT_CONFIG,
-                note="The collapsed curriculum, for reference. Different architecture.",
+                note="The primary composition — collapsed curriculum AND the smaller model.",
             ),
         ),
-        config=AUDITED_CONFIG,
+        config=CONTROL_CONFIG,
         reference="s1",
         depends_on=("A12", "A1"),
-        note="Runs the audited architecture under the GROUPED protocol — see the arm overrides.",
+        note=(
+            "All four arms are the same architecture on the same 256-band grouped "
+            "composition; only `pipeline` moves, which is what makes the comparison about "
+            "the curriculum."
+        ),
     )
 )
 

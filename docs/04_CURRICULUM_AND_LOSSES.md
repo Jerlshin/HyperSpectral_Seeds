@@ -24,6 +24,79 @@
 > 111–130, achieving the same transition inside one stage with one optimiser state and no EMA
 > re-initialisation. Run `pipeline=three_stage` to reach everything below.
 
+---
+
+## 4.0 The primary curriculum — one stage
+
+`configs/single/one_stage.yaml`, `engine/stages/single_stage.py`, reached by `pipeline=single`
+(the default). **This is what `python train.py` runs.** §4.1–§4.3 below document the retained
+three-stage curriculum, which A8 exists to test against it.
+
+```
+epochs 1-150, early stop patience 25 on CALIB macro-F1
+
+  loss     CE(label smoothing 0.10 → 0.04, linear)
+           + model.aux_head_weight (0.2) × aux CE on the spatial path
+           + mixup(α = 0.35)  while  ep ≤ single.mixup_epochs (110)
+  margin   0 until margin_warmup_start (111), cosine to single.arcface_m (0.30) by _end (130)
+  sampler  plain shuffled, batch 128     (classes are already 91-96 each)
+  aug      one `medium` profile throughout + D₄ + same-class CutMix
+  optim    AdamW, 5-epoch warm-up then one cosine decay 5e-4 → 5e-6, wd 2e-4
+  clip     per-parameter-group, threshold 5.0, with clip-fraction telemetry
+  amp      bf16 throughout; fp32 confined to the head and any similarity matrix
+  ema      d_max 0.999, never re-initialised
+  select   max(F1_live, F1_ema) on the split cfg.evaluation.select_split names
+```
+
+### Why one stage
+
+The *only* thing Stage 2 did that Stage 1 did not was introduce a non-zero angular margin, and
+the only reason that needed its own stage is that **a margin and mixup are mutually exclusive by
+construction** — the margin is indexed by a single label and mixup produces two, which
+`engine/train_epoch.py` refuses outright rather than approximating. This loop achieves the same
+transition internally: mixup stops at 110, the margin warms in over 111–130. One optimiser
+state, one schedule, no EMA re-initialisation.
+
+Stage hyperparameter count: **69 → 14**, and every one of the 14 either has evidence in the
+audited run or is a standard default.
+
+### What it deliberately does not do
+
+No EMA re-initialisation (the audited version did it twice, at phase boundaries, and it was
+never isolated). No dropout schedule (0.15 / 0.25 / 0.10 was untested). No hard-class
+oversampling, no CDWS, no sub-centre temperature anneal, no SGDR restarts, no GradNorm —
+CHANGES §6 classifies all of them UNJUSTIFIED or REDUNDANT, and **eight** of them were built to
+move the same five hard classes, which never moved under any of them (§10.5). Ablation **A9**
+asks whether those classes are spectrally inseparable varieties or a segmentation failure,
+which is a different question from any of the eight.
+
+Focal loss is off (`single.focal_gamma = 0.0`): focal γ addresses a 1000:1 foreground/background
+imbalance, and here the class imbalance is 96:91, so γ > 0 was down-weighting easy examples
+rather than correcting anything.
+
+### Optional Phase B
+
+`single.supcon_epochs > 0` appends a class-balanced `CE + w·SupCon` tail. **0 by default.**
+A6 has to show SupCon beats plain CE by more than run-to-run variance *with the sampler
+controlled*, because the audited design changed the loss, the augmentation profile and the
+sampler at the same epoch and therefore measured none of the three.
+
+### Selection
+
+`fit_ldr` and `select_ldr` are separated on purpose and both are normally `calib`. The audited
+run fitted 270+ parameters on `val`, selected the checkpoint on `val`, and reported `val` — see
+`EvaluationConfig` and `01_ABSTRACT_AND_OVERVIEW.md` §1.4.
+
+### Relationship to the band count
+
+Nothing in this section is a function of `data.num_bands`. The two augmentation widths that are
+expressed in bands (`data.cutmix_bands`, `data.max_cutout_bands`) are derived from a fixed
+*fraction* of the spectral axis by `data/datasets.py::band_augmentation_widths`, so the
+curriculum is identical on the primary 256-band path and in every band-selection ablation arm —
+which is what makes A2's arms differ in the band count alone.
+
+---
+
 Three stages run in sequence, each writing `best_stage{n}.pth` + `stage{n}_meta.json`. Each
 stage module (`engine/stages/`) is **orchestration only**: every unit of work is a call into
 `engine/`, `losses/` or `optim/`, which is what makes the schedules independently testable.

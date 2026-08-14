@@ -97,7 +97,7 @@ class BandStudyConfig:
     #: ``use_morphology`` is on. Off by default: the question is about bands.
     morphology_path: str = "./dataset/morphology.npy"
 
-    # ── Protocol (mirrors configs/data/spa40_90class_pfix.yaml) ───────
+    # ── Protocol (mirrors configs/data/hsi256_grouped.yaml) ───────
     split_scheme: str = "grouped"
     split_eval_frac: float = 0.30
     calib_frac: float = 0.15

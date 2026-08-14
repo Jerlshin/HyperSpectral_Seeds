@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from spectralquadnet.experiments.registry import AUDITED_CONFIG, DEFAULT_CONFIG
+from spectralquadnet.experiments.registry import CONTROL_CONFIG, DEFAULT_CONFIG
 from spectralquadnet.experiments.runner import RunSpec
 
 #: Folds the grouped protocol sweeps. ``(0, 1)`` is exhaustive on this dataset.
@@ -67,13 +67,13 @@ class ProtocolArm:
 PROTOCOL_ARMS: tuple[ProtocolArm, ...] = (
     ProtocolArm(
         name="grouped",
-        data_config="spa40_90class_pfix",
+        data_config="hsi256_grouped",
         folds=PROTOCOL_FOLDS,
         note="Leave-one-acquisition-bundle-out. The headline.",
     ),
     ProtocolArm(
         name="stratified",
-        data_config="spa40_90class_stratified",
+        data_config="hsi256_stratified",
         folds=(0,),
         note="Patch-level. Reported as the contrast; the gap is the result.",
     ),
@@ -127,8 +127,10 @@ def build_baseline_comparison_specs(
 
     CHANGES §21 Phase 3: *"Train SpectralSeedNet under §17 and §19. Compare to
     the current 5.19 M model under identical conditions."* Identical means the
-    grouped split, the calibration split, the same folds and the same seeds —
-    the only difference being the architecture and the curriculum.
+    complete 256-band cube, the grouped split, the calibration split, the same
+    folds and the same seeds — the only difference being the architecture and
+    the curriculum. That is `quadnet_full256` with `pipeline=three_stage`, not
+    the frozen audited replica, whose split and band count would vary too.
     """
     root = Path(output_root) / experiment
     return [
@@ -137,8 +139,8 @@ def build_baseline_comparison_specs(
             arm="quadnet_three_stage",
             fold=fold,
             seed=seed,
-            config=AUDITED_CONFIG,
-            overrides=("data=spa40_90class_pfix", "evaluation=held_out_once"),
+            config=CONTROL_CONFIG,
+            overrides=("pipeline=three_stage",),
             output_dir=str(root / f"quadnet_three_stage__f{fold}_s{seed}"),
         )
         for fold in PROTOCOL_FOLDS

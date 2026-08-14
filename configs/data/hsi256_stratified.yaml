@@ -1,4 +1,4 @@
-# The A1 CONTRAST arm: patch-level splitting, everything else matched.
+# The A1 CONTRAST arm: the same 256-band cube, split at patch level.
 #
 # CHANGES §19.2. The grouped number is the headline; this is reported *beside*
 # it, and the gap `F1_stratified - F1_grouped` is not an embarrassment — it is
@@ -8,39 +8,37 @@
 # arguably the most valuable number this project can produce: it quantifies how
 # much of reported rice-seed HSI performance is acquisition recognition.
 #
-# The ONLY difference from `spa40_90class_pfix` is `split_scheme`. Everything
-# else — the calibration split, the arrays, the augmentation geometry — is held
-# identical on purpose, because an experiment whose two arms differ in three
-# things measures none of them. In particular `calib_frac` stays 0.15 here even
-# though the audited run used 0.0: A1 asks about the SPLIT, not about selection
-# bias, and `spa40_90class.yaml` is the config that reproduces the latter.
+# The ONLY difference from `hsi256_grouped` is `split_scheme`. Everything else —
+# the calibration split, the arrays, the augmentation geometry, the band count —
+# is held identical on purpose, because an experiment whose two arms differ in
+# three things measures none of them.
 defaults:
   - base_data
   - _self_
 
 # ── Paths (relative to the process CWD) ────────────────────────────────
-patches_data: ./dataset/patches_spa_40b.npy
+patches_data: ./dataset/patches.npy
 labels_path: ./dataset/labels.npy
-wavelength_path: ./dataset/wavelengths_spa_40b.csv
+wavelength_path: ./dataset/wavelengths.csv
 groups_path: ./dataset/groups.npy
 
 masks_path: ./dataset/masks.npy
 morphology_path: ./dataset/morphology.npy
 gain_path: ./dataset/gain.npy
 
-# ── Geometry ──────────────────────────────────────────────────────────
-num_bands: 40
+# ── Geometry ───────────────────────────────────────────────────────────
+num_bands: 256
 num_classes: 90
 
-# ── Input perturbation used by RiceSeedDataset augmentation ───────────
-max_cutout_bands: 3
+# ── Input perturbation used by RiceSeedDataset augmentation ────────────
 noise_std: 0.02
+max_cutout_bands: 19
 
-# ── Same-class CutMix geometry (OP-6 / T2-7) ──────────────────────────
-cutmix_bands: 8
+# ── Same-class CutMix geometry (OP-6 / T2-7) ───────────────────────────
+cutmix_bands: 51
 cutmix_spatial: 24
 
-# ── Split protocol ────────────────────────────────────────────────────
+# ── Split protocol ─────────────────────────────────────────────────────
 # `groups.npy` is still loaded under `stratified`: it does not build the split,
 # it MEASURES it. The run banner reports how many of the 180 bundles cross the
 # train/eval boundary, so the leak is a recorded number rather than an

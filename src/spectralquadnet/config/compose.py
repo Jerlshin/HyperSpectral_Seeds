@@ -16,14 +16,23 @@ from omegaconf import DictConfig
 
 from spectralquadnet.config.schema import register_configs
 
-#: The composition ``python train.py`` runs with no arguments — CHANGES §16-§19:
-#: ``SpectralSeedNet``, one stage, leave-one-bundle-out, selection on ``calib``.
-DEFAULT_EXPERIMENT = "experiment/seednet_grouped"
+#: The composition ``python train.py`` runs with no arguments — the study's
+#: **primary** path: ``SpectralSeedNet`` on the complete 256-band cube, one
+#: stage, leave-one-acquisition-bundle-out, selection on ``calib``, ``val ∪ test``
+#: scored once (CHANGES §16-§19).
+DEFAULT_EXPERIMENT = "experiment/seednet_full256"
 
-#: The audited four-branch / three-stage / stratified configuration, kept as the
-#: control arm for A1, A3 and A8. Named here rather than spelled at each call
-#: site so the regression tests, the ablation registry and the docs cannot
-#: disagree about which config *is* the baseline.
+#: The four-branch architecture on the primary protocol and the primary input.
+#: The control arm every branch/curriculum ablation runs against, so that an arm
+#: differs from :data:`DEFAULT_EXPERIMENT` in the architecture alone.
+QUADNET_FULL256_EXPERIMENT = "experiment/quadnet_full256"
+
+#: The **frozen historical replica** of the audited run — four branches, three
+#: stages, stratified patch-level split, the 40-band SPA subset. Every golden
+#: regression digest was captured against it, and it is the left-hand side of
+#: "what did the audit actually measure". Named here rather than spelled at each
+#: call site so the regression tests, the ablation registry and the docs cannot
+#: disagree about which config *is* the replica.
 AUDITED_EXPERIMENT = "experiment/quadnet_audited"
 
 

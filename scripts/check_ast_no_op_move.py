@@ -728,7 +728,7 @@ DECLARED_DEVIATIONS: dict[str, str] = {
         "window's centre wavelength, which is what makes the branch transferable "
         "across band counts (F-3, and T3-3's validation criterion); (iii) a "
         "relative-lambda attention bias `b_psi` is added to every spectral-stage "
-        "logit. `specf_drop` (N-1b) and `specf_patch` are wired, and `d_model` "
+        "logit. `specf_drop` (N-1b) and `specf_tokens` are wired, and `d_model` "
         "drops 256 -> 192. 2,180,866 -> 1,241,640 parameters. Pinned by "
         "`tests/unit/test_specformer_lambda.py`."
     ),

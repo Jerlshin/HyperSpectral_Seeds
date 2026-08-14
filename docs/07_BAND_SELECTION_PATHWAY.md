@@ -1,9 +1,43 @@
-# 07 — Spectral dimensionality and band selection
+# 07 — The band-selection research pathway
 
 > How much of the 256-band cube does this task need, which bands are useful, and which
 > selection strategy is appropriate?
 
 `python -m spectralquadnet.bandstudy.cli` (or `python scripts/run_band_study.py`).
+
+---
+
+## 0. Where this sits — read this first
+
+**Nothing in this document is on the primary path.** The study's primary methodology is to
+train on the **complete 256-band cube with no band selection and no dimensionality reduction
+of any kind** (`configs/data/hsi256_grouped.yaml`, `01_ABSTRACT_AND_OVERVIEW.md` §1.1). A
+default `python train.py` never runs a selector, never reads a band-index file, and prints
+`Spectral: 256 bands — the full acquired cube, no band selection (primary methodology)` on its
+first screen.
+
+This pathway is **retained, not deprecated**, and the distinction matters:
+
+- *Retained*, because "how few bands would do?" is a real research question with a real
+  deployment consequence — a multispectral instrument costs a fraction of a hyperspectral one —
+  and because deleting the machinery that can answer it would turn the primary path's refusal
+  to reduce from a **measured choice** into an **assumption**. That is the precise defect this
+  whole revision exists to correct, applied to itself.
+- *Not the default*, for the two reasons in §1: neither shipped $k$ was demonstrated, and the
+  whole-corpus selection saw test labels.
+
+Everything here is reachable only by explicit opt-in:
+
+| Component | Entry point |
+|---|---|
+| The experiment | `python -m spectralquadnet.bandstudy.cli` |
+| The build step | `python scripts/select_bands.py` |
+| Reduced data configs | `python train.py data=ablation/spa40_grouped` |
+| Index-file slicing | `python train.py data.band_indices_path=… data.num_bands=k` |
+| The gateway ablation | `python -m spectralquadnet.experiments.cli ablate A2` |
+
+Ablation **A2** takes the primary path as its **reference arm**, so the question it answers is
+"what does reducing cost?" rather than "which reduction is best".
 
 ---
 
@@ -17,13 +51,15 @@ have returned a different answer**:
 | `dataset/patches_spa_40b.npy` | 40 | mRMR/SPA on **all 8,624 patches**, curve validated at k ∈ {5 … 40} | Test labels were in scope (F2 / §4.1). The curve terminates at 40, so the 98 %-of-peak elbow criterion is satisfied *vacuously* (M-14). |
 | `dataset/folds/patches_fold{0,1}_100b.npy` | 100 | mRMR/SPA on fold training rows, curve validated at k ∈ {5 … 100} | Leakage fixed (IC-4). But `band_selection_elbow_fold0.json` records `"demonstrable": false` — the curve again terminates at its own chosen k. |
 
-Both elbow files say so themselves. So the current 100-band choice is *the largest value that
-was evaluated*, and there is no evidence in the repository about what happens at 128, 192 or
-256 — nor about whether mRMR and SPA are the right two methods to have compared.
+Both elbow files say so themselves. So the 100-band choice is *the largest value that was
+evaluated*, and there is no evidence in the repository about what happens at 128, 192 or 256 —
+nor about whether mRMR and SPA are the right two methods to have compared.
 
-This study is the experiment that can return a different answer. It is designed so that
-"use all 256 bands" and "no method beats a random subset" are both reachable conclusions, and
-the report says so plainly when they are.
+That is why **the default is now the full cube**: an undemonstrated elbow is not a defensible
+place to start a study about what the acquired spectrum carries. The reduced arrays are kept
+and remain fully runnable (`configs/data/ablation/`), and this study is the experiment that can
+return a different answer. It is designed so that "use all 256 bands" and "no method beats a
+random subset" are both reachable conclusions, and the report says so plainly when they are.
 
 ### What it is not
 
@@ -61,7 +97,7 @@ The `confirm` stage refuses to run before `analyse` has written a recommendation
 is the entire reason the stage is separate.
 
 The splits come from `spectralquadnet.data.loaders.grouped_split` — the *same* builder the
-training runs use, with the same parameters as `configs/data/spa40_90class_pfix.yaml` — so the
+training runs use, with the same parameters as `configs/data/hsi256_grouped.yaml` — so the
 rows a selector may see are exactly the rows a training run would put a gradient through.
 
 ### 2.3 Two selection scopes
@@ -417,8 +453,10 @@ inside a branch naming none of them.
 
 | | |
 |---|---|
-| `scripts/select_bands.py` | the build step. Materialises one reduced cube at one k. Use it *after* this study has decided k. |
-| **A2** (`cli ablate A2`) | asks whether selection outside the fold leaks, as a two-point comparison between one 40-band whole-corpus cube and one per-fold cube. The `bands/` artifacts here supply matched within-fold selections at *every* budget, which turns A2 into a curve. |
+| `configs/data/hsi256_grouped.yaml` | **the primary path**, and this study's reference point. The protocol is mirrored exactly — same split builder, same `split_eval_frac`, same `calib_frac` — so a budget curve is comparable with the headline runs. |
+| `scripts/select_bands.py` | the build step. Materialises one reduced cube at one k. Use it *after* this study has decided k; the neural arms do not need it at all. |
+| `configs/data/ablation/` | the shipped reduced arms: `spa40_grouped`, `spa40_stratified`, and the frozen `spa40_audited` replica. |
+| **A2** (`cli ablate A2`) | the gateway. Three arms — `full_256` (reference), `spa40_whole_corpus`, `spa40_within_fold` — reading two deltas from one table: what the reduction costs, and what selecting outside the fold leaks. The `bands/` artifacts here supply matched within-fold selections at *every* budget, which turns A2 into a curve. |
 | **A12** | run-to-run σ. Every neural delta in §8 of the report is interpreted against it. Run it first. |
-| `configs/data/spa40_90class_pfix.yaml` | the protocol this study mirrors exactly — same split builder, same `split_eval_frac`, same `calib_frac`. |
+| `data.band_indices_path` | the mechanism that makes a k-band training arm a config change rather than a 14 GB cube. The neural stage's arms are built on it, and at k = 256 they reproduce the primary composition exactly — including its augmentation widths, via `band_augmentation_widths`. |
 | CHANGES §4.1, §19.3, M-14, F-3, IC-4 | the findings this study answers. |

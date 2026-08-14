@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
-"""Reduce the 256-band cube to the SPA/mRMR-selected band subset.
+"""Reduce the 256-band cube to an SPA/mRMR-selected band subset.
+
+**Not part of the primary pipeline.** The study's primary path trains on the
+complete 256-band cube ``scripts/prepare_dataset.py`` writes; nothing runs
+between the two. This script is the build step for the retained **band-selection
+ablation pathway** — ablation A2 and the arms in
+``configs/data/ablation/`` — and running it changes nothing about a default
+``python train.py``. See ``docs/07_BAND_SELECTION_PATHWAY.md``.
+
+Prefer ``python -m spectralquadnet.bandstudy.cli`` for new work: it sweeps
+twelve selection methods (including *evenly spaced* and *random* nulls) across
+twenty budgets up to the full 256, and its neural confirmation arms slice the
+full cube through ``data.band_indices_path`` instead of materialising one
+reduced copy per cell. This script exists because the shipped 40-band arrays
+were produced by it and the A2 control arm has to be reproducible.
 
 Thin CLI wrapper around
 :func:`spectralquadnet.data.prep.band_selection.select_bands` — this file
@@ -39,9 +53,10 @@ changes is whose labels chose the bands.
 ``--per-fold`` runs both protocol folds, which is what ablation A2 compares
 against the whole-corpus arm.
 
-Produces the reduced patch array and wavelength CSV a data config points at:
-``configs/data/spa40_90class*.yaml`` for the flat names, and A2's
-``bands_within_fold`` arm for the per-fold ones.
+Produces the reduced patch array and wavelength CSV an **ablation** data config
+points at: ``configs/data/ablation/spa40_*.yaml`` for the flat names, and A2's
+``spa40_within_fold`` arm for the per-fold ones. No config on the primary path
+reads either.
 """
 
 from __future__ import annotations

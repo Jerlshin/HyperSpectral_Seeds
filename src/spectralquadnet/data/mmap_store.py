@@ -246,3 +246,72 @@ class DataStore:
         if self.wavelengths is None:
             raise RuntimeError("DataStore.load_wavelengths() has not been called.")
         return self.wavelengths
+
+
+class BandGeometryError(ValueError):
+    """The cube, the wavelength vector and ``data.num_bands`` do not agree."""
+
+
+def band_geometry(cfg: DataConfig | Any, store: DataStore) -> dict[str, int]:
+    """Check that the three descriptions of the spectral axis are one description.
+
+    Four numbers claim to be the band count and nothing used to compare them:
+
+    ==========================  =========================================
+    ``patches.npy``'s axis 1    what is on disk
+    ``data.band_indices_path``  which of those bands are read, if subsetting
+    ``data.wavelength_path``    the λ the model's operators are built from
+    ``data.num_bands``          the model's input width
+    ==========================  =========================================
+
+    A disagreement between the last two is a network whose Savitzky–Golay
+    operators, continuum hull and index bank describe bands the input does not
+    contain — silently wrong rather than loudly broken, and the failure surfaces
+    as a shape error inside a branch that names none of the four. The primary
+    pipeline reads all 256 stored bands, so the check is trivially satisfied
+    there; it earns its place on the retained band-selection arms, where the
+    three files genuinely differ and are produced by three separate steps.
+
+    Args:
+        cfg: The ``data`` config group.
+        store: A store with patches and wavelengths already loaded.
+
+    Returns:
+        ``{"stored": …, "selected": …, "wavelengths": …, "configured": …}``.
+
+    Raises:
+        BandGeometryError: Any two of the four disagree.
+    """
+    stored = int(store.require_patches().shape[1])
+    n_wl = int(store.require_wavelengths().numel())
+    configured = int(cfg.num_bands)
+
+    index_path = str(getattr(cfg, "band_indices_path", "") or "")
+    selected = stored
+    if index_path:
+        selected = int(np.asarray(np.load(index_path)).reshape(-1).size)
+
+    if selected != configured:
+        detail = (
+            f"{Path(index_path).name} selects {selected} of the cube's {stored} bands"
+            if index_path
+            else f"{Path(str(cfg.patches_data)).name} stores {stored} bands"
+        )
+        raise BandGeometryError(
+            f"data.num_bands={configured} but {detail}. num_bands sets the model's input "
+            "width; the two must agree. The primary pipeline is the full cube "
+            "(num_bands=256, no band_indices_path); a reduced arm must set both."
+        )
+    if n_wl != configured:
+        raise BandGeometryError(
+            f"data.wavelength_path holds {n_wl} wavelengths but data.num_bands={configured}. "
+            "Every λ-aware operator — the Savitzky-Golay derivatives, the continuum hull, "
+            "Branch D's λ windows — is built from that vector, so a mismatch builds a model "
+            "that describes different bands from the ones it reads."
+        )
+    return {
+        "stored": stored,
+        "selected": selected,
+        "wavelengths": n_wl,
+        "configured": configured,
+    }

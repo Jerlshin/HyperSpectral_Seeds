@@ -190,10 +190,36 @@ def test_the_specformer_no_longer_accepts_an_unread_stride() -> None:
     assert "stride" not in inspect.signature(SpecFormerBranch.__init__).parameters
 
 
-def test_nothing_computes_a_stride_to_pass_to_it() -> None:
-    from spectralquadnet.models import spectral_quadnet
+def test_nothing_derives_the_token_count_from_the_band_count() -> None:
+    """``specf_tokens`` is passed through, not divided into ``num_bands``.
 
-    assert "specf_patch // 2" not in inspect.getsource(spectral_quadnet)
+    The derived form made a λ-window's *width* a function of ``k`` — 15 nm at
+    k = 40, 2.4 nm on the full 256-band cube — so "token 3" denoted a different
+    spectral region in the primary path and in every band-selection arm. That is
+    exactly what λ-uniform tokenisation exists to prevent, so the derivation is
+    pinned out of both the caller and the branch.
+    """
+    import torch
+
+    from spectralquadnet.models import spectral_quadnet
+    from spectralquadnet.models.branches.specformer import SpecFormerBranch
+
+    assert "// 2" not in inspect.getsource(spectral_quadnet.SpectralQuadNet.__init__)
+
+    # Behavioural, not a source grep: the same requested window count survives a
+    # 6.4x change in band count, which is the property the derivation broke.
+    for bands in (40, 256):
+        wl = torch.linspace(0.0, 1.0, bands)
+        branch = SpecFormerBranch(physical_wl=wl, num_bands=bands, n_tokens=16, d_model=24)
+        assert branch.windows.n_tokens == 16, bands
+        # …and the windows tile the same normalised λ domain either way, so
+        # token t denotes the same spectral region in both.
+        assert torch.allclose(
+            branch.windows.token_wl,
+            SpecFormerBranch(
+                physical_wl=torch.linspace(0.0, 1.0, 40), num_bands=40, n_tokens=16, d_model=24
+            ).windows.token_wl,
+        )
 
 
 def test_the_single_stage_applies_no_protonce() -> None:

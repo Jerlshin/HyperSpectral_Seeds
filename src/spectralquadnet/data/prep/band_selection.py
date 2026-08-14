@@ -4,18 +4,34 @@ Importing this module has no side effects: RNG seeding and warning-filter
 configuration both happen inside :func:`select_bands`, not at module scope.
 The CLI entry point is ``scripts/select_bands.py``.
 
-This pipeline produces reduced-band patch arrays (e.g. a 40-band SPA subset)
-that a training config can point ``cfg.data.patches_data`` at.
+Where this sits in the current study
+------------------------------------
+**Off the primary path, and retained deliberately.** The study's primary
+methodology is to train on the complete 256-band cube: no band selection, no
+dimensionality reduction, no reduction of any kind between
+``scripts/prepare_dataset.py`` and ``python train.py``. This module produces the
+reduced-band patch arrays that a **band-selection ablation** config points
+``cfg.data.patches_data`` at (``configs/data/ablation/spa40_*.yaml``, ablation
+A2), and nothing on the primary path imports it.
+
+It is kept, not deprecated, for a specific reason: "how many bands does this
+problem need?" is a real research question with a real deployment consequence —
+a multispectral instrument costs a fraction of a hyperspectral one — and
+deleting the machinery that can answer it would make the primary path's refusal
+to reduce an assumption rather than a measured choice. What it may **not** be is
+the default, because neither shipped k was demonstrated: both elbow files record
+``"demonstrable": false``, each accuracy curve terminating at its own chosen k
+(CHANGES M-14).
 
 This module is a **build step**: it materialises one cube at one band count,
 taking the method pair and the elbow rule below as given. The experiment that
 decides *whether* those are the right choices — twelve methods including two
 nulls, budgets to the full 256, selection stability, redundancy and a
 recommendation — is :mod:`spectralquadnet.bandstudy`
-(``python -m spectralquadnet.bandstudy.cli list``, ``docs/07_BAND_STUDY.md``).
-Run that first if k is meant to be an experimental result rather than an
-inherited one; run this when k is already settled and a materialised cube is
-wanted.
+(``python -m spectralquadnet.bandstudy.cli list``,
+``docs/07_BAND_SELECTION_PATHWAY.md``). Run that first if k is meant to be an
+experimental result rather than an inherited one; run this when k is already
+settled and a materialised cube is wanted.
 
 Why mRMR + SPA for this task
 ------------------------------
@@ -642,7 +658,9 @@ def output_paths(cfg: BandSelectionConfig, tag: str, n_bands: int) -> tuple[Path
     """Where this selection's cube and wavelength CSV go.
 
     Whole-corpus selections keep the historical flat names
-    (``patches_spa_40b.npy``), so existing configs are unaffected. A per-fold
+    (``patches_spa_40b.npy``), so the retained ablation configs under
+    ``configs/data/ablation/`` are unaffected. Nothing on the primary path reads
+    either name — it trains on ``dataset/patches.npy`` directly. A per-fold
     selection goes to ``<output_dir>/<fold_subdir>/patches_fold<k>_<n>b.npy`` —
     a *different filename*, because the two arrays are not interchangeable and
     a run that silently picked up the wrong one would be exactly the leak IC-4

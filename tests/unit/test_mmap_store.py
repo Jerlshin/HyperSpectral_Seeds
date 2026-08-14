@@ -162,3 +162,105 @@ def test_store_reproduces_golden_wavelengths(fresh_store, cfg, physical_wl):
 
     store = DataStore(wavelength_path=str(csv), device="cpu")
     torch.testing.assert_close(store.require_wavelengths(), physical_wl, rtol=0, atol=0)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  The band-geometry contract
+# ══════════════════════════════════════════════════════════════════════
+
+
+def _geometry_cfg(paths, **overrides):
+    from types import SimpleNamespace
+
+    _, _, patches_path, _, wl_path = paths
+    base = dict(
+        patches_data=patches_path,
+        wavelength_path=wl_path,
+        band_indices_path="",
+        num_bands=BANDS,
+    )
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def test_band_geometry_accepts_a_consistent_full_cube(fresh_store, tiny_dataset) -> None:
+    """The primary path's case: every stored band read, λ vector the same length."""
+    from spectralquadnet.data.mmap_store import band_geometry
+
+    _, _, patches_path, labels_path, wl_path = tiny_dataset
+    store = DataStore(patches_path=patches_path, labels_path=labels_path, wavelength_path=wl_path)
+
+    geometry = band_geometry(_geometry_cfg(tiny_dataset), store)
+    assert geometry == {
+        "stored": BANDS,
+        "selected": BANDS,
+        "wavelengths": BANDS,
+        "configured": BANDS,
+    }
+    assert geometry["selected"] == geometry["stored"], "no reduction on the primary path"
+
+
+def test_band_geometry_refuses_a_num_bands_that_the_cube_contradicts(
+    fresh_store, tiny_dataset
+) -> None:
+    """The failure that used to surface as a shape error deep inside a branch."""
+    from spectralquadnet.data.mmap_store import BandGeometryError, band_geometry
+
+    _, _, patches_path, labels_path, wl_path = tiny_dataset
+    store = DataStore(patches_path=patches_path, labels_path=labels_path, wavelength_path=wl_path)
+
+    with pytest.raises(BandGeometryError, match="num_bands"):
+        band_geometry(_geometry_cfg(tiny_dataset, num_bands=BANDS + 1), store)
+
+
+def test_band_geometry_refuses_a_mismatched_wavelength_vector(
+    fresh_store, tiny_dataset, tmp_path
+) -> None:
+    """A λ vector describing different bands from the input is silently wrong.
+
+    Every wavelength-dependent operator — the Savitzky-Golay derivatives, the
+    continuum hull, Branch D's λ windows — is built from that vector, so this is
+    the mismatch that produces a model about nothing rather than a crash.
+    """
+    from spectralquadnet.data.mmap_store import BandGeometryError, band_geometry
+
+    _, _, patches_path, labels_path, _ = tiny_dataset
+    # The cube and `num_bands` agree; only the λ vector is the odd one out, which
+    # is the combination no other check would catch.
+    short = tmp_path / "short_wavelengths.csv"
+    short.write_text(
+        "Band,Wavelength (nm)\n" + "".join(f"{i},{385.0 + i * 15.0}\n" for i in range(BANDS - 1))
+    )
+    store = DataStore(
+        patches_path=patches_path, labels_path=labels_path, wavelength_path=str(short)
+    )
+
+    with pytest.raises(BandGeometryError, match="wavelength"):
+        band_geometry(_geometry_cfg(tiny_dataset), store)
+
+
+def test_band_geometry_reports_a_reduced_arm_as_reduced(
+    fresh_store, tiny_dataset, tmp_path
+) -> None:
+    """The band-selection pathway's case, and the banner line that names it."""
+    from spectralquadnet.data.mmap_store import band_geometry
+    from spectralquadnet.engine.pipelines.context import describe_band_geometry
+
+    _, _, patches_path, labels_path, _ = tiny_dataset
+    indices = tmp_path / "bands.npy"
+    np.save(indices, np.array([0, 2], dtype=np.int64))
+    short = tmp_path / "two_wavelengths.csv"
+    short.write_text("Band,Wavelength (nm)\n0,385.0\n2,415.0\n")
+
+    store = DataStore(
+        patches_path=patches_path, labels_path=labels_path, wavelength_path=str(short)
+    )
+    geometry = band_geometry(
+        _geometry_cfg(tiny_dataset, band_indices_path=str(indices), num_bands=2), store
+    )
+
+    assert geometry == {"stored": BANDS, "selected": 2, "wavelengths": 2, "configured": 2}
+    assert "REDUCED" in describe_band_geometry(geometry)
+    assert "no band selection" in describe_band_geometry(
+        {"stored": BANDS, "selected": BANDS, "wavelengths": BANDS, "configured": BANDS}
+    )

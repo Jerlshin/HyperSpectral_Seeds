@@ -14,7 +14,7 @@ depends on it, down to the RNG draws.
 
 Also carries §4.3's ``test_config_keys_are_wired``, as an *inventory*: every
 key is classified, and the inventory is asserted to be exhaustive. **Tier 3
-emptied the dead list.** ``specf_drop`` and ``specf_patch`` reached Branch D
+emptied the dead list.** ``specf_drop`` and ``specf_tokens`` reached Branch D
 (T3-3), ``wl_embed_dim`` became κ_φ's Fourier width (T3-5), and ``fusion_heads``
 was deleted outright (T3-4) because the gated bilinear fusion that replaced the
 Perceiver has no attention for a head count to describe. The companion
@@ -49,7 +49,7 @@ WIRED_KEYS = (
     "fusion_drop",
     # ── retired from KNOWN_DEAD_KEYS by Tier 3 ────────────────────────
     "specf_drop",  # T3-3 / N-1b
-    "specf_patch",  # T3-3 / BR-4(iii) — now the λ-uniform token count
+    "specf_tokens",  # T3-3 / BR-4(iii) — now the λ-uniform token count
     "wl_embed_dim",  # T3-5 / N-1c — now κ_φ's Fourier-feature width
     # ── new in Tier 3 ─────────────────────────────────────────────────
     "grid_size_a",  # T3-6 / BR-2
@@ -58,6 +58,7 @@ WIRED_KEYS = (
     "continuum_depths",  # T3-1 / BR-1(ii)
     "n_morphometrics",  # T3-1, T3-4 / P-4
     "stem_channels",  # T3-2 / BR-3
+    "stem_folded_depth",  # 256-band native — the stem's derived spectral schedule
     "fusion_rank",  # T3-4 / FU-1(b)
     "fusion_gate_hidden",  # T3-4 / FU-1(b), FU-2
     # ── new in CHANGES ────────────────────────────────────────────────
@@ -277,7 +278,7 @@ def test_no_model_config_key_is_dead(cfg, physical_wl) -> None:
     """0-J's four dead keys, closed. The inverse of the test this replaces.
 
     Until Tier 3 this file asserted the *defect* — that ``specf_drop``,
-    ``specf_patch``, ``wl_embed_dim`` and ``fusion_heads`` were accepted by the
+    ``specf_tokens``, ``wl_embed_dim`` and ``fusion_heads`` were accepted by the
     schema and reached nothing — so that fixing one would fail the suite and
     force the key to move lists. It has. Three are wired and the fourth is
     deleted, and the assertion is now that the dead list is empty, which is the
@@ -292,8 +293,11 @@ def test_no_model_config_key_is_dead(cfg, physical_wl) -> None:
     # N-1b closed — Branch D's dropout is the config's, not a literal 0.10.
     assert model.branch_d.spectral_blocks[0].drop.p == pytest.approx(cfg.model.specf_drop)
 
-    # BR-4(iii) — `specf_patch` sets the λ-uniform token count.
-    assert model.branch_d.windows.n_tokens == cfg.data.num_bands // (cfg.model.specf_patch // 2)
+    # BR-4(iii) — `specf_tokens` IS the λ-uniform window count, not a divisor of
+    # the band count. A count derived from `k` would give token `t` a different
+    # wavelength span in every band-budget arm, which is the un-transferability
+    # the λ-uniform tokenisation exists to remove.
+    assert model.branch_d.windows.n_tokens == cfg.model.specf_tokens
 
     # FE-1 — `wl_embed_dim` is κ_φ's Fourier-feature width, in both users.
     assert model.branch_a.stem[0].features.n_freq == cfg.model.wl_embed_dim

@@ -95,72 +95,165 @@ class ContinuumDepths(nn.Module):
 
     The upper concave envelope of the samples :math:`(\\lambda_i, r_i)` is, by
     Carathéodory's theorem in one dimension, the pointwise maximum over
-    **chords**: for every pair of bands :math:`a, b` bracketing :math:`i`, the
-    line through :math:`(\\lambda_a, r_a)` and :math:`(\\lambda_b, r_b)`
-    evaluated at :math:`\\lambda_i`. The interpolation weights depend only on the
-    wavelength grid, so they are precomputed once as buffers and the envelope is
-    a masked maximum — exact, differentiable through the two active endpoints,
-    and free of any iteration count to tune.
+    **chords**: for every pair of bands :math:`a \\le i \\le b`, the line through
+    :math:`(\\lambda_a, r_a)` and :math:`(\\lambda_b, r_b)` evaluated at
+    :math:`\\lambda_i`. Written that way the envelope is a maximum over
+    :math:`O(C^3)` values, which is what this module used to compute.
 
-    The chord tensor is :math:`O(C^3)` in the band count. At :math:`C = 40` that
-    is 64,000 entries and the forward chunks over the left endpoint to bound the
-    activation to ``chunk * C * C`` per batch element. The buffers are
-    **non-persistent**: they are a deterministic function of the wavelength
-    vector already carried by ``wl_pe_cnn.pe``, and at cubic size there is no
-    reason to put a second copy of that information into every checkpoint.
+    Why that had to change for the full cube
+    ────────────────────────────────────────
+    :math:`O(C^3)` is 64,000 chords at :math:`C = 40` and **16.8 million** at
+    :math:`C = 256`. The old implementation held four dense
+    :math:`(C, C, C)` buffers — 570 MB of them at 256 bands, resident for the
+    whole run — and materialised a ``(B, chunk, C, C)`` activation per chunk,
+    which is 268 MB per chunk at batch 128. That is not a full-cube operator with
+    a large constant; it is a 40-band operator that does not fit.
+
+    The exact :math:`O(C^2)` form
+    ─────────────────────────────
+    The chord is affine in the right endpoint's *slope*, with a **non-negative**
+    coefficient for :math:`a \\le i`:
+
+    .. math::
+        \\mathrm{chord}(a, b, i)
+        = r_a + (\\lambda_i - \\lambda_a)\\,
+          \\underbrace{\\frac{r_b - r_a}{\\lambda_b - \\lambda_a}}_{s(a,\\,b)}
+
+    so maximising over :math:`b \\ge i` is maximising :math:`s(a, b)` over
+    :math:`b \\ge i` — a single **suffix maximum** along the band axis, obtained
+    from one reversed :func:`torch.cummax`. The envelope is then a maximum over
+    the left endpoint alone:
+
+    .. math::
+        \\mathrm{hull}(r)_i
+        = \\max\\Big(r_i,\\; \\max_{a \\le i} \\mathrm{chord}\\big(a, b^*(a, i), i\\big)\\Big),
+        \\qquad b^*(a, i) = \\arg\\max_{b \\ge i} s(a, b)
+
+    Two tensors of :math:`O(B C^2)`, chunked over :math:`a` exactly as before, and
+    no persistent buffer larger than the wavelength vector itself.
+
+    The value is computed from the *selected* endpoints in the original
+    :math:`(1 - t) r_a + t r_b` parameterisation rather than from the slope, so
+    the arithmetic at each surviving chord is the one the previous
+    implementation performed — the 40-band arms and the golden gates reproduce
+    bit for bit, which ``tests/unit/test_masked_ops.py`` asserts against a
+    literal transcription of the :math:`O(C^3)` enumeration.
+
+    Ordering
+    ────────
+    The suffix maximum is a statement about :math:`\\lambda`, so the module works
+    in a :math:`\\lambda`-ascending permutation of the band axis and permutes the
+    input on the way in. On the shipped wavelength files that permutation is the
+    identity; it exists so a CSV in selection order rather than spectral order is
+    handled instead of silently producing a wrong hull.
     """
 
-    chord_w: torch.Tensor
-    chord_valid: torch.Tensor
-    chord_w_complement: torch.Tensor
-    chord_invalid: torch.Tensor
+    lam: torch.Tensor
+    order: torch.Tensor
 
     def __init__(
         self,
         wavelengths: torch.Tensor,
         n_depths: int = 16,
-        chunk: int = 8,
+        chunk: int = 32,
         eps: float = 1e-5,
     ) -> None:
+        """
+        Args:
+            wavelengths: ``(C,)`` band wavelengths, in any unit and any order.
+            n_depths: How many of the deepest features to return, clamped to
+                ``C``.
+            chunk: Left endpoints processed per iteration. A pure memory knob:
+                the chunks are combined with :func:`torch.maximum`, which selects
+                one of its inputs exactly, so the chunk size **cannot** move a
+                returned value.
+            eps: Floor under the envelope in the depth ratio.
+        """
         super().__init__()
-        lam = wavelengths.detach().flatten().float()
-        n_bands = int(lam.numel())
+        raw = wavelengths.detach().flatten().float()
+        n_bands = int(raw.numel())
+        self.n_bands = n_bands
         self.n_depths = min(int(n_depths), n_bands)
         self.chunk = max(1, int(chunk))
         self.eps = float(eps)
 
-        la = lam[:, None, None]  # (C_a, 1, 1)
-        lb = lam[None, :, None]  # (1, C_b, 1)
-        li = lam[None, None, :]  # (1, 1, C_i)
-        span = lb - la
-        valid = (span > 0) & (li >= la) & (li <= lb)
-        # t = 0 at the left endpoint, 1 at the right; the chord value is
-        # (1 - t) * r_a + t * r_b, so only `t` needs storing.
-        t = torch.where(valid, (li - la) / span.clamp(min=1e-12), torch.zeros_like(span + li))
-
-        self.register_buffer("chord_w", t, persistent=False)
-        self.register_buffer("chord_valid", valid, persistent=False)
-        # `1 - t` and `~valid` are functions of the wavelength grid alone, and
-        # `envelope` rebuilt both on every chunk of every forward — five
-        # `(C/chunk, C, C)` tensors per call, at 64,000 elements each, to
-        # recompute a constant. They are buffers for the same reason the two
-        # above are, and non-persistent for the same reason: derivable from
-        # `wl_pe_cnn.pe`, and cubic in the band count.
-        self.register_buffer("chord_w_complement", 1.0 - t, persistent=False)
-        self.register_buffer("chord_invalid", ~valid, persistent=False)
+        # `stable=True` so an exactly repeated wavelength keeps band order, which
+        # makes the operator a deterministic function of the wavelength vector.
+        order = torch.argsort(raw, stable=True)
+        # Non-persistent for the reason the chord buffers were: both are exact
+        # functions of the wavelength vector the checkpoint already carries, and
+        # a second copy is a second thing that can disagree with it.
+        self.register_buffer("order", order, persistent=False)
+        self.register_buffer("lam", raw[order], persistent=False)
+        self.is_sorted = bool(torch.equal(order, torch.arange(n_bands)))
 
     def envelope(self, r: torch.Tensor) -> torch.Tensor:
-        """The upper concave envelope of ``r``, evaluated at every band. ``(B, C)``."""
+        """The upper concave envelope of ``r``, evaluated at every band. ``(B, C)``.
+
+        ``r`` and the return value are both in the caller's band order; the
+        :math:`\\lambda`-ascending permutation is internal.
+        """
+        sorted_r = r if self.is_sorted else r[:, self.order]
+        env = self._envelope_sorted(sorted_r)
+        if self.is_sorted:
+            return env
+        out = torch.empty_like(env)
+        out[:, self.order] = env
+        return out
+
+    def _envelope_sorted(self, r: torch.Tensor) -> torch.Tensor:
+        """The envelope of a :math:`\\lambda`-ascending spectrum. ``(B, C) -> (B, C)``."""
+        lam = self.lam.to(dtype=r.dtype, device=r.device)
+        n_bands = int(lam.numel())
+
+        # span[a, b] = λ_b − λ_a. Strictly positive exactly where b is a legal
+        # right endpoint for left endpoint a, which is the `span > 0` predicate
+        # the O(C³) form applied to the same quantity.
+        span = lam[None, :] - lam[:, None]
+        legal = span > 0
+        neg_inf = r.new_full((), -torch.inf)
+        i_idx = torch.arange(n_bands, device=r.device)[None, :]
+
         env = r.clone()
-        n_bands = r.shape[1]
         for start in range(0, n_bands, self.chunk):
             stop = min(start + self.chunk, n_bands)
-            chords = (
-                r[:, start:stop, None, None] * self.chord_w_complement[start:stop]
-                + r[:, None, :, None] * self.chord_w[start:stop]
+            width = stop - start
+            r_a = r[:, start:stop, None]  # (B, A, 1)
+            lam_a = lam[start:stop, None]  # (A, 1)
+
+            # `where` on the *denominator*, not on the quotient: dividing by a
+            # clamped non-positive span would overflow to inf on the branch
+            # `where` discards, and a zero incoming gradient times an infinite
+            # local one is NaN, not zero.
+            denom = torch.where(legal[start:stop], span[start:stop], torch.ones_like(lam_a))
+            slope = torch.where(legal[start:stop], (r[:, None, :] - r_a) / denom, neg_inf)
+
+            # Suffix maximum over b: reversed cummax, then flipped back, so
+            # `best[..., i]` is the largest slope reachable from some b >= i and
+            # `b_star[..., i]` is the band that attains it.
+            best, best_rev_idx = slope.flip(-1).cummax(dim=-1)
+            best = best.flip(-1)
+            b_star = (n_bands - 1 - best_rev_idx).flip(-1)  # (B, A, C_i)
+
+            # Only a <= i contributes, and only where some legal b >= i exists.
+            usable = torch.arange(start, stop, device=r.device)[:, None] <= i_idx
+            usable = usable & torch.isfinite(best)
+
+            lam_b = lam[b_star]  # (B, A, C_i)
+            # The original interpolation weight, recomputed at the selected
+            # endpoints from the same float32 expression the chord buffer held.
+            # Forced to 0 where the chord is discarded, which makes `1 - t`
+            # finite there and keeps the masked positions' gradient exactly zero.
+            t = torch.where(
+                usable,
+                (lam[None, None, :] - lam_a)
+                / torch.where(usable, lam_b - lam_a, lam_b.new_ones(())),
+                lam_b.new_zeros(()),
             )
-            chords = chords.masked_fill(self.chord_invalid[start:stop], -torch.inf)
-            env = torch.maximum(env, chords.amax(dim=(1, 2)))
+            r_b = torch.gather(r[:, None, :].expand(-1, width, -1), 2, b_star)
+            chord = r_a * (1.0 - t) + r_b * t
+
+            env = torch.maximum(env, chord.masked_fill(~usable, -torch.inf).amax(dim=1))
         return env
 
     def forward(self, r: torch.Tensor) -> torch.Tensor:

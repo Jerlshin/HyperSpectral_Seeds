@@ -29,9 +29,12 @@ from pathlib import Path
 import pytest
 from _helpers import (
     AUDITED_TINY,
+    FULL_BANDS,
+    FULL_SPATIAL,
     N_CLASSES,
     REPO_ROOT,
     TRAIN,
+    full_spectrum_overrides,
     tiny_overrides,
 )
 
@@ -228,3 +231,93 @@ def test_a9_characterises_the_hard_classes(synthetic_dataset, tmp_path) -> None:
     assert report.morphometrics["available"] is True
     assert report.verdict, "A9 must always state a reading, including 'inconclusive'"
     assert (tmp_path / "a9" / "results" / "a9_hard_classes.json").exists()
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  The primary methodology, end to end at the shipped band count
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_the_primary_pipeline_runs_on_all_256_acquired_bands(
+    full_spectrum_dataset, tmp_path
+) -> None:
+    """`python train.py` at its **own** `data.num_bands`, with nothing overridden.
+
+    Every other smoke run shrinks the spectral axis to 8 bands along with
+    everything else, which exercises the machinery but not the number this study
+    is about. This one keeps `data.num_bands`, the two band-fraction augmentation
+    widths and `model.stem_folded_depth` exactly as `configs/` ships them, so
+    what it covers is the shipped spectral configuration: the stem's derived
+    `(8, 2, 2)` schedule with its 15-tap first kernel, the 856-wide spectral
+    descriptor, the `O(C^2)` continuum hull at C = 256, and the band-geometry
+    check that gates all three.
+    """
+    out = tmp_path / "full_spectrum"
+    result = _run_train(full_spectrum_overrides(full_spectrum_dataset, out))
+    assert result.returncode == 0, f"the primary pipeline failed:\n{result.stdout[-8000:]}"
+
+    # The run must *say* which spectral regime it is in, on its own first screen.
+    assert "the full acquired cube, no band selection" in result.stdout
+    assert "REDUCED arm" not in result.stdout
+
+    manifest = _manifest(out)
+    run = manifest["run"]
+    assert run["arch"] == "spectral_seed_net"
+    assert run["split_scheme"] == "grouped"
+    assert run["band_selection"] is False, "the primary path selects no bands"
+    geometry = run["band_geometry"]
+    assert geometry["configured"] == FULL_BANDS
+    assert geometry["selected"] == geometry["stored"] == FULL_BANDS
+    assert geometry["wavelengths"] == FULL_BANDS
+
+    for variant in ("no_tta", "tta"):
+        scored = manifest["results"][variant]
+        assert 0.0 <= scored["macro_f1"] <= 1.0
+        assert scored["macro_f1_ci"] is not None
+        assert len(scored["per_class"]) == N_CLASSES
+
+
+def test_the_stem_reads_the_full_band_axis_in_the_run_that_ships(
+    full_spectrum_dataset, tmp_path
+) -> None:
+    """The model a primary run builds has the derived schedule, not a fallback.
+
+    Constructed from the same composition the run above executes, so this is a
+    statement about the shipped config rather than about a hand-built module.
+    """
+    import torch
+
+    from spectralquadnet.config.compose import load_experiment_config
+    from spectralquadnet.data.mmap_store import DataStore
+    from spectralquadnet.models.registry import build_model
+
+    cfg = load_experiment_config(
+        overrides=full_spectrum_overrides(full_spectrum_dataset, tmp_path / "probe")
+    )
+    assert cfg.data.num_bands == FULL_BANDS
+    assert cfg.data.cutmix_bands == 51 and cfg.data.max_cutout_bands == 19
+
+    DataStore.reset()
+    try:
+        store = DataStore.from_config(cfg.data, "cpu")
+        model = build_model(cfg, store.require_wavelengths())
+        stem = model.spatial.stem
+        assert stem.spectral_strides == (8, 2, 2)
+        assert stem.kernel_depths == (15, 5, 5)
+        assert stem.folded_depth == cfg.model.stem_folded_depth == 8
+        assert stem.fold[0].in_channels == 64 * 8
+        # …and the spectral descriptor carries the full-resolution SNV/derivative
+        # block: `3 * num_bands` of its width, whatever the shrunk bank sizes are.
+        assert model.spectral.in_dim == (
+            int(cfg.model.index_bank_size)
+            + int(cfg.model.continuum_depths)
+            + 3 * FULL_BANDS
+            + int(cfg.model.n_morphometrics)
+        )
+        assert model.spectral.derivatives.d1_op.shape == (FULL_BANDS, FULL_BANDS)
+
+        with torch.no_grad():
+            logits = model.eval()(torch.rand(2, FULL_BANDS, FULL_SPATIAL, FULL_SPATIAL) + 0.2)
+        assert logits.shape == (2, cfg.data.num_classes)
+    finally:
+        DataStore.reset()

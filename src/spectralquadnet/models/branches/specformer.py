@@ -33,13 +33,22 @@ its shoulder — instead of on "tokens 2 apart in an arbitrary index".
 With the wavelength axis carried explicitly the branch needs less brute
 capacity, so ``specf_dim`` drops 256 → 192 and the branch with it: 2.18 M →
 ≈ 1.24 M. ``model.specf_drop`` (dead since the reference implementation, N-1b)
-is wired to the transformer dropout, and ``model.specf_patch`` now sets the
-token count rather than a stride nothing consumed.
+is wired to the transformer dropout, and ``model.specf_tokens`` sets the λ-window
+count directly.
+
+**The window count is a physical choice, not a function of ``k``.** It used to be
+``num_bands // (specf_patch // 2)`` under a now-deleted ``specf_patch`` key,
+which made 40 bands give 10 windows of
+≈ 15 nm and the full 256-band cube give 64 windows of ≈ 2.4 nm — so "token 3"
+denoted a different spectral region in the two, which is the property (i) exists
+to prevent. ``specf_tokens`` is therefore configured directly: 10 on the
+retained 40-band audited replica, 32 (≈ 19 nm windows, ≈ 8 bands each) on the
+full cube.
 
 **IC-14 — the ``stride`` constructor argument is gone.** Tier 3 stopped reading
 it (the tokenizer is constructed at ``stride=1`` unconditionally, because the
 λ-uniform windows already set the token count) but the parameter stayed in the
-signature and ``SpectralQuadNet`` kept computing ``specf_patch // 2`` to pass
+signature and ``SpectralQuadNet`` kept computing a stride from it to pass
 it. An argument that is accepted, computed and discarded is worse than one that
 does not exist: it reads at the call site as a live knob. Removed at both ends.
 
@@ -240,8 +249,8 @@ class SpecFormerBranch(nn.Module):
     def __init__(
         self,
         physical_wl: torch.Tensor,
-        num_bands: int = 40,
-        patch_size: int = 8,
+        num_bands: int = 256,
+        n_tokens: int = 10,
         d_model: int = 192,
         n_heads: int = 4,
         n_layers: int = 4,
@@ -250,11 +259,12 @@ class SpecFormerBranch(nn.Module):
         n_freq: int = 16,
     ) -> None:
         super().__init__()
-        # BR-4(iii). `patch_size` finally means something: the token count is the
-        # band count over the half-patch the old code used as an index stride, so
-        # the shipped `specf_patch = 8` reproduces the 10 tokens the stride-4
-        # tokenizer produced — on a λ-uniform grid instead of an index one.
-        n_tokens = max(1, num_bands // max(1, patch_size // 2))
+        # BR-4(iii). `n_tokens` is the λ-window count, taken directly from
+        # `model.specf_tokens` rather than derived from the band count: a window
+        # is a physical spectral region, and a count that scaled with `k` would
+        # give token `t` a different wavelength span in every band-budget arm —
+        # the exact un-transferability the learned positional table had.
+        n_tokens = max(1, min(int(n_tokens), int(num_bands)))
         # `(0, 1)` and not the observed range — see `LambdaWindowPooling`. This
         # is the line that makes the branch transferable across band counts,
         # which is T3-3's validation criterion and F-3's question. It also makes

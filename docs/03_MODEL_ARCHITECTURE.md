@@ -1,45 +1,204 @@
 # 3 · Model Architecture
 
-> **Two architectures ship since CHANGES.md IC-10.** This document describes
-> **`SpectralQuadNet`** (`configs/model/quadnet_v4_audited.yaml`, 5,194,578 parameters), which
-> is now the *control arm* rather than the default. The default is
-> **`SpectralSeedNet`** (`configs/model/seed_net.yaml`, 2,819,830 parameters) —
-> `src/spectralquadnet/models/spectral_seed_net.py`, specified in CHANGES §16.2.
->
-> The audit's case for the reduction, in the numbers this document measures:
->
-> | Component | Params | FLOP share | End influence | Verdict |
-> |---|---:|---:|---:|---|
-> | Branch A · SpectralProfile | 603,089 | **60.1%** | 5.6% | removed as a branch; its SNV and Savitzky–Golay λ-derivatives survive as **fixed, zero-parameter features** |
-> | Branch B · Index Bank | 94,896 | 0.0% | 3.5% | retained — 1.8% of parameters, 0.005% of compute |
-> | Branch C · Spatial CNN | 2,230,646 | 34.2% | **87.4%** | retained verbatim as the spatial path |
-> | Branch D · SpecFormer | 1,241,640 | 5.7% | 3.1% | removed — 23.9% of the model to run attention over **10 tokens** |
-> | Bilinear fusion | 496,005 | 0.0% | — | replaced by concat + MLP (A5 measures whether that was right) |
->
-> Branch C's 87.4% is **confounded**: it was the only branch never dropped
-> (`branch_drop_profile = (0.75, 0.75, 0, 0.75)`), so the fusion gate was structurally taught to
-> route onto the always-present branch. Ablation **A3** re-runs the comparison with a symmetric
-> profile, which is what makes it a measurement of the branches rather than of the policy — and
-> if it shows the four-branch model wins by more than 2σ, CHANGES §14's removals are reversed.
-> That is why nothing below has been deleted.
+Two architectures ship, and both are load-bearing. Both consume the **complete 256-band
+acquired cube** on their shipped compositions; the reduced-band arms are ablations of them
+(`07_BAND_SELECTION_PATHWAY.md`), not alternatives to them.
 
-Notation throughout: $B$ = batch, $C = 40$ bands, $H = W = 64$. The two grid branches use
-**different** grids: Branch A pools onto an $8\times8$ grid ($N_a = 64$ cells, flattened batch
-$BN_a = 64B$), Branch D onto a $4\times4$ grid ($N_d = 16$ cells, flattened batch $BN_d = 16B$);
-separate `grid_size_a`/`grid_size_d` config keys keep the two grids independently configurable.
-$D = 256$ is the fusion/embedding width, $K_{\text{cls}} = 90$ classes, $K_{\text{sub}} = 3$
-ArcFace sub-centres per class. All shapes and parameter counts below are measured from a live
-`SpectralQuadNet.from_config` build of the shipped configuration
-(`configs/model/quadnet_v4_audited.yaml`), not estimated.
+| | `model.arch` | Config | Parameters @ 256 bands | Role |
+|---|---|---|---:|---|
+| **§3.0** | `spectral_seed_net` | `configs/model/seed_net.yaml` | **3,052,682** | **The primary architecture.** Two pathways, concat + MLP, K=1 head, one auxiliary head. |
+| **§3.1 →** | `spectral_quadnet` | `configs/model/quadnet_v4_audited.yaml` | 5,260,246 | The four-branch control arm, retained unchanged. `experiment/quadnet_full256` runs it on the primary protocol; `experiment/quadnet_audited` is the frozen 40-band replica. |
 
-`SpectralQuadNet` has **5,194,578 trainable parameters** across four branches plus a fifth,
-non-spectral morphology token, fused by a gated low-rank bilinear pool, and classified by
-**one** adaptive sub-centre ArcFace head shared across all three curriculum stages
-(`04_CURRICULUM_AND_LOSSES.md`).
+The audit's case for the reduction, in the numbers this document measures (all at the
+audited 40-band input, which is where they were taken):
+
+| Component | Params | FLOP share | End influence | Verdict |
+|---|---:|---:|---:|---|
+| Branch A · SpectralProfile | 603,089 | **60.1%** | 5.6% | removed as a branch; its SNV and Savitzky–Golay λ-derivatives survive as **fixed, zero-parameter features** |
+| Branch B · Index Bank | 94,896 | 0.0% | 3.5% | retained — 1.8% of parameters, 0.005% of compute |
+| Branch C · Spatial CNN | 2,230,646 | 34.2% | **87.4%** | retained verbatim as the spatial path |
+| Branch D · SpecFormer | 1,241,640 | 5.7% | 3.1% | removed — 23.9% of the model to run attention over **10 tokens** |
+| Bilinear fusion | 496,005 | 0.0% | — | replaced by concat + MLP (A5 measures whether that was right) |
+
+Branch C's 87.4% is **confounded**: it was the only branch never dropped
+(`branch_drop_profile = (0.75, 0.75, 0, 0.75)`), so the fusion gate was structurally taught to
+route onto the always-present branch. Ablation **A3** re-runs the comparison with a symmetric
+profile *on the primary 256-band composition*, which is what makes it a measurement of the
+branches rather than of the policy, the split or the band count — and if it shows the
+four-branch model wins by more than 2σ, CHANGES §14's removals are reversed. That is why
+nothing below has been deleted.
+
+Notation throughout: $B$ = batch, $C$ = bands ($C = 256$ on the primary path, $C = 40$ on the
+audited replica), $H = W = 64$. $D = 256$ is the fusion/embedding width, $K_{\text{cls}} = 90$
+classes. All shapes and parameter counts below are measured from live `from_config` builds of
+the shipped configurations, not estimated.
 
 ---
 
-## 3.1 Forward contract
+## 3.0 `SpectralSeedNet` — the primary architecture
+
+`src/spectralquadnet/models/spectral_seed_net.py`, CHANGES §16.2 / IC-10.
+
+```
+x (B,256,64,64)  +  mask (B,1,64,64)  +  morph (B,8)
+ │
+ └─ MaskedSpectralECA(256) ────────────────────────────────► x' (B,256,64,64)   [10 params]
+      │
+      ├── x' ⊙ m ────────────────────────► SpatialPath ────► (B,256)
+      │     SpectralSpatialStem3D:
+      │       Conv3d(1→16,  k=(15,3,3), s=(8,1,1)) → (B,16,32,64,64)
+      │       Conv3d(16→32, k=( 5,3,3), s=(2,2,2)) → (B,32,16,32,32)
+      │       Conv3d(32→64, k=( 5,3,3), s=(2,2,2)) → (B,64, 8,16,16)
+      │       reshape (B,512,16,16) → Conv2d(512→192,1)
+      │     tail: ResBlock2D/CBAM ×4 → pn(mean)‖pn(max) → ℓ2 → Linear(512→256)
+      │
+      └── masked mean x̄ (B,256) ─────────► SpectralPath ───► (B,256)
+            SoftIndexBank(64) ‖ ContinuumDepths(16)
+            ‖ snv(x̄)(256) ‖ D₁ snv(x̄)(256) ‖ D₂ snv(x̄)(256) ‖ morph(8)   = 856
+            → LayerNorm(856) → Linear(856→256) → LN → GELU → Dropout → Linear(256→256) → LN → GELU
+                                     │
+        concat (B,512) → Dropout(0.10) → Linear(512→256) → LayerNorm
+                                     │
+                              EmbedNet(256, 512) ─► ê (B,256), ℓ2-normalised
+                                     │
+                   AdaptiveSubcenterArcFaceHead(K=1, s=32, m varies) ─► (B,90)
+                   AuxiliaryHead(256→128→90) on b_spatial, fixed weight 0.2
+```
+
+### Parameter budget
+
+| Child | Parameters | Share |
+|---|---:|---:|
+| `spatial` | 2,268,662 | 74.32% |
+| &nbsp;&nbsp;├ `stem` | 216,272 | 7.09% |
+| &nbsp;&nbsp;├ `stages` (ResBlock2D ×4 + CBAM ×3) | 1,920,550 | 62.91% |
+| &nbsp;&nbsp;└ `proj` | 131,840 | 4.32% |
+| `spectral` | 320,688 | 10.51% |
+| &nbsp;&nbsp;├ `index_bank` ($2\times64\times256$) | 32,768 | 1.07% |
+| &nbsp;&nbsp;├ `in_norm` (LayerNorm 856) | 1,712 | 0.06% |
+| &nbsp;&nbsp;└ `mlp` (856→256→256) | 286,208 | 9.38% |
+| `embed_net` | 263,936 | 8.65% |
+| `fuse` (Linear 512→256 + LayerNorm) | 131,840 | 4.32% |
+| `aux_head_spatial` | 44,506 | 1.46% |
+| `arcface_head` (K=1, 90 classes) | 23,040 | 0.75% |
+| `se` (`MaskedSpectralECA`, Conv1d(2→1,k=5)) | 10 | — |
+| **Total** | **3,052,682** | 100% |
+
+`continuum` and `derivatives` hold **zero parameters**: the Savitzky–Golay operators are
+persistent $(256,256)$ buffers and the hull's constants are $O(C)$ non-persistent ones.
+
+### Forward contract
+
+```python
+SpectralSeedNet.forward(x, labels=None, return_embed=False, arc_m=None,
+                        branch_mask=None, mask=None, morph=None)
+```
+
+Returns exactly the shapes `SpectralQuadNet` does, because every caller in `engine/`
+branches on them: a **dict** in `.train()` mode (`main`, `aux_spatial`, plus `emb` when
+asked and `balance` when labels are given and $K>1$), the **bare logits** in `.eval()`.
+`mask=None` falls back to the $\sum_c|x_c| > 10^{-5}$ threshold and `morph=None`
+substitutes zeros, both exactly.
+
+`branch_mask` is accepted for signature compatibility and applied as
+`(spatial, spectral)` — the leave-one-pathway-out influence diagnostic uses it. There is no
+*stochastic* branch dropout here: with two pathways and the audited evidence that an
+asymmetric policy biases the gate rather than regularising it, dropping one is an ablation,
+not a regulariser.
+
+`pathway_inputs(x, mask, morph)` returns what each pathway consumes **before any parameter
+touches it** — `{"spatial": x ⊙ m, "spectral": masked_mean_spectrum(x, m)}` — because the
+distinctness claim is a claim about those tensors and cannot be made from the embeddings.
+
+### Tensor-shape matrix
+
+| Step | Module | In | Out |
+|---|---|---|---|
+| 0 | `foreground_mask` | $(B,256,64,64)$ [, $(B,64,64)$] | $(B,1,64,64)$ |
+| 1 | `se` | $(B,256,64,64)$ | $(B,256,64,64)$ |
+| S.0 | `stem.stage1` | $(B,1,256,64,64)$ | $(B,16,32,64,64)$ |
+| S.1 | `stem.stage2` | $(B,16,32,64,64)$ | $(B,32,16,32,32)$ |
+| S.2 | `stem.stage3` | $(B,32,16,32,32)$ | $(B,64,8,16,16)$ |
+| S.3 | `stem.fold` | $(B,512,16,16)$ | $(B,192,16,16)$ |
+| S.4 | `stages` (ResBlock2D/CBAM ×4) | $(B,192,16,16)$ | $(B,256,4,4)$ |
+| S.5 | pn(mean)‖pn(max) → ℓ2 → `proj` | $(B,512)$ | $(B,256)$ |
+| P.0 | `masked_mean_spectrum` | $(B,256,64,64)$ | $(B,256)$ |
+| P.1 | `index_bank` | $(B,256)$ | $(B,64)$ |
+| P.2 | `continuum` | $(B,256)$ | $(B,16)$ |
+| P.3 | `derivatives(snv(·))` | $(B,256)$ | $(B,3,256)$ → flat $(B,768)$ |
+| P.4 | concat + `in_norm` + `mlp` | $(B,856)$ | $(B,256)$ |
+| F.0 | `fuse` | $(B,512)$ | $(B,256)$ |
+| F.1 | `embed_net` + ℓ2 | $(B,256)$ | $(B,256)$ |
+| H.0 | `arcface_head` | $(B,256)$ | $(B,90)$ |
+| H.1 | `aux_head_spatial` (train only) | $(B,256)$ | $(B,90)$ |
+
+### The two 256-band-native mechanisms
+
+**(a) `spectral_stride_schedule` — derived spectral strides.**
+`models/branches/spatial_cnn.py`. The smallest power-of-two total reduction with
+$\lceil C/\text{total}\rceil \le$ `model.stem_folded_depth`, with the remainder spent in
+stage 1 (one input channel, sixteen output channels — the cheapest place):
+
+| $C$ | strides | kernel depths | folded depth | fold input | stem params | stem MACs |
+|---:|---|---|---:|---:|---:|---:|
+| 8 | (1, 1, 1) | (7, 5, 5) | 8 | 512 | — | — |
+| **40** | **(2, 2, 2)** | **(7, 5, 5)** | **5** | **320** | **178,256** | **452 M** |
+| 100 | (4, 2, 2) | (7, 5, 5) | 7 | 448 | 202,832 | 597 M |
+| **256** | **(8, 2, 2)** | **(15, 5, 5)** | **8** | **512** | **216,272** | **874 M** |
+| 256, three hardcoded halvings | (2, 2, 2) | (7, 5, 5) | 32 | 2048 | 510,032 | 2,894 M |
+
+MACs are per sample at $64\times64$ spatial with `stem_channels = 192`. A **6.4× wider input
+costs 1.93×** in the stem; the last row — the schedule this replaced — costs 6.40×, exactly the
+input ratio, which is the signature of a design that was never sized for the full cube.
+
+The 40-band row is the audited stem, tensor for tensor. **Spatial** strides are fixed at
+$(1,2,2)$ and are deliberately *not* derived: they take a $64\times64$ patch to
+$16\times16$, which is the resolution the 2-D tail and every downstream shape assertion are
+written against. Only the spectral stride is a function of the band count.
+
+`kernel_depth(base, s) = odd(max(base, 2s - 1))`. The bound is $2s-1$ rather than $s$, and
+the difference is the *tail* of the axis: with an odd kernel and symmetric
+$\lfloor k/2\rfloor$ padding the output depth is $\lceil C/s \rceil$ and the last output
+position reads input indices up to $C - s + (k-1)/2$, so covering index $C-1$ requires
+$(k-1)/2 \ge s-1$. At $s = 8$, $k = 9$ fails by three and bands 253, 254, 255 of the
+acquired cube would never be multiplied by anything — silently, since every shape still
+agrees. `tests/unit/test_branch_c_stem.py` pushes a one-hot spectrum through the real
+convolution band by band, at every band count from 1 to 512.
+
+**(b) `ContinuumDepths` — an exact $O(C^2)$ suffix maximum.**
+`models/branches/spectral_stats.py`. The upper concave envelope is the pointwise maximum
+over chords, which is $O(C^3)$ written directly — 64,000 chords at $C{=}40$ and **16.8
+million** at $C{=}256$, four dense $(C,C,C)$ buffers (570 MB resident) and a 268 MB
+activation per chunk at batch 128. The chord is affine in the right endpoint's slope with a
+non-negative coefficient for $a \le i$:
+
+$$
+\mathrm{chord}(a,b,i) \;=\; r_a + (\lambda_i - \lambda_a)\,\underbrace{\frac{r_b-r_a}{\lambda_b-\lambda_a}}_{s(a,b)},
+$$
+
+so $\max_{b \ge i}$ is a **suffix maximum of the slope** — one reversed `cummax` — and
+
+$$
+\mathrm{hull}(r)_i = \max\Big(r_i,\; \max_{a\le i}\ \mathrm{chord}\big(a, b^*(a,i), i\big)\Big),
+\qquad b^*(a,i) = \arg\max_{b\ge i} s(a,b).
+$$
+
+The value is evaluated from the *selected* endpoints in the original
+$(1-t)r_a + t r_b$ parameterisation, so the result is **bit-identical** to the enumeration —
+asserted in `tests/unit/test_masked_ops.py` against a literal transcription of the $O(C^3)$
+form rather than against a refactor of itself. The module works in a λ-ascending permutation
+internally, so a wavelength file in selection order rather than spectral order is handled
+instead of silently producing a wrong hull.
+
+Nothing else in either network needed a band-count special case: the index bank
+($2 \times n_{\text{idx}} \times C$), the derivative operators ($(C,C)$), the ECA kernel
+width ($f(\log_2 C)$) and the descriptor width ($n_{\text{idx}} + n_{\text{depth}} + 3C +
+n_{\text{morph}}$) are all functions of $C$ already.
+
+---
+
+## 3.1 `SpectralQuadNet` — forward contract
+
 
 ```python
 SpectralQuadNet.forward(
@@ -48,14 +207,16 @@ SpectralQuadNet.forward(
 )
 ```
 
-`x`$\in\mathbb{R}^{B\times40\times64\times64}$ is required; `mask`$\in\mathbb{R}^{B\times64\times64}$
-(the persisted fill map $\alpha$) and `morph`$\in\mathbb{R}^{B\times8}$ (the persisted
-morphometrics) are both **optional with exact fallbacks** — `mask=None` uses the threshold
-$\sum_c|x_c|>10^{-5}$ directly, and `morph=None` substitutes a zero vector. Both arrays are
-written by `scripts/prepare_dataset.py` and consumed when `configs/data` wires
-`masks_path`/`morphology_path` to them (`configs/data/spa40_90class_pfix.yaml`); the default
-config (`configs/data/spa40_90class.yaml`) leaves both paths unset, so the fallbacks are its
-operative path.
+`x`$\in\mathbb{R}^{B\times C\times64\times64}$ is required, with $C$ = `data.num_bands`
+(256 on every shipped composition except the frozen audited replica);
+`mask`$\in\mathbb{R}^{B\times64\times64}$ (the persisted fill map $\alpha$) and
+`morph`$\in\mathbb{R}^{B\times8}$ (the persisted morphometrics) are both **optional with
+exact fallbacks** — `mask=None` uses the threshold $\sum_c|x_c|>10^{-5}$ directly, and
+`morph=None` substitutes a zero vector. Both arrays are written by
+`scripts/prepare_dataset.py` and wired by every primary and ablation data config; only
+`configs/data/ablation/spa40_audited.yaml` — the frozen historical replica, whose arrays
+predate them — leaves the paths unset, so the fallbacks are *its* operative path and the
+reason they still exist.
 
 There is **no `linear_head`.** Stage 1, Stage 2 and Stage 3 all run the same `arcface_head`,
 differing only in the margin passed at each call (`stage1.arcface_m = 0.0` makes it a plain
@@ -302,9 +463,12 @@ $$
 \text{output} = \operatorname{topk}_{16}(\text{depth})
 $$
 
-Zero learnable parameters; its $O(C^3)$ interpolation-weight buffers ($(40,40,40)$, four of
-them) are **non-persistent** — computed once from the wavelength grid, never written to the
-checkpoint.
+Zero learnable parameters, and — since the 256-band re-architecture — **$O(C)$** state
+rather than $O(C^3)$: the envelope is an exact suffix-maximum over chord *slopes* (§3.0(b))
+whose only buffers are the λ vector and its ascending permutation, both non-persistent
+because they are derivable from the wavelength grid the checkpoint already carries. The
+$O(C^3)$ form it replaces held four dense $(C,C,C)$ tensors — 64,000 entries each at
+$C{=}40$ and 16.8 million at $C{=}256$ — and is reproduced **bit for bit**.
 
 **Assembly:** $[z\,(64) \,\|\, \text{depth}\,(16) \,\|\, \text{morph}\,(8)] \in \mathbb{R}^{B\times88}$
 $\to \mathrm{LayerNorm} \to$ MLP $\mathrm{Linear}(88{\to}256)\to\mathrm{LN}\to\mathrm{GELU}\to
@@ -315,27 +479,32 @@ $\to \mathrm{LayerNorm} \to$ MLP $\mathrm{Linear}(88{\to}256)\to\mathrm{LN}\to\m
 
 ### Branch C — Spatial CNN (`SpatialCNNBranch`)
 
-**Input:** the full gated cube $(B,40,64,64)$ + mask — the only branch that keeps both spatial
-axes and the spectral axis jointly.
+**Input:** the full gated cube $(B,C,64,64)$ + mask — the only branch that keeps both spatial
+axes and the spectral axis jointly. Shared verbatim with `SpectralSeedNet`'s spatial path.
 
 **`SpectralSpatialStem3D`** — three `Conv3d` stages fold the spectral axis into the channel
-dimension while halving spatial resolution:
+dimension while reducing spatial resolution. On the **primary 256-band input**:
 
 $$
-(B,1,40,64,64) \xrightarrow{\text{Conv3d}(1\to16,\,k=(7,3,3),\,s=(2,1,1))} (B,16,20,64,64)
-\xrightarrow{\text{Conv3d}(16\to32,\,k=(5,3,3),\,s=2)} (B,32,10,32,32)
+(B,1,256,64,64) \xrightarrow{\text{Conv3d}(1\to16,\,k=(15,3,3),\,s=(8,1,1))} (B,16,32,64,64)
+\xrightarrow{\text{Conv3d}(16\to32,\,k=(5,3,3),\,s=2)} (B,32,16,32,32)
 $$
 $$
-\xrightarrow{\text{Conv3d}(32\to64,\,k=(5,3,3),\,s=2)} (B,64,5,16,16)
-\xrightarrow{\text{reshape}} (B,320,16,16)
-\xrightarrow{\text{Conv2d}(320\to192,1)} (B,192,16,16)
+\xrightarrow{\text{Conv3d}(32\to64,\,k=(5,3,3),\,s=2)} (B,64,8,16,16)
+\xrightarrow{\text{reshape}} (B,512,16,16)
+\xrightarrow{\text{Conv2d}(512\to192,1)} (B,192,16,16)
 $$
 
-each `Conv3d` stage followed by `GroupNorm`+`GELU`; the mask is re-pooled to the current spatial
-resolution and multiplied in **after every stage**, so the padded region is exactly zero at
-every depth. The fold-in channel width (`stem_channels = 192`) is band-count agnostic — derived
-from the folded spectral depth ($\lceil\lceil\lceil40/2\rceil/2\rceil/2\rceil=5$) times 64, not
-hardcoded. Measured stem parameters: **178,256**.
+and on the audited 40-band replica, $(2,2,2)$ with kernels $(7,5,5)$ and a 320-channel fold —
+the same class, the same code path, no special case. The three **spectral** strides and their
+kernel depths are derived from $C$ and `model.stem_folded_depth` by
+`spectral_stride_schedule` / `kernel_depth` (§3.0(a)); the three **spatial** strides are
+fixed at $(1,2,2)$.
+
+Each `Conv3d` stage is followed by `GroupNorm`+`GELU`; the mask is re-pooled to the current
+spatial resolution and multiplied in **after every stage**, so the padded region is exactly
+zero at every depth. The fold width is $64 \times$ `folded_depth`, derived rather than
+hardcoded. Measured stem parameters: **216,272** at 256 bands, **178,256** at 40.
 
 **Tail** — four `ResBlock2D` stages, stride 2, `CBAM` after the first three:
 
@@ -355,24 +524,31 @@ $$
 
 with $\mathrm{proj}=\mathrm{Linear}(512{\to}256)\to\mathrm{BatchNorm1d}\to\mathrm{GELU}$.
 
-**Measured parameters: 2,230,646** (stem 178,256 + stages 1,920,550 + proj 131,840) — the branch
-performs the only joint spectral-spatial convolution in the network. A synthetic
+**Measured parameters: 2,268,662** at 256 bands (stem 216,272 + stages 1,920,550 + proj
+131,840) and **2,230,646** at 40 — the branch performs the only joint spectral-spatial
+convolution in the network. A synthetic
 band/space-swap test confirms the 3-D stem produces different outputs for cubes differing only
 in *which band* a spatial blob occupies.
 
 ### Branch D — SpecFormer (`SpecFormerBranch`)
 
-**Input:** the $4\times4$ grid spectra $(B,16,40)$, tokenised on a **wavelength-uniform** axis
+**Input:** the $4\times4$ grid spectra $(B,16,C)$, tokenised on a **wavelength-uniform** axis
 rather than a raw band-index stride.
 
-**`LambdaWindowPooling`** — pools $C{=}40$ bands into $n_{\text{tok}}=\lfloor
-40/(\texttt{specf\_patch}/2)\rfloor=10$ tokens whose edges are equal-width windows over
-$\tilde\lambda\in[0,1]$ (**not** the observed min/max of the selected band subset), so token $t$
-means the same physical spectral region regardless of which/how-many bands were selected — the
-property that lets a checkpoint trained at one band count load `strict=True` into a branch built
-for a different one. A window that catches no band takes its nearest band instead of averaging
-to zero. Raises `ValueError` at construction if `physical_wl` is not already normalised to
-$[0,1]$.
+**`LambdaWindowPooling`** — pools $C$ bands into $n_{\text{tok}} =$ `model.specf_tokens`
+tokens whose edges are equal-width windows over $\tilde\lambda\in[0,1]$ (**not** the observed
+min/max of the band subset), so token $t$ means the same physical spectral region regardless
+of which/how-many bands were present — the property that lets a checkpoint trained at one band
+count load `strict=True` into a branch built for a different one. A window that catches no band
+takes its nearest band instead of averaging to zero. Raises `ValueError` at construction if
+`physical_wl` is not already normalised to $[0,1]$.
+
+The count is configured **directly**: 10 on the audited replica (≈15 nm windows at $k{=}40$)
+and 32 in `experiment/quadnet_full256` (≈19 nm windows, ≈8 bands each, on the full cube). It
+used to be derived as `num_bands // (specf_patch // 2)`, which made a *window's width* a
+function of the band count — 15 nm at $k{=}40$ and 2.4 nm at $k{=}256$ — so "token 3" denoted a
+different spectral region in the primary path and in every band-selection arm, which is exactly
+the un-transferability λ-uniform tokenisation exists to prevent.
 
 **`RelativeLambdaBias`** — a learned, per-head additive attention bias keyed on the *difference*
 in window centre wavelengths:
@@ -389,23 +565,25 @@ zero-padded (no wavelength). $\sim$1.3k parameters.
 table — zero parameters for token position. Both CLS tokens (`spec_cls`, `spatial_cls`) remain
 learned parameters, `trunc_normal_(std=0.02)`.
 
-**Multi-scale tokenisation** — three parallel strided-1-D convs at kernels $\{3,5,7\}$ over the
-now-uniform 10-token axis, channel split $\lfloor192/3\rfloor{=}64$ each, concatenated $\to$
-`GroupNorm`+`GELU`.
+**Multi-scale tokenisation** — three parallel strided-1-D convs at kernels $\{3,5,7\}$ over
+the now-uniform $n_{\text{tok}}$-token axis, channel split $\lfloor192/3\rfloor{=}64$ each,
+concatenated $\to$ `GroupNorm`+`GELU`. Because the axis is uniform *in wavelength*, a kernel
+width is a **bandwidth**, which is what the three widths were always meant to mean.
 
 **Two-stage attention**, $d_{\text{model}}=192$ (`specf_dim`), 8 heads, dropout $0.15$
-(`specf_drop`): Stage D1 prepends `spec_cls`, adds the position buffer, runs
-`specf_layers // 2 = 2` pre-LN blocks with the λ-bias, and token 0 becomes the cell's spectral
-summary. Stage D2 re-assembles the 16 cell summaries, prepends `spatial_cls`, runs 2 more pre-LN
+(`specf_drop`): Stage D1 prepends `spec_cls`, adds the position buffer, runs `specf_layers // 2 = 2` pre-LN
+blocks with the λ-bias, and token 0 becomes the cell's spectral summary. Stage D2 re-assembles the 16 cell summaries, prepends `spatial_cls`, runs 2 more pre-LN
 blocks (no bias — cells have no natural spatial ordering), and token 0 is `LayerNorm`ed and
 projected $\mathrm{Linear}(192{\to}256)\to\mathrm{BatchNorm1d}\to\mathrm{GELU}$.
 
-**Measured parameters: 1,241,640** (tokenizer 1,536 + λ-bias 1,320 + spectral blocks 594,048 +
-spatial blocks 594,048 + norm 384 + proj 49,920). With the wavelength axis carried explicitly by
-token identity and the relative-λ bias, the branch needs less brute capacity to rediscover it
-from an arbitrary index table. A checkpoint trained at 40 bands loads `strict=True` into a
-20-band instance and their embeddings agree on a spectrum both can sample, confirming the
-transfer property the λ-uniform tokenisation is built for.
+**Measured parameters: 1,241,640**, *independent of the band count* (tokenizer 1,536 +
+λ-bias 1,320 + spectral blocks 594,048 + spatial blocks 594,048 + norm 384 + proj 49,920) —
+`LambdaWindowPooling`'s matrix is a non-persistent buffer, so the branch's cost is set by
+`specf_tokens` and `specf_dim` alone. With the wavelength axis carried explicitly by token
+identity and the relative-λ bias, the branch needs less brute capacity to rediscover it from
+an arbitrary index table. A checkpoint trained at one band count loads `strict=True` into an
+instance built for another and their embeddings agree on a spectrum both can sample,
+confirming the transfer property the λ-uniform tokenisation is built for.
 
 ### Branch masking (training-time regularisation)
 
@@ -622,27 +800,31 @@ each, 178,024 total.
 
 ## 3.6 Tensor shape matrix
 
-Input contract: $x\in\mathbb{R}^{B\times40\times64\times64}$, `float32`.
+`SpectralSeedNet`'s matrix is in §3.0. This one is `SpectralQuadNet`'s, tabulated at the
+**primary** $C = 256$; the audited replica is the same table with $256 \to 40$, the stem's
+$(8,2,2)$ schedule replaced by $(2,2,2)$, and `specf_tokens` $32 \to 10$.
+
+Input contract: $x\in\mathbb{R}^{B\times C\times64\times64}$, `float32`.
 
 ### Shared front-end
 
 | Stage | Module | Input | Output |
 |---|---|---|---|
-| Spectral gate | `se` | $(B,40,64,64)$ | $(B,40,64,64)$ |
-| Grid A | `extract_grid_spectra_multi(\cdot,8)` | $(B,40,64,64)$ | $(B,64,40)$ → flat $(64B,40)$, mass $(B,64)$ |
-| Grid D | `extract_grid_spectra_multi(\cdot,4)` | $(B,40,64,64)$ | $(B,16,40)$ |
-| Mean spectrum | `masked_mean_spectrum` | $(B,40,64,64)$ | $(B,40)$ |
+| Spectral gate | `se` | $(B,256,64,64)$ | $(B,256,64,64)$ |
+| Grid A | `extract_grid_spectra_multi(\cdot,8)` | $(B,256,64,64)$ | $(B,64,256)$ → flat $(64B,256)$, mass $(B,64)$ |
+| Grid D | `extract_grid_spectra_multi(\cdot,4)` | $(B,256,64,64)$ | $(B,16,256)$ |
+| Mean spectrum | `masked_mean_spectrum` | $(B,256,64,64)$ | $(B,256)$ |
 
 ### Branch A ($64B$ flattened cells)
 
 | Step | Module | Input | Output |
 |---|---|---|---|
-| A.0 | `shape_channels` (SNV + $D_1,D_2$) | $(64B,40)$ | $(64B,3,40)$ |
-| A.1 | `stem` (`LambdaConv1d` 3→96 + GN + GELU) | $(64B,3,40)$ | $(64B,96,40)$ |
-| A.2 | `+ wl_pe_cnn` | $(64B,96,40)$ | $(64B,96,40)$ |
-| A.3 | `tower_{s,m,l}` ($k{=}3/5/7$) | $(64B,96,40)$ | $3\times(64B,96,40)$ |
-| A.4–5 | concat + `fusion` | $(64B,288,40)$ | $(64B,96,40)$ |
-| A.6–7 | `attn_pool` + weighted sum | $(64B,96,40)$ | $(64B,96)$ |
+| A.0 | `shape_channels` (SNV + $D_1,D_2$) | $(64B,256)$ | $(64B,3,256)$ |
+| A.1 | `stem` (`LambdaConv1d` 3→96 + GN + GELU) | $(64B,3,256)$ | $(64B,96,256)$ |
+| A.2 | `+ wl_pe_cnn` | $(64B,96,256)$ | $(64B,96,256)$ |
+| A.3 | `tower_{s,m,l}` ($k{=}3/5/7$) | $(64B,96,256)$ | $3\times(64B,96,256)$ |
+| A.4–5 | concat + `fusion` | $(64B,288,256)$ | $(64B,96,256)$ |
+| A.6–7 | `attn_pool` + weighted sum | $(64B,96,256)$ | $(64B,96)$ |
 | A.8 | `proj` | $(64B,96)$ | $(64B,256)$ |
 | A.9 | mass-weighted pool over 64 cells | $(B,64,256),(B,64)$ | $\mathbf{b}_A\,(B,256)$ |
 
@@ -650,8 +832,8 @@ Input contract: $x\in\mathbb{R}^{B\times40\times64\times64}$, `float32`.
 
 | Step | Module | Input | Output |
 |---|---|---|---|
-| B.0 | `SoftIndexBank` | $(B,40)$ | $(B,64)$ |
-| B.1 | `ContinuumDepths` | $(B,40)$ | $(B,16)$ |
+| B.0 | `SoftIndexBank` | $(B,256)$ | $(B,64)$ |
+| B.1 | `ContinuumDepths` | $(B,256)$ | $(B,16)$ |
 | B.2 | concat with morph | $(B,64),(B,16),(B,8)$ | $(B,88)$ |
 | B.3 | MLP | $(B,88)$ | $\mathbf{b}_B\,(B,256)$ |
 
@@ -659,7 +841,7 @@ Input contract: $x\in\mathbb{R}^{B\times40\times64\times64}$, `float32`.
 
 | Step | Module | Input | Output |
 |---|---|---|---|
-| C.1 | `stem` (3-D, 3 stages) | $(B,1,40,64,64)$ | $(B,64,5,16,16)\to(B,192,16,16)$ |
+| C.1 | `stem` (3-D, 3 stages, strides $(8,2,2)$) | $(B,1,256,64,64)$ | $(B,64,8,16,16)\to(B,192,16,16)$ |
 | C.2–5 | `stages` (4× `ResBlock2D`, 3× `CBAM`) | $(B,192,16,16)$ | $(B,256,4,4)$ |
 | C.6 | pool (pn-mean, pn-max, $\ell_2$) | $(B,256,4,4)$ | $(B,512)$ |
 | C.7 | `proj` | $(B,512)$ | $\mathbf{b}_C\,(B,256)$ |
@@ -668,11 +850,11 @@ Input contract: $x\in\mathbb{R}^{B\times40\times64\times64}$, `float32`.
 
 | Step | Module | Input | Output |
 |---|---|---|---|
-| D.0 | `LambdaWindowPooling` | $(16B,40)$ | $(16B,10)$ |
-| D.1 | `tokenizer` ($k{=}3/5/7$ strided) | $(16B,1,10)$ | $(16B,192,10)$ |
-| D.2 | `+ spec_pos_embed`, prepend `spec_cls` | $(16B,10,192)$ | $(16B,11,192)$ |
-| D.3 | `spectral_blocks` ($\times2$, $+\lambda$-bias) | $(16B,11,192)$ | $(16B,11,192)$ |
-| D.4 | token 0, reshape | $(16B,11,192)$ | $(B,16,192)$ |
+| D.0 | `LambdaWindowPooling` | $(16B,256)$ | $(16B,32)$ |
+| D.1 | `tokenizer` ($k{=}3/5/7$ strided) | $(16B,1,32)$ | $(16B,192,32)$ |
+| D.2 | `+ spec_pos_embed`, prepend `spec_cls` | $(16B,32,192)$ | $(16B,33,192)$ |
+| D.3 | `spectral_blocks` ($\times2$, $+\lambda$-bias) | $(16B,33,192)$ | $(16B,33,192)$ |
+| D.4 | token 0, reshape | $(16B,33,192)$ | $(B,16,192)$ |
 | D.5 | prepend `spatial_cls` | $(B,16,192)$ | $(B,17,192)$ |
 | D.6 | `spatial_blocks` ($\times2$) | $(B,17,192)$ | $(B,17,192)$ |
 | D.7 | token 0 → `norm` → `proj` | $(B,192)$ | $\mathbf{b}_D\,(B,256)$ |
@@ -697,30 +879,38 @@ Input contract: $x\in\mathbb{R}^{B\times40\times64\times64}$, `float32`.
 
 ## 3.7 Parameter budget
 
-Measured on the shipped configuration (`configs/model/quadnet_v4_audited.yaml`):
+`SpectralSeedNet`'s budget is in §3.0. `SpectralQuadNet`'s, measured on both shipped
+compositions:
 
-| Component | Parameters | Share |
+| Component | @ 256 bands (`quadnet_full256`) | @ 40 bands (`quadnet_audited`) |
 |---|---:|---:|
-| `se` (MaskedSpectralECA) | 6 | 0.00 % |
-| `wl_pe_cnn` (buffer only, shared) | 0 | 0.00 % |
-| `branch_a` — Spectral Profile | 603,089 | 11.6 % |
-| `branch_b` — Index Bank | 94,896 | 1.8 % |
-| `branch_c` — Spatial CNN | 2,230,646 | 42.9 % |
-| `branch_d` — SpecFormer | 1,241,640 | 23.9 % |
-| `morphology_embed` | 17,216 | 0.3 % |
-| `cross_interaction` — fusion | 496,005 | 9.6 % |
-| `aux_head_{a,b,c,d}` — $4\times44{,}506$ | 178,024 | 3.4 % |
-| `embed_net` | 263,936 | 5.1 % |
-| `arcface_head` ($270\times256$) | 69,120 | 1.3 % |
-| **Total (all trainable)** | **5,194,578** | 100 % |
+| `se` (MaskedSpectralECA) | 10 | 6 |
+| `wl_pe_cnn` (buffer only, shared) | 0 | 0 |
+| `branch_a` — Spectral Profile | 603,089 | 603,089 |
+| `branch_b` — Index Bank | 122,544 | 94,896 |
+| `branch_c` — Spatial CNN | 2,268,662 | 2,230,646 |
+| `branch_d` — SpecFormer | 1,241,640 | 1,241,640 |
+| `morphology_embed` | 17,216 | 17,216 |
+| `cross_interaction` — fusion | 496,005 | 496,005 |
+| `aux_head_{a,b,c,d}` — $4\times44{,}506$ | 178,024 | 178,024 |
+| `embed_net` | 263,936 | 263,936 |
+| `arcface_head` ($270\times256$) | 69,120 | 69,120 |
+| **Total (all trainable)** | **5,260,246** | **5,194,578** |
 
-Branch C (the joint spectral-spatial CNN) accounts for the largest single share of the budget
-(42.9 %), followed by Branch D's SpecFormer (23.9 %) and Branch A's spectral-profile stem
-(11.6 %); fusion, the two spectral branches' MLP heads and the auxiliary/embedding stack make up
-the remainder. Checkpoint-persisted buffer elements: 25,013 (state\_dict element total:
-5,219,591). A further $\sim$253k buffer elements exist at runtime but are **not** persisted —
-dominated by `ContinuumDepths`' four $(40,40,40)$ chord-interpolation tensors, recomputed from
-the wavelength grid on every construction rather than checkpointed.
+Only three components move with the band count, and each by a documented amount: Branch B's
+index bank ($2 \times 64 \times C$), Branch C's fold ($64 \times$ `folded_depth` input
+channels) and stage-1 kernel, and the ECA gate's kernel width. Branch A's cost is independent
+of $C$ because `LambdaConv1d` *generates* its kernel from $\Delta\lambda$ rather than learning
+one weight per band index; Branch D's is independent because `specf_tokens` sets the token
+count directly. **That invariance is the point of §3.2's two wavelength mechanisms** — it is
+what lets the same architecture be the primary 256-band network and every reduced ablation arm
+without a parameter budget that swings with $k$.
+
+Branch C accounts for the largest single share (43.13 % at 256 bands), followed by Branch D's
+SpecFormer (23.60 %) and Branch A's spectral-profile stem (11.47 %). Runtime buffers grew with
+the band count where they are $O(C)$ or $O(C^2)$ — the derivative operators are $(C,C)$ — and
+**shrank** where they were $O(C^3)$: `ContinuumDepths` no longer holds any dense chord tensor
+at all (§3.0(b)), which is what makes the full cube feasible rather than merely expressible.
 
 ---
 
@@ -750,13 +940,14 @@ the wavelength grid on every construction rather than checkpointed.
    model's whole life. LayerNorm and `LambdaConv1d`'s internal `kernel_mlp` LayerNorm are also
    left at PyTorch defaults, deliberately — it keeps the generated-kernel scale a known constant.
 5. **Buffers travel — except where explicitly non-persistent.** `wl_pe_cnn.pe` /
-   `branch_a.wl_pe_module.pe` (object-identity-shared, $(40,96)$), `branch_a.derivatives.{d1_op,
-   d2_op}` $(40,40)$ each, `branch_a.stem.0.{nbr,offsets,features.omega}`,
+   `branch_a.wl_pe_module.pe` (object-identity-shared, $(C,96)$), `branch_a.derivatives.{d1_op,
+   d2_op}` $(C,C)$ each, `branch_a.stem.0.{nbr,offsets,features.omega}`,
    `branch_d.spec_pos_embed`, `branch_d.lambda_bias.features.omega`, and
-   `arcface_head.{margins,confusion}` are `register_buffer`s and part of `state_dict()`.
-   `branch_b`'s `ContinuumDepths` hull-interpolation weights and `branch_d`'s
-   `LambdaWindowPooling.{token_wl,pool}` are registered `persistent=False` — deterministic
-   functions of the wavelength grid, recomputed on load rather than stored.
+   `arcface_head.{margins,confusion}` are `register_buffer`s and part of `state_dict()` — they
+   are the record of *which* wavelength grid a checkpoint was trained on, which is exactly the
+   kind of drift the gate suite exists to catch. `branch_b`'s `ContinuumDepths.{lam,order}` and
+   `branch_d`'s `LambdaWindowPooling.{token_wl,pool}` are registered `persistent=False` —
+   deterministic functions of that same grid, recomputed on load rather than stored.
 6. **`ModelEMA.state_dict()` is the shadow's**, so the shadow must carry the identical key
    structure — asserted for all three stages. Buffers are copied outright at each EMA update,
    never averaged. `ModelEMA.update` requires the **unwrapped** module — passing a DDP- or
@@ -775,15 +966,34 @@ the wavelength grid on every construction rather than checkpointed.
    logits) — so a checkpoint written under either path loads under the other, and a resumed run
    may legitimately change device and change paths with it.
    `06_EXECUTION_AND_HARDWARE.md` §6.2 has the measurements and the defaults.
+9. **Nothing is sized for one band count.** Both networks build from `data.num_bands` alone:
+   the stem's spectral strides and kernel depths are derived (§3.0(a)), the continuum hull's
+   state is $O(C)$ (§3.0(b)), the index bank is $2 n_{\text{idx}} C$, the derivative operators
+   are $(C,C)$, the ECA kernel width is $f(\log_2 C)$, and Branch D's token count is configured
+   rather than derived. `data/mmap_store.py::band_geometry` refuses to start a run whose cube,
+   wavelength CSV and `data.num_bands` disagree, so a mismatch is a named error at startup
+   instead of a shape error inside a branch.
+10. **The audited replica is reproduced tensor for tensor.** Every derivation above returns the
+   pre-revision behaviour at $C = 40$, and `scripts/capture_golden.py --verify` proves it:
+   `v3/logits match (max |Δ| = 0.000e+00)` and `v3/init digests match (306 tensors)`. That is
+   the property that keeps the band-selection ablation arms measuring the band count rather
+   than an architecture change that travelled with it.
 
-### Config keys — full coverage, one call-site-level exception
+### Config keys — full coverage
 
 `tests/unit/test_config_wiring.py` asserts **every** `cfg.model.*` key is either
 forward-observable (perturbing it changes eval-mode logits), train-mode-only observable (a
 dropout rate), or has an explicit, named reason it cannot be (`branch_drop_prob`: eval never
 masks; `subcenter_tau_final`: the endpoint of an epoch-driven schedule, not a constructor
 argument; `subcenter_balance_weight`: read by the loss, not the model). There is no known dead
-`cfg.model.*` key today. One call-site-level parameter — not a config key — is unused:
-`SpectralQuadNet` computes `stride = cfg.model.specf_patch // 2` and passes it to
-`SpecFormerBranch.__init__`, but the branch derives its token count directly from `patch_size`
-and never reads the `stride` argument it receives.
+`cfg.model.*` key today, and no unread constructor argument either: the `stride` parameter
+`SpectralQuadNet` used to compute as `specf_patch // 2` and pass to `SpecFormerBranch` — which
+never read it — is gone at both ends, and `specf_patch` itself has been replaced by
+`specf_tokens`, which the branch consumes directly.
+
+Two keys carry the 256-band design and are worth stating explicitly:
+
+| Key | Default | What it does |
+|---|---:|---|
+| `model.stem_folded_depth` | 8 | The spectral depth the 3-D stem folds into channels. The three spectral strides and their kernel depths are **derived** from this and `data.num_bands` (§3.0(a)). At 8 the derivation returns the audited $(2,2,2)$ on a 40-band input. |
+| `model.specf_tokens` | 10 / 32 | Branch D's λ-window count, set **directly**. 10 on the audited replica, 32 in `experiment/quadnet_full256`. |
