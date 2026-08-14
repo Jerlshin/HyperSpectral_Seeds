@@ -186,10 +186,15 @@ class ModelConfig:
     #: (N-1c); §3.2 FE-1 nominates it as κ_φ's width rather than deleting it,
     #: and T3-5 wires it there.
     wl_embed_dim: int = MISSING
-    #: BR-4(iii). Token count is ``num_bands // (specf_patch // 2)``, so the
-    #: shipped 8 gives the 10 λ-uniform windows the old index stride of 4
-    #: produced — on a wavelength-uniform axis instead of an index one.
-    specf_patch: int = MISSING
+    #: BR-4(iii). Number of equal-width λ windows Branch D tokenises into —
+    #: **directly**, not as ``num_bands // (specf_tokens // 2)``.
+    #:
+    #: The derived form contradicted the property it was introduced for: BR-4's
+    #: claim is that token *t* denotes the same physical spectral region at any
+    #: band count, and a token count that scales with the band count makes token
+    #: *t* mean a 15 nm window at k = 40 and a 2.4 nm one at k = 256. The window
+    #: count is a spectral-resolution choice, so it is configured as one.
+    specf_tokens: int = MISSING
     specf_dim: int = MISSING
     specf_heads: int = MISSING
     specf_layers: int = MISSING
@@ -221,6 +226,17 @@ class ModelConfig:
     #: the ``64 * depth`` channels entering the fold is a (spectral position x
     #: feature) pair.
     stem_channels: int = MISSING
+    #: BR-3, 256-band native. Spectral depth the 3-D stem reduces the band axis
+    #: to before folding it into channels. The stem's three spectral strides are
+    #: **derived** from this and ``data.num_bands`` by
+    #: :func:`~spectralquadnet.models.branches.spatial_cnn.spectral_stride_schedule`,
+    #: rather than being three hardcoded halvings that fold a 256-band cube at
+    #: depth 32 and a 40-band one at depth 5. At 8 the derivation reproduces the
+    #: audited ``(2, 2, 2)`` schedule exactly on a 40-band input and gives
+    #: ``(8, 2, 2)`` on the full cube — one design, two band counts, no special
+    #: case. Lower it to buy compute at the cost of spectral resolution reaching
+    #: the tail.
+    stem_folded_depth: int = MISSING
     #: FU-1(b). Rank ``r`` of the bilinear projections ``U_m``. A full bilinear
     #: pool over five modalities would be ``10 * d ** 2``; this is ``5 * d * r``.
     fusion_rank: int = MISSING

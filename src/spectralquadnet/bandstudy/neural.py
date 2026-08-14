@@ -28,9 +28,11 @@ training run changes, which is what makes the arms comparable.
 Every arm's other overrides are held identical on purpose, with two unavoidable
 exceptions that are functions of k and are recorded on the spec:
 ``data.num_bands`` (it *is* the treatment) and the two augmentation widths that
-are expressed in bands — a spectral CutMix window of 8 is meaningless at k = 5,
-so both are clamped below k and the clamped value is written into the arm's
-overrides where a reader can see it.
+are expressed in bands — a spectral CutMix window is a fixed share of the
+spectrum, not a fixed number of bands — so both are rescaled to the budget and
+the rescaled value is written into the arm's overrides where a reader can see
+it. At k = 256 the rescaling returns the primary config's own values, so the
+unreduced reference arm *is* the primary pipeline.
 """
 
 from __future__ import annotations
@@ -43,6 +45,7 @@ from typing import Any
 
 from spectralquadnet.bandstudy.config import BandStudyConfig, StageResult
 from spectralquadnet.bandstudy.pipeline import band_file, wavelength_file
+from spectralquadnet.data.datasets import band_augmentation_widths
 from spectralquadnet.experiments.registry import DEFAULT_CONFIG
 from spectralquadnet.experiments.runner import RunSpec, plan, run_all
 
@@ -76,19 +79,22 @@ class NeuralArm:
         return f"{self.method}_k{self.budget}"
 
 
-def _clamped_aug(budget: int) -> dict[str, int]:
-    """Augmentation widths that are expressed in bands, clamped below ``k``.
+def _scaled_aug(budget: int) -> dict[str, int]:
+    """Augmentation widths that are expressed in bands, rescaled to ``k``.
 
-    ``cutmix_bands=8`` on a 5-band input swaps the entire spectrum, which is not
-    a CutMix — it is a relabelling — and ``max_cutout_bands=3`` on 3 bands zeroes
-    the input. Both are clamped to a fraction of the budget so the augmentation
-    means the same thing at every budget, and the clamped values appear in the
+    ``cutmix_bands=51`` on a 5-band input swaps the entire spectrum, which is not
+    a CutMix — it is a relabelling — and the primary path's ``max_cutout_bands``
+    would zero every band of it. Both are therefore taken as a fixed *fraction*
+    of the budget by
+    :func:`~spectralquadnet.data.datasets.band_augmentation_widths`, so the
+    augmentation removes the same share of the spectral axis at every budget and
+    the arms differ in the band count alone. The scaled values appear in the
     printed override list rather than being applied invisibly.
+
+    At ``k = 256`` this reproduces the primary config's own ``(51, 19)``, so the
+    unreduced reference arm is the primary pipeline and not a near-miss of it.
     """
-    return {
-        "data.cutmix_bands": max(1, min(8, budget // 4 or 1)),
-        "data.max_cutout_bands": max(1, min(3, budget // 8 or 1)),
-    }
+    return {f"data.{key}": value for key, value in band_augmentation_widths(budget).items()}
 
 
 def build_specs(
@@ -131,7 +137,7 @@ def build_specs(
             f"data.band_indices_path={bands}",
             f"data.wavelength_path={wavelengths}",
             f"data.num_bands={arm.budget}",
-            *[f"{k}={v}" for k, v in _clamped_aug(arm.budget).items()],
+            *[f"{k}={v}" for k, v in _scaled_aug(arm.budget).items()],
         ]
         for seed in seeds:
             specs.append(

@@ -109,7 +109,7 @@ def test_the_guard_passes_a_genuinely_disjoint_grouped_split() -> None:
 
 
 def test_a_stratified_run_is_warned_that_its_number_is_a_mixture() -> None:
-    cfg = load_experiment_config(overrides=["data=spa40_90class_stratified"])
+    cfg = load_experiment_config(overrides=["data=hsi256_stratified"])
     labels, groups = _two_bundles_per_class()
     splits = grouped_split(labels, groups, eval_frac=0.30, calib_frac=0.15)
     recorder = _Recorder()
@@ -138,9 +138,14 @@ def test_the_default_selects_on_calib_and_reports_val_test(cfg_default) -> None:
 
 
 def test_the_stratified_contrast_arm_differs_in_exactly_one_thing() -> None:
-    """A1's two arms must differ in the split and nothing else."""
-    grouped = load_experiment_config(overrides=["data=spa40_90class_pfix"])
-    strat = load_experiment_config(overrides=["data=spa40_90class_stratified"])
+    """A1's two arms must differ in the split and nothing else.
+
+    Including the band count: an A1 whose arms also differed in the input
+    representation would measure the two together and attribute the sum to the
+    split, which is the shape of the defect A1 exists to quantify.
+    """
+    grouped = load_experiment_config(overrides=["data=hsi256_grouped"])
+    strat = load_experiment_config(overrides=["data=hsi256_stratified"])
     assert grouped.data.split_scheme != strat.data.split_scheme
     for key in (
         "calib_frac",
@@ -193,3 +198,84 @@ def test_the_clip_threshold_was_raised_but_the_lr_was_not_co_tuned(cfg_default) 
     audited = load_experiment_config(AUDITED_EXPERIMENT)
     assert float(cfg_default.grad_clip) == 5.0
     assert float(cfg_default.single.max_lr) == float(audited.stage1.max_lr)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  The primary methodology — one unambiguous path, asserted as config
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_the_default_experiment_reads_every_acquired_band(cfg_default) -> None:
+    """No band selection, no reduction, no index-file subsetting on the primary path.
+
+    This is the study's methodology stated as an assertion rather than as prose,
+    so a config change that quietly reintroduced a reduction would fail here
+    instead of being discovered in a results table months later.
+    """
+    assert cfg_default.data.num_bands == 256
+    assert not str(cfg_default.data.band_indices_path)
+    assert cfg_default.data.patches_data.endswith("/patches.npy")
+    assert cfg_default.data.wavelength_path.endswith("/wavelengths.csv")
+
+
+def test_no_reduced_band_config_can_be_reached_without_naming_it() -> None:
+    """Every reduced arm lives under the `ablation/` group and must be asked for."""
+    from spectralquadnet.config.compose import config_dir
+
+    data_group = config_dir() / "data"
+    primary = sorted(p.stem for p in data_group.glob("*.yaml"))
+    reduced = sorted(p.stem for p in (data_group / "ablation").glob("*.yaml"))
+
+    assert primary == ["hsi256_grouped", "hsi256_stratified"], primary
+    assert reduced, "the band-selection pathway's arms must still ship"
+    for name in primary:
+        cfg = load_experiment_config(overrides=[f"data={name}"])
+        assert cfg.data.num_bands == 256, name
+        assert not str(cfg.data.band_indices_path), name
+
+
+def test_every_shipped_experiment_declares_its_spectral_regime() -> None:
+    """The three composition roots, and which input each is a claim about."""
+    from spectralquadnet.config.compose import (
+        AUDITED_EXPERIMENT,
+        DEFAULT_EXPERIMENT,
+        QUADNET_FULL256_EXPERIMENT,
+    )
+
+    expected = {
+        DEFAULT_EXPERIMENT: (256, "spectral_seed_net", "grouped"),
+        QUADNET_FULL256_EXPERIMENT: (256, "spectral_quadnet", "grouped"),
+        # The frozen historical replica — the only shipped experiment that is not
+        # 256 bands, and the only one whose numbers describe the audited run.
+        AUDITED_EXPERIMENT: (40, "spectral_quadnet", "stratified"),
+    }
+    for name, (bands, arch, scheme) in expected.items():
+        cfg = load_experiment_config(name)
+        assert cfg.data.num_bands == bands, name
+        assert cfg.model.arch == arch, name
+        assert cfg.data.split_scheme == scheme, name
+
+
+def test_the_four_branch_control_differs_from_the_default_in_the_architecture() -> None:
+    """A3/A4/A5/A8 run against this, so everything else must be held identical."""
+    from spectralquadnet.config.compose import QUADNET_FULL256_EXPERIMENT
+
+    default = load_experiment_config()
+    control = load_experiment_config(QUADNET_FULL256_EXPERIMENT)
+
+    assert default.model.arch != control.model.arch
+    for group, keys in {
+        "data": ("num_bands", "patches_data", "split_scheme", "calib_frac", "cutmix_bands"),
+        "evaluation": ("select_split", "report_split", "tta", "bootstrap_samples"),
+        "single": ("epochs", "batch", "max_lr", "mixup", "mixup_epochs", "arcface_m"),
+    }.items():
+        for key in keys:
+            assert getattr(getattr(default, group), key) == getattr(
+                getattr(control, group), key
+            ), f"{group}.{key}"
+    assert default.pipeline == control.pipeline == "single"
+    assert float(default.grad_clip) == float(control.grad_clip)
+    # And the two confounds the audited model config carries are off here.
+    assert list(control.model.branch_drop_profile) == [1.0, 1.0, 1.0, 1.0]
+    assert control.model.per_class_margin is False
+    assert control.model.pairwise_penalty is False

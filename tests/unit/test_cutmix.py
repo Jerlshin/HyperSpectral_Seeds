@@ -312,3 +312,51 @@ def test_the_class_index_is_only_built_when_it_is_needed() -> None:
     """Val/test datasets and the ``none`` profile must not pay for the bookkeeping."""
     assert make_dataset("none")._by_class is None
     assert make_dataset("heavy")._by_class is not None
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Band-count scaling — the augmentation must mean one thing across the grid
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_the_band_widths_are_a_fixed_share_of_the_spectral_axis() -> None:
+    """A CutMix window is a share of the spectrum, not a count of bands.
+
+    Left as literals, ``cutmix_bands = 8`` is a fifth of the 40-band SPA subset
+    and a thirtieth of the acquired 256-band cube — so the primary pipeline and
+    every band-selection ablation arm would be running a different augmentation
+    while claiming to differ only in the band count.
+    """
+    from spectralquadnet.data.datasets import band_augmentation_widths
+
+    assert band_augmentation_widths(40) == {"cutmix_bands": 8, "max_cutout_bands": 3}
+    assert band_augmentation_widths(256) == {"cutmix_bands": 51, "max_cutout_bands": 19}
+
+    # Monotone, and never degenerate: a window of 0 bands is not an augmentation
+    # and a window of every band is a relabelling.
+    for k in (1, 2, 3, 5, 8, 16, 32, 64, 100, 128, 256):
+        widths = band_augmentation_widths(k)
+        assert 1 <= widths["cutmix_bands"] <= k, k
+        assert 1 <= widths["max_cutout_bands"] <= k, k
+
+
+@pytest.mark.parametrize(
+    ("config", "bands"),
+    [
+        ("data=hsi256_grouped", 256),
+        ("data=hsi256_stratified", 256),
+        ("data=ablation/spa40_grouped", 40),
+        ("data=ablation/spa40_stratified", 40),
+        ("data=ablation/spa40_audited", 40),
+    ],
+)
+def test_every_shipped_data_config_uses_the_scaled_widths(config: str, bands: int) -> None:
+    """The YAML and the rule are checked against each other, in both directions."""
+    from spectralquadnet.config.compose import load_experiment_config
+    from spectralquadnet.data.datasets import band_augmentation_widths
+
+    cfg = load_experiment_config(overrides=[config])
+    assert cfg.data.num_bands == bands
+    expected = band_augmentation_widths(bands)
+    assert cfg.data.cutmix_bands == expected["cutmix_bands"], config
+    assert cfg.data.max_cutout_bands == expected["max_cutout_bands"], config

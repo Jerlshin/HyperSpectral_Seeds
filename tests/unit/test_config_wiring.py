@@ -43,7 +43,7 @@ PERTURBATIONS: dict[str, object] = {
     "subcenter_tau_init": 0.90,
     "aux_head_hidden": 96,
     "wl_embed_dim": 8,
-    "specf_patch": 4,
+    "specf_tokens": 4,
     "specf_dim": 96,
     "specf_heads": 4,
     "specf_layers": 2,
@@ -53,6 +53,10 @@ PERTURBATIONS: dict[str, object] = {
     "continuum_depths": 8,
     "n_morphometrics": 4,
     "stem_channels": 96,
+    # 256-band native. At the audited 40 bands the shipped 8 gives the (2,2,2)
+    # schedule and a depth-5 fold; 4 gives (4,2,2) and a depth-3 one, so the stem
+    # is a different operator and the logits must say so.
+    "stem_folded_depth": 4,
     "fusion_rank": 64,
     "fusion_gate_hidden": 64,
     # ── Added by CHANGES ──────────────────────────────────────────────
@@ -164,7 +168,7 @@ def test_changing_the_key_changes_the_forward_pass(key, cfg, physical_wl, probe)
 
     Construction is re-seeded identically on both sides, so a difference cannot
     come from the RNG — only from the key. This is the check that would have
-    failed on ``fusion_heads``, ``specf_drop``, ``specf_patch`` and
+    failed on ``fusion_heads``, ``specf_drop``, ``specf_tokens`` and
     ``wl_embed_dim`` from the day each was added.
     """
     torch.manual_seed(0)

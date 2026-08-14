@@ -1,0 +1,93 @@
+# @package _global_
+# ══════════════════════════════════════════════════════════════════════
+#  quadnet_full256 — the four-branch CONTROL ARM, on the primary protocol.
+#
+#  `SpectralQuadNet` on the same 256-band cube, the same grouped split, the same
+#  calibration/reporting protocol and the same single-stage curriculum as
+#  `seednet_full256`. It differs from the primary experiment in the
+#  **architecture and nothing else**, which is what makes the comparison a
+#  measurement of the architecture.
+#
+#  This is the arm A3 (is the four-branch design justified?), A4 (Branch A's
+#  grid), A5 (the bilinear fusion) and A8 (do Stages 2-3 add anything?) run on.
+#  Before this config existed those ablations composed `quadnet_audited`, whose
+#  split is `stratified` and whose bands are the 40-band SPA subset — so every
+#  arm silently changed the protocol *and* the input representation alongside
+#  the thing it meant to vary. That is the same defect the audit was about.
+#
+#  For the historical, bit-for-bit reproduction of the audited run, see
+#  `quadnet_audited.yaml`. This file is not that, and is not frozen.
+#
+#  Usage:
+#      python train.py --config-name experiment/quadnet_full256
+#      python -m spectralquadnet.experiments.cli ablate A3
+# ══════════════════════════════════════════════════════════════════════
+defaults:
+  - /base_experiment
+  - /data: hsi256_grouped
+  - /model: quadnet_v4_audited
+  - /single: one_stage
+  - /stage1: progressive_3phase
+  - /stage2: arcface_supcon
+  - /stage3: sam_swa
+  - /evaluation: held_out_once
+  - /tracking: console
+  - _self_
+
+pipeline: single
+
+run_name: quadnet_full256_f${data.split_fold}_s${seed}
+output_root: outputs
+output_dir: ${output_root}/${run_name}
+
+# ── The three places this arm departs from `quadnet_v4_audited.yaml` ──
+# Each one is a confound the audit identified, removed so the branch comparison
+# measures the branches. The architecture — four branches, the bilinear pool,
+# four auxiliary heads, K=3 sub-centres — is otherwise untouched.
+model:
+  # A3's precondition. The audited `[0.75, 0.75, 0, 0.75]` never dropped Branch
+  # C and dropped the other three 15% of the time, which taught the fusion gate
+  # to route onto the one input that never vanishes — so Branch C's 87.4%
+  # end-state influence is confounded (CHANGES §5.2). Symmetric here.
+  branch_drop_profile: [1.0, 1.0, 1.0, 1.0]
+  # IC-9. Both were active in the audited run and both are unjustified by it:
+  # the per-class margin vector took over after the selected checkpoint, and the
+  # pairwise penalty was fitted on the split that selected it. A7 measures each
+  # in isolation; they are off in every other arm, so they are off here.
+  per_class_margin: false
+  pairwise_penalty: false
+  # 32 λ-uniform windows of ~19 nm over the full cube (~8 bands each). The
+  # audited replica's 10 windows were ~15 nm at k = 40; a *window* is a physical
+  # region, so the count is set from the spectral resolution wanted, not from k.
+  specf_tokens: 32
+
+# ── Shared training knobs — identical to `seednet_full256` ────────────
+weight_decay: 2.0e-4
+grad_clip: 5.0
+ema_decay: 0.999
+# Four auxiliary heads exist on this architecture, so GradNorm is *expressible*
+# here in a way it is not on SpectralSeedNet. It stays off: IC-5's finding is
+# that the controller saturates at its clip bounds, and an arm that re-enabled
+# it would differ from the primary experiment in two things.
+aux_gradnorm_alpha: 0.0
+
+tta_spatial: 8
+tta_spectral: 4
+
+device: auto
+seed: 42
+
+runtime:
+  allow_tf32: false
+  num_workers: -1
+  compile: auto
+  amp_dtype: bf16
+
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: ${output_dir}/hydra/${now:%Y-%m-%d_%H-%M-%S}
+  sweep:
+    dir: ${output_root}/multirun/${now:%Y-%m-%d_%H-%M-%S}
+    subdir: ${hydra.job.num}

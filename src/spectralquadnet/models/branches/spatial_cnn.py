@@ -8,24 +8,52 @@ map. The function "this absorption feature, in this part of the seed" was not in
 the hypothesis class of any module in the model.
 
 BR-3 replaces the two 1×1s with a factorised 3-D stem that keeps the spectral
-axis alive for three stages before folding it::
+axis alive for three stages before folding it. On the primary 256-band input::
 
-    x  (B, 1, 40, 64, 64)
-     ├─ Conv3d(1→16,  k=(7,3,3), s=(2,1,1))  → (B,16,20,64,64)
-     ├─ Conv3d(16→32, k=(5,3,3), s=(2,2,2))  → (B,32,10,32,32)
-     ├─ Conv3d(32→64, k=(5,3,3), s=(2,2,2))  → (B,64, 5,16,16)
-     └─ reshape (B, 320, 16, 16) → 1×1 → (B,192,16,16)
+    x  (B, 1, 256, 64, 64)
+     ├─ Conv3d(1→16,  k=(15,3,3), s=(8,1,1))  → (B,16,32,64,64)
+     ├─ Conv3d(16→32, k=( 5,3,3), s=(2,2,2))  → (B,32,16,32,32)
+     ├─ Conv3d(32→64, k=( 5,3,3), s=(2,2,2))  → (B,64, 8,16,16)
+     └─ reshape (B, 512, 16, 16) → 1×1 → (B,192,16,16)
           └─ the existing ResBlock2D / CBAM tail
 
 The spectral axis is *folded* into the channel axis at the end, not deleted at
-the start: each of the 320 channels entering the 1×1 is a (spectral position ×
+the start: each of the 512 channels entering the 1×1 is a (spectral position ×
 learned feature) pair, so the tail's 3×3 kernels operate on features that still
 carry where in the spectrum they came from.
 
-The stem costs ≈ 116 k parameters, comfortably inside the ≈ 600 k BR-1 freed
-from Branch B, and the branch as a whole moves from 1.69 M to ≈ 2.23 M. That is
-the reallocation §3.8 is about: Branch C is the only branch whose input is not
-reconstructible from any other, and it was the one starved of capacity.
+Why the spectral strides are derived rather than fixed
+─────────────────────────────────────────────────────
+The stem's cost is dominated by its **first** stage, which runs at the full
+64×64 spatial resolution, and by the fold, whose input width is
+``64 × folded_depth``. A stem with three hardcoded stride-2 spectral steps —
+which is what this module used to be — folds a 256-band cube at depth 32, so
+the fold alone becomes a ``Conv2d(2048 → 192, 1)`` and stage 2 runs on a cube
+6.4× deeper than the design was measured on. That is a reduced-band stem
+carrying a full cube, not a full-cube stem.
+
+:func:`spectral_stride_schedule` instead derives the three spectral strides from
+the band count so that the folded depth lands at or below
+:data:`DEFAULT_FOLDED_DEPTH`, spending the extra reduction in stage 1 where one
+input channel and 16 output channels make it cheapest. At 256 bands that is
+``(8, 2, 2)``; at 40 it is ``(2, 2, 2)``, i.e. **exactly** the audited schedule,
+which is what keeps the retained band-selection arms and the golden regression
+gates comparing like with like.
+
+The kernel depth widens with the stride (:func:`kernel_depth`) so that **every
+band reaches at least one tap**. That is a stronger requirement than ``k >= s``
+and it is the one that bites: at ``s = 8`` a 9-tap kernel with symmetric padding
+covers input indices only up to ``C - s + 4``, so bands 253, 254 and 255 of the
+acquired cube would never be multiplied by anything — silently, since every
+shape still agrees. ``k = 2s - 1`` is the smallest width that closes it, and
+``tests/unit/test_branch_c_stem.py`` asserts the coverage band by band rather
+than trusting the arithmetic.
+
+The stem costs ≈ 216 k parameters at 256 bands (≈ 178 k at 40), comfortably
+inside the ≈ 600 k BR-1 freed from Branch B, and the branch as a whole is
+≈ 2.27 M. That is the reallocation §3.8 is about: Branch C is the only branch
+whose input is not reconstructible from any other, and it was the one starved of
+capacity.
 
 The persisted mask (FE-2 / T3-7) is applied after every stage, so a padded
 region stays exactly zero however deep the stack goes and the CNN can never
@@ -165,13 +193,121 @@ def conv3d_as_conv2d(
     return folded if bias is None else folded + bias.view(1, -1, 1, 1, 1)
 
 
+#: Spectral depth the stem folds into the channel axis, and therefore the
+#: quantity :func:`spectral_stride_schedule` solves for. The fold is a
+#: ``Conv2d(64 * folded_depth → out_channels, 1)``, so this — not the band count
+#: — sets the stem's terminal width; 8 keeps it at 98 k parameters on a 256-band
+#: cube, against 393 k for the un-derived three-halvings schedule.
+DEFAULT_FOLDED_DEPTH: int = 8
+
+#: Base spectral kernel depth of the three stages, before :func:`kernel_depth`
+#: widens any of them to cover its stride. ``(7, 5, 5)`` is the audited stem.
+BASE_KERNEL_DEPTHS: tuple[int, int, int] = (7, 5, 5)
+
+#: Spatial strides of the three stages. Fixed, and deliberately not derived:
+#: they take a 64×64 patch to 16×16, which is the resolution the 2-D tail and
+#: every shape assertion downstream are written against. Only the *spectral*
+#: stride is a function of the band count.
+SPATIAL_STRIDES: tuple[int, int, int] = (1, 2, 2)
+
+
+def spectral_stride_schedule(
+    num_bands: int, folded_depth: int = DEFAULT_FOLDED_DEPTH
+) -> tuple[int, int, int]:
+    """Three spectral strides that bring ``num_bands`` to at most ``folded_depth``.
+
+    The total reduction is the smallest power of two with
+    ``ceil(num_bands / total) <= folded_depth``, distributed so that stages 2
+    and 3 keep the audited halving and **stage 1 absorbs the remainder**. Stage 1
+    is the cheapest place to spend it: it runs at full spatial resolution but
+    with one input channel and sixteen output channels, so a band read there
+    costs a fraction of what it costs after stage 2 has widened the cube.
+
+    The schedule is therefore a smooth function of the band count rather than a
+    special case for 256:
+
+    ==========  =======  ==============  =============
+    num_bands   total    strides         folded depth
+    ==========  =======  ==============  =============
+    8           1        ``(1, 1, 1)``   8
+    16          2        ``(2, 1, 1)``   8
+    40          8        ``(2, 2, 2)``   5
+    100         16       ``(4, 2, 2)``   7
+    256         32       ``(8, 2, 2)``   8
+    ==========  =======  ==============  =============
+
+    The 40-band row is the audited stem, tensor for tensor — which is what lets
+    the retained band-selection arms and the golden gates stay comparable.
+
+    Args:
+        num_bands: Bands entering the stem.
+        folded_depth: Upper bound on the spectral depth reaching the fold.
+
+    Raises:
+        ValueError: ``num_bands`` or ``folded_depth`` is not positive.
+    """
+    if num_bands < 1:
+        raise ValueError(f"num_bands must be >= 1, got {num_bands}")
+    if folded_depth < 1:
+        raise ValueError(f"folded_depth must be >= 1, got {folded_depth}")
+
+    total = 1
+    while -(-num_bands // total) > folded_depth:
+        total *= 2
+
+    stride3 = 2 if total >= 8 else 1
+    stride2 = 2 if total >= 4 else 1
+    return total // (stride2 * stride3), stride2, stride3
+
+
+def kernel_depth(base: int, stride: int) -> int:
+    """The smallest odd kernel depth that is at least ``base`` and reads every band.
+
+    A kernel narrower than its stride steps over bands outright, so a stride-8
+    stage with the audited ``k = 7`` would never look at one band in eight — the
+    cube would be *subsampled*, not reduced, which is precisely the band
+    selection the primary pipeline exists to avoid.
+
+    The bound is ``2 * stride - 1`` rather than the obvious ``stride``, and the
+    difference is the tail of the axis. With an odd kernel and the symmetric
+    ``k // 2`` padding the stem uses, the output depth is ``ceil(C / s)`` and the
+    last output position reads input indices up to
+    ``C - s + (k - 1) / 2``. Covering index ``C - 1`` therefore needs
+    ``(k - 1) / 2 >= s - 1``. At ``s = 8, k = 9`` that fails by three, and bands
+    253, 254 and 255 of the acquired cube would reach no parameter at all —
+    silently, since every shape still agrees.
+
+    ``2 * stride - 1`` is already odd, so the result is odd whenever ``base`` is.
+    At the audited ``(2, 2, 2)`` schedule this returns ``(7, 5, 5)`` unchanged;
+    on the full cube's ``(8, 2, 2)`` it returns ``(15, 5, 5)``.
+
+    :func:`~spectralquadnet.models.branches.spatial_cnn.SpectralSpatialStem3D`'s
+    coverage is asserted directly in ``tests/unit/test_branch_c_stem.py`` by
+    pushing a one-hot spectrum through the real convolution, band by band.
+    """
+    k = max(int(base), 2 * int(stride) - 1)
+    return k if k % 2 else k + 1
+
+
 class SpectralSpatialStem3D(nn.Module):
     """Three strided 3-D convolutions, then a 1×1 fold of the spectral axis.
 
     Only the first stage leaves the spatial resolution alone: the spectral axis
-    is halved first, so the expensive 3-D kernels run on a shrinking cube while
+    is reduced first, so the expensive 3-D kernels run on a shrinking cube while
     the 64×64 spatial detail is still intact when the widest spectral kernel
-    (``k = 7`` bands) passes over it.
+    passes over it.
+
+    The three spectral strides come from :func:`spectral_stride_schedule` and the
+    matching kernel depths from :func:`kernel_depth`, so the same class is native
+    at 8, 40, 100 or 256 bands rather than tuned for one of them. Pass
+    ``spectral_strides`` to override the derivation — the band-count ablations
+    do not, and nothing on the primary path does either.
+
+    Attributes:
+        spectral_strides: The realised ``(s1, s2, s3)``.
+        kernel_depths: The realised ``(k1, k2, k3)``.
+        folded_depth: Spectral depth reaching the fold; the fold's input width
+            is ``64 * folded_depth``.
     """
 
     #: Route the three ``Conv3d`` stages through :func:`conv3d_as_conv2d`.
@@ -183,30 +319,51 @@ class SpectralSpatialStem3D(nn.Module):
     #: is the one place that turns it on, once, from the resolved runtime plan.
     decompose_conv3d: bool = False
 
-    def __init__(self, num_bands: int = 40, out_channels: int = 192) -> None:
+    def __init__(
+        self,
+        num_bands: int = 256,
+        out_channels: int = 192,
+        folded_depth: int = DEFAULT_FOLDED_DEPTH,
+        spectral_strides: tuple[int, int, int] | None = None,
+    ) -> None:
         super().__init__()
         self.num_bands = int(num_bands)
-
-        self.stage1 = nn.Sequential(
-            nn.Conv3d(1, 16, (7, 3, 3), stride=(2, 1, 1), padding=(3, 1, 1), bias=False),
-            nn.GroupNorm(4, 16),
-            nn.GELU(),
+        self.spectral_strides: tuple[int, int, int] = (
+            spectral_stride_schedule(self.num_bands, folded_depth)
+            if spectral_strides is None
+            else (int(spectral_strides[0]), int(spectral_strides[1]), int(spectral_strides[2]))
         )
-        self.stage2 = nn.Sequential(
-            nn.Conv3d(16, 32, (5, 3, 3), stride=(2, 2, 2), padding=(2, 1, 1), bias=False),
-            nn.GroupNorm(8, 32),
-            nn.GELU(),
-        )
-        self.stage3 = nn.Sequential(
-            nn.Conv3d(32, 64, (5, 3, 3), stride=(2, 2, 2), padding=(2, 1, 1), bias=False),
-            nn.GroupNorm(8, 64),
-            nn.GELU(),
+        self.kernel_depths: tuple[int, int, int] = (
+            kernel_depth(BASE_KERNEL_DEPTHS[0], self.spectral_strides[0]),
+            kernel_depth(BASE_KERNEL_DEPTHS[1], self.spectral_strides[1]),
+            kernel_depth(BASE_KERNEL_DEPTHS[2], self.spectral_strides[2]),
         )
 
-        # Spectral depth after three stride-2 spectral steps, e.g. 40 → 20 → 10 → 5.
+        channels = ((1, 16, 4), (16, 32, 8), (32, 64, 8))
+        stages = [
+            nn.Sequential(
+                nn.Conv3d(
+                    c_in,
+                    c_out,
+                    (k, 3, 3),
+                    stride=(s, s_xy, s_xy),
+                    padding=(k // 2, 1, 1),
+                    bias=False,
+                ),
+                nn.GroupNorm(groups, c_out),
+                nn.GELU(),
+            )
+            for (c_in, c_out, groups), k, s, s_xy in zip(
+                channels, self.kernel_depths, self.spectral_strides, SPATIAL_STRIDES, strict=True
+            )
+        ]
+        self.stage1, self.stage2, self.stage3 = stages
+
+        # Odd kernels padded by `k // 2` give `ceil(depth / stride)` exactly, so
+        # the realised depth is a closed form rather than a simulation.
         depth = self.num_bands
-        for _ in range(3):
-            depth = (depth + 1) // 2
+        for stride in self.spectral_strides:
+            depth = -(-depth // stride)
         self.folded_depth = depth
 
         self.fold = nn.Sequential(
@@ -292,6 +449,8 @@ class SpatialCNNBranch(nn.Module):
         width_mult: A10's capacity lever, scaling the three intermediate
             :data:`TAIL_WIDTHS`. ``1.0`` reproduces the audited branch exactly,
             tensor for tensor.
+        stem_folded_depth: Passed to :class:`SpectralSpatialStem3D`; see
+            :func:`spectral_stride_schedule`.
     """
 
     def __init__(
@@ -300,10 +459,11 @@ class SpatialCNNBranch(nn.Module):
         out_dim: int = 256,
         stem_channels: int = 192,
         width_mult: float = 1.0,
+        stem_folded_depth: int = DEFAULT_FOLDED_DEPTH,
     ) -> None:
         super().__init__()
 
-        self.stem = SpectralSpatialStem3D(num_bands, stem_channels)
+        self.stem = SpectralSpatialStem3D(num_bands, stem_channels, folded_depth=stem_folded_depth)
 
         w1, w2, w3 = (_scaled_width(w, width_mult) for w in TAIL_WIDTHS)
         self.stages = nn.Sequential(

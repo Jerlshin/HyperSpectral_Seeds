@@ -419,7 +419,7 @@ def stage_proxy(cfg: BandStudyConfig) -> StageResult:
     the score is not the score of the data the bands were chosen on; and it is
     not the reported split, so reading it as many times as this stage does
     costs no held-out evidence. That is the whole reason
-    ``configs/data/spa40_90class_pfix.yaml`` carves it.
+    ``configs/data/hsi256_grouped.yaml`` carves it.
     """
     started = time.perf_counter()
     check_or_write_manifest(cfg)

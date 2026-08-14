@@ -1,3 +1,15 @@
+# ══════════════════════════════════════════════════════════════════════
+#  FROZEN HISTORICAL REPLICA — NOT the primary path, and not an ablation arm
+#  either. This file reproduces the *audited run's* input and partition exactly,
+#  and every golden regression digest in `tests/regression/golden/v3/` was
+#  captured against it. Its values are a record, not a configuration: changing
+#  one silently invalidates the gates that make the audit auditable.
+#
+#  Composed only by `configs/experiment/quadnet_audited.yaml` and by
+#  `scripts/capture_golden.py`. For a reduced-band *experiment*, use
+#  `configs/data/ablation/spa40_grouped.yaml`; for the study's primary path, use
+#  `configs/data/hsi256_grouped.yaml`.
+# ══════════════════════════════════════════════════════════════════════
 # 40-band SPA-selected VIS-NIR patches, 90 rice-seed varieties.
 defaults:
   - base_data
@@ -34,10 +46,10 @@ morphology_path: ""
 #
 # Kept because the archived checkpoints were trained and selected on exactly
 # this partition, and because A1 needs it as the leaky arm of the comparison.
-# It is NOT a defensible reporting protocol. Use `spa40_90class_pfix`.
+# It is NOT a defensible reporting protocol.
 #
-# `configs/data/spa40_90class_pfix.yaml` is the same dataset under the P-fix
-# protocol (grouped + calib). Select it with `python train.py data=spa40_90class_pfix`
+# `configs/data/ablation/spa40_grouped.yaml` is the same arrays under the P-fix
+# protocol (grouped + calib). Select it with `python train.py data=ablation/spa40_grouped`
 # once `scripts/prepare_dataset.py` has been re-run to write groups.npy.
 split_scheme: stratified
 split_eval_frac: 0.30

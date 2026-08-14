@@ -8,8 +8,15 @@
 #
 #  This is run `stratified_benchmark_rtx3060` as executed, including the three
 #  runtime overrides that make it incomparable to the shipped defaults. It is
-#  the CONTROL ARM for A1 (protocol), A3 (branches) and A8 (stages), and its
-#  value is that it is unmodified. Do not tidy it.
+#  the HISTORICAL REPLICA: the configuration every golden regression digest in
+#  `tests/regression/golden/v3/` was captured against, and the left-hand side of
+#  the "what did the audit actually measure" comparison. Its value is that it is
+#  unmodified. Do not tidy it.
+#
+#  It is deliberately NOT the arm the branch and curriculum ablations run on.
+#  Those need the four-branch architecture on the *current* protocol and the
+#  *current* input, which is `experiment/quadnet_full256.yaml`; running them
+#  here would vary the split and the band count alongside the treatment.
 #
 #  Everything CHANGES.md says about this configuration is a criticism of it.
 #  It is here to be measured against, not to be run for a headline.
@@ -19,7 +26,7 @@
 # ══════════════════════════════════════════════════════════════════════
 defaults:
   - /base_experiment
-  - /data: spa40_90class
+  - /data: ablation/spa40_audited
   - /model: quadnet_v4_audited
   - /single: one_stage        # composed but unused at pipeline=three_stage
   - /stage1: progressive_3phase
@@ -38,7 +45,7 @@ output_dir: ${output_root}/${run_name}
 weight_decay: 2.0e-4
 # 1.0, as executed. Against backbone pre-clip norms of 25-50, i.e. clipped on
 # essentially every step. `grad_norm/clip_fraction` should read ≈1.0 here, and
-# that contrast against seednet_grouped's <0.2 is IC-6's evidence.
+# that contrast against seednet_full256's <0.2 is IC-6's evidence.
 grad_clip: 1.0
 ema_decay: 0.999
 # 0.5, as executed. Expect `aux_weight/branch_{b,c}` pinned at the 4.0 ceiling

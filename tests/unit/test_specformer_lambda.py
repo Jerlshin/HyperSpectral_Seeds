@@ -40,12 +40,19 @@ def wl() -> torch.Tensor:
     return torch.from_numpy(np.load(path))
 
 
-def _branch(wavelengths: torch.Tensor, patch: int = 8) -> SpecFormerBranch:
+#: The audited λ-window count. Asked for **directly**: before `specf_tokens`
+#: existed, a caller wanting ten windows at two different band counts had to
+#: back-compute two different `specf_patch` values (8 at k=40, 4 at k=20), which
+#: is the same coupling BR-4(iii) removed from the branch itself.
+N_TOKENS = 10
+
+
+def _branch(wavelengths: torch.Tensor, n_tokens: int = N_TOKENS) -> SpecFormerBranch:
     torch.manual_seed(0)
     return SpecFormerBranch(
         physical_wl=wavelengths,
         num_bands=wavelengths.numel(),
-        patch_size=patch,
+        n_tokens=n_tokens,
         d_model=D_MODEL,
         n_heads=HEADS,
         n_layers=4,
@@ -67,9 +74,13 @@ def test_the_branch_transfers_across_band_counts(wl) -> None:
     that window's centre wavelength rather than stored, so the shapes match and
     the meanings match — which is what the pre-Tier-3 learned table could not
     do at either.
+
+    Both branches are built from the **same** ``n_tokens`` at different band
+    counts, which is the point: the window count is a spectral-resolution choice
+    and no longer has to be back-computed from ``k``.
     """
-    forty = _branch(wl, patch=8)
-    twenty = _branch(wl[::2], patch=4)
+    forty = _branch(wl)
+    twenty = _branch(wl[::2])
 
     result = twenty.load_state_dict(forty.state_dict(), strict=True)
 
@@ -86,8 +97,8 @@ def test_a_transferred_branch_agrees_on_a_spectrum_both_can_sample(wl) -> None:
     and must produce identical embeddings — which they can only do if token
     ``t`` covers the same wavelengths in both.
     """
-    forty = _branch(wl, patch=8)
-    twenty = _branch(wl[::2], patch=4)
+    forty = _branch(wl)
+    twenty = _branch(wl[::2])
     twenty.load_state_dict(forty.state_dict(), strict=True)
 
     # A ramp in λ is not constant per window, so use the window index itself:

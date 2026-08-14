@@ -1,18 +1,24 @@
 # @package _global_
 # ══════════════════════════════════════════════════════════════════════
-#  seednet_grouped — THE DEFAULT EXPERIMENT
+#  seednet_full256 — THE PRIMARY EXPERIMENT
 #
-#  SpectralSeedNet, one stage, leave-one-bundle-out protocol, selection on a
-#  calibration split, val ∪ test scored once. CHANGES §16-§19.
+#  SpectralSeedNet on the complete 256-band VIS-NIR cube, one stage,
+#  leave-one-acquisition-bundle-out protocol, selection on a calibration split
+#  carved from train, `val ∪ test` scored once with a bootstrap CI.
+#
+#  This is what `python train.py` runs with no arguments, and it is the only
+#  configuration whose numbers are the study's headline. Everything else in
+#  `configs/` is either a control arm (`quadnet_audited`), a matched contrast
+#  arm (`data=hsi256_stratified`), or an ablation.
 #
 #  Usage:
 #      python train.py
 #      python train.py data.split_fold=1 seed=1
-#      python -m spectralquadnet.experiments.cli protocol --experiment seednet_grouped
+#      python -m spectralquadnet.experiments.cli protocol
 # ══════════════════════════════════════════════════════════════════════
 defaults:
   - /base_experiment
-  - /data: spa40_90class_pfix
+  - /data: hsi256_grouped
   - /model: seed_net
   - /single: one_stage
   # The three-stage groups still have to compose: `pipeline=three_stage`
@@ -28,7 +34,7 @@ defaults:
 pipeline: single
 
 # ── Run identity & output location ────────────────────────────────────
-run_name: seednet_grouped_f${data.split_fold}_s${seed}
+run_name: seednet_full256_f${data.split_fold}_s${seed}
 output_root: outputs
 output_dir: ${output_root}/${run_name}
 
@@ -62,7 +68,9 @@ aux_gradnorm_alpha: 0.0
 # ── Test-time augmentation ─────────────────────────────────────────────
 # 8 D4 spatial + 4 spectral-gain views. Physically correct (a segmented seed
 # has no canonical pose), cheap, and reported SEPARATELY from the untransformed
-# number rather than folded into it.
+# number rather than folded into it. Both are band-count independent: a
+# dihedral transform and a contrast rescaling about the foreground mean mean the
+# same thing on 256 bands as on 40.
 tta_spatial: 8
 tta_spectral: 4
 

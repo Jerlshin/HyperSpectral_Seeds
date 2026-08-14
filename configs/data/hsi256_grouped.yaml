@@ -1,0 +1,95 @@
+# ══════════════════════════════════════════════════════════════════════
+#  THE PRIMARY DATA CONFIGURATION
+#
+#  The complete 256-band VIS-NIR cube, 90 rice varieties, 8,624 single-kernel
+#  64x64 patches, under the leave-one-acquisition-bundle-out protocol.
+#
+#  No band selection. No PCA. No spectral reduction of any kind between
+#  `dataset/patches.npy` and the model's first parameter. Every band the
+#  instrument acquired reaches the network, and every λ-aware operator in the
+#  network is built from the matching 256-row wavelength vector.
+#
+#  Why this is the primary path rather than the 40-band SPA subset it replaces:
+#  both shipped reductions record `"demonstrable": false` in their own elbow
+#  files (CHANGES M-14) — each accuracy curve terminates at its own chosen k, so
+#  the "98% of peak" criterion is satisfied vacuously and neither k was ever
+#  chosen by an experiment that could have returned a different answer. A study
+#  that reports what rice-variety information VIS-NIR hyperspectral imaging
+#  carries must not first discard 84% of the spectrum on an undemonstrated
+#  elbow. The reduced arms are retained in `configs/data/ablation/` and remain
+#  fully runnable; they are ablations of this configuration, not alternatives
+#  to it.
+# ══════════════════════════════════════════════════════════════════════
+defaults:
+  - base_data
+  - _self_
+
+# ── Paths (relative to the process CWD) ────────────────────────────────
+# `patches.npy` and `wavelengths.csv` are the direct products of
+# `python scripts/prepare_dataset.py`; nothing runs between them and training.
+patches_data: ./dataset/patches.npy
+labels_path: ./dataset/labels.npy
+wavelength_path: ./dataset/wavelengths.csv
+groups_path: ./dataset/groups.npy
+
+# ── Validated side inputs, all retained ────────────────────────────────
+# The fill map makes every masked operator a function of the seed's pixels
+# rather than of the `sum_c |x_c| > 1e-5` threshold (FE-2 / T3-7); the eight
+# morphometrics are the only non-spectral evidence in the model (FU-4 / P-4).
+# Both are written by the same prepare_dataset run as `groups.npy`.
+masks_path: ./dataset/masks.npy
+morphology_path: ./dataset/morphology.npy
+
+# IC-14. Written by prepare_dataset.py and NEVER fed to a model — it is the
+# per-pixel brightness the SNV divided out, which is also the strongest single
+# carrier of acquisition-bundle identity. `spectralquadnet.experiments.leakage`
+# reads it to *measure* how much bundle signal survives preprocessing.
+gain_path: ./dataset/gain.npy
+
+# ── Geometry ───────────────────────────────────────────────────────────
+# 256 is the acquired band count, and `band_indices_path` is deliberately
+# absent: `data.band_geometry` fails the run at startup if the cube, the
+# wavelength CSV and this number ever disagree.
+num_bands: 256
+num_classes: 90
+
+# ── Input perturbation used by RiceSeedDataset augmentation ────────────
+# `noise_std` is a per-band amplitude and so is band-count independent.
+noise_std: 0.02
+# 19 of 256 bands is the same 7.5% of the spectral axis the 40-band arm's 3
+# expressed, so a cutout removes the same *spectral span* at either band count
+# and the augmentation means one thing across the ablation grid.
+max_cutout_bands: 19
+
+# ── Same-class CutMix geometry (OP-6 / T2-7) ───────────────────────────
+# Likewise: 51 of 256 is the 40-band arm's 8-of-40, i.e. ~20% of the spectrum,
+# and the 24x24 paste is ~14% of the 64x64 patch area at any band count. Both
+# are label-preserving because the partner is drawn from the same class, so no
+# soft target and no interaction with the margin loss.
+cutmix_bands: 51
+cutmix_spatial: 24
+
+# ── Split protocol (P-1, P-5 / T4-1, T4-5) ─────────────────────────────
+# Unchanged by the move to the full cube: the leakage question is about
+# acquisition bundles, not about bands.
+#
+# `grouped` holds out whole scans: no scan in train appears in val or test. On
+# this dataset every variety was captured exactly twice, so a class has two
+# groups and `split_eval_frac` can only resolve to "one scan out" — the split
+# realises ~50/50 rather than 70/30, and val/test are two halves of the same
+# held-out scan. Both facts are reported at startup rather than assumed; see
+# `SplitReport`. Sweeping `split_fold` over {0, 1} is the COMPLETE
+# leave-one-bundle-out cross-validation this dataset supports. There is no
+# third bundle, so there is no third fold. Report both; never their maximum.
+split_scheme: grouped
+split_eval_frac: 0.30
+split_fold: 0
+
+# IC-3. `error` refuses to run rather than silently accepting a class whose
+# eval patches share a scan with its training patches.
+single_group_policy: error
+
+# Fraction of the *training pool* held out for calibration. The margins, the
+# CDWS weights and the Phase-3 oversampling weights are fitted here, so that
+# the split which selects the checkpoint carries no fitted parameters at all.
+calib_frac: 0.15

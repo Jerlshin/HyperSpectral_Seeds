@@ -79,11 +79,68 @@ def test_a8_arms_are_the_same_driver_stopped_at_different_points() -> None:
     assert PIPELINE_LAST_STAGE == {"stage1_only": 1, "stage1_stage2": 2, "three_stage": 3}
 
 
-def test_a3_uses_symmetric_dropout_so_it_measures_branches_not_the_policy(cfg) -> None:
-    """Branch C's 87% influence is confounded by never being dropped."""
+def test_a3_uses_symmetric_dropout_so_it_measures_branches_not_the_policy() -> None:
+    """Branch C's 87% influence is confounded by never being dropped.
+
+    The confound now lives in the *config* rather than in every arm's override
+    list: `experiment/quadnet_full256` sets `branch_drop_profile=[1,1,1,1]`, so
+    each arm varies `enabled_branches` and nothing else. That is what makes it
+    an ablation of the branches rather than of the dropout policy.
+    """
+    from spectralquadnet.config.compose import load_experiment_config
+
     a3 = registry.ABLATIONS["A3"]
-    assert a3.config == registry.AUDITED_CONFIG
+    assert a3.config == registry.CONTROL_CONFIG
     assert all("enabled_branches" in " ".join(arm.overrides) for arm in a3.arms)
+
+    control = load_experiment_config(a3.config)
+    assert list(control.model.branch_drop_profile) == [1.0, 1.0, 1.0, 1.0]
+
+
+def test_the_architecture_ablations_run_on_the_primary_protocol_and_input() -> None:
+    """A3/A4/A5/A8 must not vary the split or the band count alongside the treatment.
+
+    They used to compose the frozen audited replica, whose split is `stratified`
+    and whose input is the 40-band SPA subset — so every arm silently changed
+    three things at once, which is the shape of the defect the whole revision
+    corrects.
+    """
+    from spectralquadnet.config.compose import load_experiment_config
+
+    control = load_experiment_config(registry.CONTROL_CONFIG)
+    assert control.data.num_bands == 256
+    assert control.data.split_scheme == "grouped"
+    assert control.evaluation.select_split == "calib"
+
+    for key in ("A3", "A4", "A5", "A8"):
+        assert registry.ABLATIONS[key].config == registry.CONTROL_CONFIG, key
+
+
+def test_a2_takes_the_primary_path_as_its_reference() -> None:
+    """The band-selection gateway asks what reducing *costs*, not which reduction wins."""
+    a2 = registry.ABLATIONS["A2"]
+    assert a2.config == registry.DEFAULT_CONFIG
+    assert a2.reference == "full_256"
+
+    reference = next(arm for arm in a2.arms if arm.name == a2.reference)
+    assert reference.overrides == (), "the reference arm IS the default composition"
+    assert all(
+        "data=ablation/spa40" in " ".join(arm.overrides)
+        for arm in a2.arms
+        if arm.name != a2.reference
+    ), "every other arm must name a reduced config explicitly"
+
+
+def test_a1_varies_the_split_and_only_the_split() -> None:
+    """Both arms read the full cube, so the gap is the split's."""
+    from spectralquadnet.config.compose import load_experiment_config
+
+    a1 = registry.ABLATIONS["A1"]
+    for arm in a1.arms:
+        data = next(o for o in arm.overrides if o.startswith("data="))
+        cfg = load_experiment_config(a1.config, overrides=[data])
+        assert cfg.data.num_bands == 256, arm.name
+        assert not str(cfg.data.band_indices_path), arm.name
 
 
 def test_the_reference_arm_exists_wherever_deltas_are_reported() -> None:

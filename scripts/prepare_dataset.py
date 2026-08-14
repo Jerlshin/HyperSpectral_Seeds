@@ -17,9 +17,28 @@ Usage
     python scripts/prepare_dataset.py --root ./data       # elsewhere
     python scripts/prepare_dataset.py --download-only     # fetch the zip, stop
 
-The output is the **256-band** patch cube. Run ``scripts/select_bands.py``
-afterwards to produce the 40-band ``patches_spa_40b.npy`` the training config
-actually reads.
+The output is the **256-band** patch cube, and it is what the primary pipeline
+trains on directly — ``configs/data/hsi256_grouped.yaml`` points at
+``dataset/patches.npy`` and ``dataset/wavelengths.csv``. There is no reduction
+step between this script and ``python train.py``.
+
+``scripts/select_bands.py`` is the entry point to the retained **band-selection
+ablation pathway** and is optional: run it only to produce the reduced arrays
+ablation A2 compares against (see ``docs/07_BAND_SELECTION_PATHWAY.md``).
+
+Six arrays are written, all row-aligned on the patch index:
+
+==================  ============================  ==================================
+``patches.npy``     ``(N, 256, 64, 64)`` float32  the cube itself
+``labels.npy``      ``(N,)`` int64                variety index, 0…89
+``groups.npy``      ``(N,)`` int64                acquisition-bundle id — P-1
+``masks.npy``       ``(N, 64, 64)`` float16       the fill map alpha — P-3
+``morphology.npy``  ``(N, 8)`` float32            size/shape descriptors — P-4
+``gain.npy``        ``(N, 2, 64, 64)`` float32    per-pixel (mean, sd) along λ — P-2
+==================  ============================  ==================================
+
+``gain.npy`` is never a model input; it is what the leakage probe measures
+acquisition-bundle identity from.
 """
 
 from __future__ import annotations

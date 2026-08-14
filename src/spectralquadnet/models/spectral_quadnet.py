@@ -61,7 +61,7 @@ import torch.nn.functional as F
 
 from spectralquadnet.models.blocks.attention import MaskedSpectralECA
 from spectralquadnet.models.blocks.positional import PhysicalWavelengthPE
-from spectralquadnet.models.branches.spatial_cnn import SpatialCNNBranch
+from spectralquadnet.models.branches.spatial_cnn import DEFAULT_FOLDED_DEPTH, SpatialCNNBranch
 from spectralquadnet.models.branches.specformer import SpecFormerBranch
 from spectralquadnet.models.branches.spectral_profile import SpectralProfileBranch
 from spectralquadnet.models.branches.spectral_stats import SpectralStatsBranch
@@ -233,6 +233,9 @@ class SpectralQuadNet(nn.Module):
                 256,
                 stem_channels=cfg.model.stem_channels,
                 width_mult=float(getattr(cfg.model, "spatial_width_mult", 1.0)),
+                stem_folded_depth=int(
+                    getattr(cfg.model, "stem_folded_depth", DEFAULT_FOLDED_DEPTH)
+                ),
             )
             if "c" in self.enabled_branches
             else None
@@ -241,7 +244,7 @@ class SpectralQuadNet(nn.Module):
             SpecFormerBranch(
                 physical_wl=physical_wl,
                 num_bands=num_bands,
-                patch_size=cfg.model.specf_patch,
+                n_tokens=cfg.model.specf_tokens,
                 d_model=cfg.model.specf_dim,
                 n_heads=cfg.model.specf_heads,
                 n_layers=cfg.model.specf_layers,

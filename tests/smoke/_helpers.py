@@ -20,6 +20,18 @@ PATCHES_PER_BUNDLE = 12
 N_BANDS = 8
 SPATIAL = 16
 
+#: The **acquired** band count — what `configs/data/hsi256_grouped.yaml` declares
+#: and what a default `python train.py` reads. The `full_spectrum_dataset`
+#: fixture builds a miniature cube at exactly this width so the primary
+#: composition's own `data.num_bands` can be left untouched: every other smoke
+#: run overrides it down to `N_BANDS`, which exercises the machinery but not the
+#: number the study is about.
+FULL_BANDS = 256
+#: Spatial side for the full-spectrum fixture. The stem's spatial strides are
+#: fixed at (1, 2, 2), so 16x16 runs the same operators as 64x64 at 1/16 the
+#: cost — the *spectral* axis is what this fixture exists to keep at full width.
+FULL_SPATIAL = 16
+
 
 def tiny_overrides(dataset: dict[str, str], output_dir: Path, **extra: Any) -> list[str]:
     """A structurally complete run at a size that finishes in seconds.
@@ -38,6 +50,8 @@ def tiny_overrides(dataset: dict[str, str], output_dir: Path, **extra: Any) -> l
         "data.gain_path": "",
         "data.num_bands": N_BANDS,
         "data.num_classes": N_CLASSES,
+        # Scaled to the same *fraction* of the spectral axis the shipped configs
+        # use, so the augmentations mean the same thing at this band count.
         "data.cutmix_bands": 2,
         "data.max_cutout_bands": 1,
         "single.epochs": 2,
@@ -50,6 +64,13 @@ def tiny_overrides(dataset: dict[str, str], output_dir: Path, **extra: Any) -> l
         "single.bal_n_cls": 4,
         "single.bal_n_spc": 2,
         "model.stem_channels": 16,
+        # `spectral_stride_schedule(8, folded_depth=1)` is `(2, 2, 2)`, so the
+        # miniature run exercises a genuinely strided spectral reduction —
+        # 8 → 4 → 2 → 1 — rather than the `(1, 1, 1)` an 8-band cube would get at
+        # the shipped depth of 8. The primary path's `(8, 2, 2)` at 256 bands is
+        # covered by `tests/unit/test_branch_c_stem.py`, which does not need a
+        # 36 GB cube to check a shape.
+        "model.stem_folded_depth": 1,
         "model.spatial_width_mult": 0.25,
         "model.spectral_hidden": 32,
         "model.index_bank_size": 8,
@@ -68,6 +89,26 @@ def tiny_overrides(dataset: dict[str, str], output_dir: Path, **extra: Any) -> l
     }
     base.update(extra)
     return [f"{k}={v}" for k, v in base.items()]
+
+
+def full_spectrum_overrides(dataset: dict[str, str], output_dir: Path, **extra: Any) -> list[str]:
+    """The primary composition at its **shipped** band count, on a miniature cube.
+
+    Deliberately does **not** override `data.num_bands`, `data.cutmix_bands`,
+    `data.max_cutout_bands` or `model.stem_folded_depth`: those four are the
+    256-band design, and a smoke test that overrode them would exercise a
+    different pipeline from the one `python train.py` runs. Everything it *does*
+    override is a magnitude — class count, epochs, batch, widths — so what is
+    tested is the shipped spectral configuration end to end.
+    """
+    overrides = tiny_overrides(dataset, output_dir, **extra)
+    dropped = (
+        "data.num_bands=",
+        "data.cutmix_bands=",
+        "data.max_cutout_bands=",
+        "model.stem_folded_depth=",
+    )
+    return [o for o in overrides if not o.startswith(dropped)]
 
 
 #: The audited architecture's keys, shrunk to match. Kept beside
@@ -89,7 +130,7 @@ AUDITED_TINY: dict[str, Any] = {
     "model.specf_dim": 16,
     "model.specf_heads": 2,
     "model.specf_layers": 1,
-    "model.specf_patch": 2,
+    "model.specf_tokens": 2,
     "model.grid_size_a": 2,
     "model.grid_size_d": 2,
     "model.fusion_rank": 8,

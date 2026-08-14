@@ -8,7 +8,8 @@
 > The audited run set `allow_tf32=True`, `num_workers=0` (auto would give 8) and `compile=off`
 > (auto would give on). The two knobs that only change speed were disabled and the one that
 > changes numerics was enabled, so that run is **not comparable to a run at the shipped
-> defaults**. `configs/experiment/seednet_grouped.yaml` sets all three back;
+> defaults**. `configs/experiment/seednet_full256.yaml` — the primary composition — sets all
+> three back;
 > `configs/experiment/quadnet_audited.yaml` deliberately keeps the run's actual values, because
 > its job is to reproduce what was audited.
 >
@@ -22,6 +23,25 @@
 > * **IC-6** — `grad_clip` moves 1.0 → 5.0, and `grad_norm/clip_fraction` is logged so "does the
 >   clip bind?" is a measurement rather than an inference. At the old threshold the backbone's
 >   pre-clip norm was 25–50 for the entire run.
+
+> ## ⚠ Every timing and memory figure below was measured at **40 bands**
+>
+> The wall-clock, activation-memory and kernel-selection numbers in this document come from the
+> audited configuration — `SpectralQuadNet` on the 40-band SPA subset — because that is the
+> configuration a full run was executed on. They are kept because they are what was *measured*,
+> and they are the evidence for every default in `cfg.runtime`. **No equivalent measurement
+> exists yet for the 256-band primary path**, and none is invented here.
+>
+> What *is* known about the primary path's cost is arithmetic rather than timing, and it is in
+> `03_MODEL_ARCHITECTURE.md` §3.0(a): the 3-D stem is where the band count is paid for, and the
+> derived stride schedule holds a 6.4× wider input to **1.93×** the stem's multiply-accumulates
+> (452 M → 874 M per sample) instead of the 6.40× three hardcoded halvings would cost. Expect
+> the two Metal-only execution paths below (`decompose_conv3d`, `checkpoint_branch_a`) to matter
+> *more* at 256 bands than the 40-band figures show, not less, since both target exactly the
+> operators the wider spectral axis grows.
+>
+> Nothing in this caveat weakens the invariant: a throughput knob may change how long a run
+> takes at any band count, and may never change what it reports.
 
 Everything in this document is governed by one invariant, stated in `RuntimeConfig`'s own
 docstring: **every field under `cfg.runtime` is a throughput knob, and changing one must never

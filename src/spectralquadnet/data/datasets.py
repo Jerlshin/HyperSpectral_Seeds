@@ -74,6 +74,40 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: mask is a real and very different thing.
 ABSENT = torch.zeros(0)
 
+#: Width of the same-class spectral CutMix window, as a fraction of the band
+#: axis (OP-6 / T2-7).
+CUTMIX_BAND_FRACTION: float = 0.20
+#: Maximum width of the spectral cutout, as a fraction of the band axis.
+CUTOUT_BAND_FRACTION: float = 0.075
+
+
+def band_augmentation_widths(num_bands: int) -> dict[str, int]:
+    """``data.cutmix_bands`` and ``data.max_cutout_bands`` for a ``num_bands`` input.
+
+    Both augmentations are expressed in *bands*, and a band is not a fixed
+    quantity of spectrum: an 8-band CutMix window is a fifth of the 40-band SPA
+    subset and a thirtieth of the acquired 256-band cube. Left as literals, the
+    two would mean different physical operations in the primary pipeline and in
+    every band-selection ablation arm, and the arms of an experiment that differ
+    in their augmentation are not measuring the band count.
+
+    The fractions are the ones the audited 40-band configuration used, so this
+    reproduces **both** shipped values exactly — ``(8, 3)`` at 40 bands and
+    ``(51, 19)`` at 256 — and interpolates for every budget in between.
+    ``tests/unit/test_cutmix.py`` pins that against the YAML.
+
+    Args:
+        num_bands: Bands the run actually reads.
+
+    Returns:
+        ``{"cutmix_bands": …, "max_cutout_bands": …}``, each at least 1.
+    """
+    k = max(1, int(num_bands))
+    return {
+        "cutmix_bands": max(1, round(CUTMIX_BAND_FRACTION * k)),
+        "max_cutout_bands": max(1, round(CUTOUT_BAND_FRACTION * k)),
+    }
+
 
 def _band_selection(data_cfg: DataConfig | Any) -> npt.NDArray[Any] | None:
     """The band indices ``data.band_indices_path`` names, or ``None``.

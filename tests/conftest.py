@@ -157,10 +157,23 @@ def cfg():
 
 @pytest.fixture(scope="session")
 def cfg_default():
-    """The composed default experiment — `SpectralSeedNet`, single stage, grouped."""
+    """The composed **primary** experiment — `SpectralSeedNet`, 256 bands, single stage, grouped."""
     from spectralquadnet.config.compose import load_experiment_config
 
     return load_experiment_config()
+
+
+@pytest.fixture(scope="session")
+def cfg_quadnet_full256():
+    """The four-branch control arm on the primary protocol and the primary input.
+
+    Distinct from `cfg`, which is the frozen 40-band audited replica: this is the
+    config the branch and curriculum ablations run on, so a comparison against
+    `cfg_default` varies the architecture and nothing else.
+    """
+    from spectralquadnet.config.compose import QUADNET_FULL256_EXPERIMENT, load_experiment_config
+
+    return load_experiment_config(QUADNET_FULL256_EXPERIMENT)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -170,14 +183,33 @@ def cfg_default():
 
 @pytest.fixture(scope="session")
 def physical_wl() -> torch.Tensor:
-    """The exact normalised wavelength vector the golden values were captured with.
+    """The 40-band SPA wavelength vector the golden values were captured with.
 
-    Loaded from the committed ``.npy`` rather than ``dataset/wavelengths_spa_40b.csv``
-    so the regression gates do not depend on the gitignored dataset directory.
-    ``test_mmap_store.py`` separately checks that ``DataStore`` reproduces it from
-    the real CSV when that CSV is present.
+    Pairs with the ``cfg`` fixture — the frozen audited replica — and with every
+    regression gate. Loaded from the committed ``.npy`` rather than
+    ``dataset/wavelengths_spa_40b.csv`` so the gates do not depend on the
+    gitignored dataset directory. ``test_mmap_store.py`` separately checks that
+    ``DataStore`` reproduces it from the real CSV when that CSV is present.
+
+    For the primary 256-band path use :func:`physical_wl_full`.
     """
     path = GOLDEN_V1 / "physical_wl_spa40.npy"
+    if not path.exists():
+        pytest.skip(f"{path} missing — run `python scripts/capture_golden.py`")
+    return torch.from_numpy(np.load(path))
+
+
+@pytest.fixture(scope="session")
+def physical_wl_full() -> torch.Tensor:
+    """The **complete 256-band** normalised wavelength vector — the primary path's λ axis.
+
+    383.2 nm … 1006.5 nm, min-max normalised to ``[0, 1]`` exactly as
+    ``DataStore.load_wavelengths`` does. Pairs with ``cfg_default`` and
+    ``cfg_quadnet_full256``. Committed for the same reason the 40-band vector is:
+    every λ-aware operator in the model is a function of it, so the tests that
+    describe those operators must not need the gitignored ``dataset/``.
+    """
+    path = GOLDEN_V1 / "physical_wl_full256.npy"
     if not path.exists():
         pytest.skip(f"{path} missing — run `python scripts/capture_golden.py`")
     return torch.from_numpy(np.load(path))

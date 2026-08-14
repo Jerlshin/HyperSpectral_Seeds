@@ -7,12 +7,12 @@ identical value — nothing silently dropped, renamed or re-defaulted relative
 to that reference.
 
 The rename table lives in :data:`RENAME` below and is the single source of truth;
-``docs/config_rename_table.md`` is generated from it via ``--emit-markdown``.
+``docs/config_migration_table.md`` is generated from it via ``--emit-markdown``.
 
 Usage
 -----
     python scripts/check_config_roundtrip.py                     # run the check
-    python scripts/check_config_roundtrip.py --emit-markdown docs/config_rename_table.md
+    python scripts/check_config_roundtrip.py --emit-markdown docs/config_migration_table.md
 
 Exit code is 0 only when every key maps 1:1 and every value matches (modulo the
 two intentional deviations recorded in :data:`INTENDED_VALUE_CHANGES`).
@@ -136,7 +136,10 @@ RENAME: dict[str, str] = {
     "tta_spectral": "tta_spectral",
     # ── Transformer branch (SpecFormer) + fusion ──────────────────────
     "wl_embed_dim": "model.wl_embed_dim",
-    "specf_patch": "model.specf_patch",
+    # The baseline key is `specf_patch`; it became `model.specf_tokens` when the
+    # λ-window count stopped being derived from the band count — see
+    # INTENDED_VALUE_CHANGES.
+    "specf_patch": "model.specf_tokens",
     "specf_dim": "model.specf_dim",
     "specf_heads": "model.specf_heads",
     "specf_layers": "model.specf_layers",
@@ -228,7 +231,7 @@ INTENDED_ADDITIONS: dict[str, str] = {
         "kept because the archived checkpoints were selected on it; `grouped` "
         "is the scan-disjoint protocol. The default stays `stratified` so this "
         "config keeps reproducing the run it describes; "
-        "`configs/data/spa40_90class_pfix.yaml` is the P-fix protocol."
+        "`configs/data/hsi256_grouped.yaml` is the P-fix protocol."
     ),
     "data.split_eval_frac": (
         "T4-1 / P-1 — share held out for val+test. 0.30 reproduces the "
@@ -286,6 +289,17 @@ INTENDED_ADDITIONS: dict[str, str] = {
         "axis into before the 2-D tail. C-3: before this the network contained "
         "no joint spectral-spatial operator at all."
     ),
+    "model.stem_folded_depth": (
+        "256-band native — the spectral DEPTH the 3-D stem reduces the band axis "
+        "to, from which its three spectral strides are derived. The stem used to "
+        "halve the band axis three times unconditionally, which is depth 5 on 40 "
+        "bands and depth 32 on the acquired 256 — a 2048-channel fold and a "
+        "stage-2 cube 6.4x deeper than the design was measured on, i.e. a "
+        "reduced-band stem carrying a full cube. At the shipped 8 the derivation "
+        "returns the audited (2, 2, 2) on 40 bands and (8, 2, 2) on 256, so one "
+        "rule covers the primary path and every band-selection arm. Pinned by "
+        "`tests/unit/test_branch_c_stem.py`."
+    ),
     "model.fusion_rank": (
         "T3-4 / FU-1(b) — rank of the bilinear projections U_m. The second-order "
         "term M-3 found missing, at 5*d*r rather than a full 10*d^2."
@@ -301,8 +315,9 @@ INTENDED_ADDITIONS: dict[str, str] = {
         "arms. The monolith had exactly one curriculum and therefore no key."
     ),
     "model.arch": (
-        "IC-10 / §16.2 — selects `spectral_seed_net` (2.82 M, two pathways) or "
-        "`spectral_quadnet` (5.19 M, four branches). A3 and A8 need the second as "
+        "IC-10 / §16.2 — selects `spectral_seed_net` (3.05 M on the primary "
+        "256-band input, two pathways) or `spectral_quadnet` (5.26 M on the same "
+        "input, four branches). A3/A4/A5/A8 need the second as "
         "their control arm, so both ship and one key chooses."
     ),
     "model.enabled_branches": (
@@ -324,7 +339,7 @@ INTENDED_ADDITIONS: dict[str, str] = {
     ),
     "model.spatial_width_mult": (
         "A10 / §20 — scales the spatial path's ResBlock widths. Answers 'is "
-        "5.19 M too big' with data instead of intuition."
+        "the model too big' with data instead of intuition."
     ),
     "model.spectral_hidden": (
         "IC-10 / §16.2 — hidden width of SpectralSeedNet's spectral MLP over "
@@ -441,6 +456,20 @@ INTENDED_VALUE_CHANGES: dict[str, str] = {
         "specifies 0.20 for the latter (§3.5 HD-3). Reusing the key rather than "
         "adding a second one keeps a single margin-scale knob; the sign change "
         "is pinned by `tests/unit/test_margin_rule.py::test_margin_rule_sign`."
+    ),
+    "specf_patch": (
+        "8 → 10, and the key means the λ-window count directly rather than a "
+        "divisor of it. The reference implementation used it as an index stride "
+        "nothing consumed; T3-3 re-read it as `num_bands // (specf_patch // 2)`, "
+        "which reproduced the audited 10 windows at k = 40 but made a window's "
+        "*width* a function of the band count — 15 nm at k = 40 and 2.4 nm on "
+        "the full 256-band cube, so 'token 3' denoted a different spectral "
+        "region in the primary path and in every band-selection arm. A λ window "
+        "is a physical region, so the count is configured as one: 10 here (the "
+        "audited value, unchanged in effect) and 32 in "
+        "`configs/experiment/quadnet_full256.yaml`. Pinned by "
+        "`tests/unit/test_dataset_facts.py::"
+        "test_nothing_derives_the_token_count_from_the_band_count`."
     ),
     "specf_dim": (
         "T3-3 / BR-4 — 256 → 192. Branch D's token embeddings are now derived "
@@ -630,7 +659,11 @@ def run_check(ref: str) -> int:
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  Markdown emitter (keeps docs/config_rename_table.md in sync)
+#  Markdown emitter (keeps docs/config_migration_table.md in sync)
+#
+#  NOTE: this writes the *migration* table only. `docs/config_reference.md` is a
+#  hand-maintained reference for the current configuration groups and is NOT
+#  generated — pointing --emit-markdown at it would silently destroy it.
 # ══════════════════════════════════════════════════════════════════════
 
 
@@ -656,7 +689,7 @@ def emit_markdown(out_path: Path, ref: str) -> None:
         "|---|---|---|---|",
     ]
     file_of = {
-        "data": "`configs/data/spa40_90class.yaml`",
+        "data": "`configs/data/ablation/spa40_audited.yaml`",
         "model": "`configs/model/spectral_quadnet_v4.yaml`",
         "stage1": "`configs/stage1/progressive_3phase.yaml`",
         "stage2": "`configs/stage2/arcface_supcon.yaml`",

@@ -658,8 +658,8 @@ def probe_J(ctx: dict[str, Any]) -> dict[str, Any]:
             "split as n_layers//2 spectral + n_layers//2 spatial blocks.",
         ),
         (
-            "model.specf_patch",
-            cfg.model.specf_patch,
+            "model.specf_tokens",
+            cfg.model.specf_tokens,
             "unused",
             "SpecFormerBranch's own docstring records `patch_size` as accepted "
             "but unused; tokenisation is stride-based.",

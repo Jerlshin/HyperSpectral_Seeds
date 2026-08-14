@@ -127,7 +127,7 @@ def _setup_logging(cfg: DictConfig, dist: DistContext) -> None:
         mirror.addHandler(file_handler)
 
 
-@hydra.main(config_path="configs", config_name="experiment/seednet_grouped", version_base=None)
+@hydra.main(config_path="configs", config_name="experiment/seednet_full256", version_base=None)
 def main(cfg: DictConfig) -> None:
     """Compose the config, set up logging and the tracker, then run the pipeline.
 

@@ -1,13 +1,15 @@
 """IC-10 — ``SpectralSeedNet``: what it is, what it costs, what it refuses to load.
 
-CHANGES §16.2 budgets ≈2.80 M parameters and ≈1.40 GFLOP/sample — 54% of the
-parameters and 34% of the compute of the audited model — by keeping exactly two
-pathways and relocating Branch A's physics into fixed, zero-parameter features.
+The **primary** architecture, exercised on the **primary** input: the complete
+256-band cube. CHANGES §16.2 keeps exactly two pathways and relocates Branch A's
+physics into fixed, zero-parameter features, which on the full cube is 3.05 M
+parameters against the four-branch control's 5.26 M at the same band count.
 
-These tests pin the three claims that make that a *design* rather than a
-guess: the parameter budget, that both pathways actually influence the output,
-and that the spectral path really carries the SNV and λ-derivative operators
-Branch A was built around.
+These tests pin the claims that make that a *design* rather than a guess: the
+parameter budget, that both pathways actually influence the output, that the
+spectral path really carries the SNV and λ-derivative operators Branch A was
+built around — and that all of it is sized from ``data.num_bands`` rather than
+tuned for one band count.
 """
 
 from __future__ import annotations
@@ -34,25 +36,31 @@ from spectralquadnet.models.spectral_quadnet import SpectralQuadNet
 from spectralquadnet.models.spectral_seed_net import SpectralSeedNet
 from spectralquadnet.utils.seed import set_seed
 
-BATCH = 3
+BATCH = 2
+#: Smaller than the 64x64 the pipeline trains on. The stem's spatial strides are
+#: fixed at (1, 2, 2), so 32x32 exercises exactly the same operators at a
+#: quarter of the cost — and every claim below is about widths, shapes and
+#: influence, none of which is a function of the patch side.
+SPATIAL = 32
 
-#: CHANGES §16.2's budget. The tolerance is generous because the exact count
-#: depends on `aux_head_hidden` and the class count; what the test defends is
-#: the *claim* — roughly half the audited model — not a specific integer.
-EXPECTED_PARAMS = 2_800_000
+#: The primary model's budget on the primary input. The tolerance is generous
+#: because the exact count depends on `aux_head_hidden` and the class count;
+#: what the test defends is the *claim* — a little under three fifths of the
+#: four-branch control at the same band count — not a specific integer.
+EXPECTED_PARAMS = 3_050_000
 PARAM_TOLERANCE = 0.06
 
 
 @pytest.fixture
-def seed_model(cfg_default, physical_wl):
+def seed_model(cfg_default, physical_wl_full):
     set_seed(42)
-    return build_model(cfg_default, physical_wl)
+    return build_model(cfg_default, physical_wl_full)
 
 
 @pytest.fixture
 def batch(cfg_default):
     gen = torch.Generator().manual_seed(7)
-    return torch.randn(BATCH, cfg_default.data.num_bands, 64, 64, generator=gen)
+    return torch.randn(BATCH, cfg_default.data.num_bands, SPATIAL, SPATIAL, generator=gen)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -69,10 +77,29 @@ def test_the_default_config_builds_the_replacement(cfg_default, seed_model) -> N
     assert isinstance(seed_model, SpectralSeedNet)
 
 
+def test_the_primary_path_is_the_full_acquired_cube(cfg_default) -> None:
+    """The methodology, as a config assertion rather than a claim in a docstring."""
+    assert cfg_default.data.num_bands == 256, "no band reduction on the primary path"
+    assert not str(cfg_default.data.band_indices_path), "and no index-file subsetting either"
+    assert cfg_default.data.patches_data.endswith("patches.npy")
+    assert cfg_default.data.wavelength_path.endswith("wavelengths.csv")
+    assert cfg_default.data.split_scheme == "grouped"
+
+
 def test_the_audited_config_still_builds_the_control_arm(cfg, physical_wl) -> None:
-    """A3 and A8 compare *against* it; deleting it makes the removals unfalsifiable."""
+    """The frozen 40-band replica still builds, so the golden gates still have a subject."""
     set_seed(42)
     assert isinstance(build_model(cfg, physical_wl), SpectralQuadNet)
+
+
+def test_the_control_arm_builds_on_the_primary_input(cfg_quadnet_full256, physical_wl_full) -> None:
+    """A3/A4/A5/A8 compare *against* this; deleting it makes the removals unfalsifiable."""
+    set_seed(42)
+    control = build_model(cfg_quadnet_full256, physical_wl_full)
+    assert isinstance(control, SpectralQuadNet)
+    assert cfg_quadnet_full256.data.num_bands == 256
+    assert cfg_quadnet_full256.data.split_scheme == "grouped"
+    assert list(cfg_quadnet_full256.model.branch_drop_profile) == [1.0, 1.0, 1.0, 1.0]
 
 
 def test_the_parameter_budget_matches_the_design(seed_model) -> None:
@@ -82,21 +109,35 @@ def test_the_parameter_budget_matches_the_design(seed_model) -> None:
     ), f"CHANGES §16.2 budgets ≈{EXPECTED_PARAMS:,}; this model has {total:,}"
 
 
-def test_it_is_about_half_the_audited_model(seed_model, cfg, physical_wl) -> None:
+def test_it_is_well_under_the_four_branch_control(
+    seed_model, cfg_quadnet_full256, physical_wl_full
+) -> None:
+    """Measured against the control arm at the **same** band count.
+
+    Comparing against `quadnet_audited` would compare 256 bands with 40 and
+    attribute the difference to the architecture, which is the confound this
+    whole revision is about.
+    """
     set_seed(42)
-    audited = count_parameters(build_model(cfg, physical_wl), trainable_only=False)
-    ratio = count_parameters(seed_model, trainable_only=False) / audited
-    assert 0.45 < ratio < 0.60, f"expected ~54% of the audited model, got {ratio:.1%}"
+    control = count_parameters(
+        build_model(cfg_quadnet_full256, physical_wl_full), trainable_only=False
+    )
+    ratio = count_parameters(seed_model, trainable_only=False) / control
+    assert 0.50 < ratio < 0.65, f"expected ~58% of the four-branch control, got {ratio:.1%}"
 
 
 def test_the_spatial_path_dominates_the_budget(seed_model) -> None:
     """The joint spectral-spatial operator is the model; the rest is cheap."""
     breakdown = parameter_breakdown(seed_model)
     assert breakdown["spatial"] / breakdown["total"] > 0.7
-    # 1.8% of parameters carrying the chemometric signal — CHANGES §5.1's
-    # "by far the best cost/benefit ratio in the network".
-    assert breakdown["spectral"] / breakdown["total"] < 0.10
-    assert breakdown["se"] == 6, "MaskedSpectralECA is six parameters. Free. Kept."
+    # ~10% of parameters carrying the chemometric signal. Higher than the 1.8%
+    # the 40-band arm spends because the descriptor's SNV/derivative block is
+    # `3 * num_bands` wide — 768 of its 856 inputs on the full cube — which is
+    # the primary path deliberately paying for full spectral resolution.
+    assert breakdown["spectral"] / breakdown["total"] < 0.12
+    # `MaskedSpectralECA`'s ECA kernel width is `f(log2(C))`: 3 taps at 40 bands,
+    # 5 at 256. Ten parameters. Free. Kept.
+    assert breakdown["se"] == 10
 
 
 def test_the_removed_branches_are_absent(seed_model) -> None:
@@ -255,38 +296,38 @@ def test_a_bundle_records_the_architecture_that_wrote_it(cfg_default, seed_model
 
 
 def test_a_quadnet_bundle_is_refused_by_the_new_class(
-    cfg, cfg_default, physical_wl, tmp_path
+    cfg_quadnet_full256, cfg_default, physical_wl_full, tmp_path
 ) -> None:
     """IC-10's validation criterion: cross-architecture loads raise, not partially match."""
-    small = cfg.copy()
+    small = cfg_quadnet_full256.copy()
     small.output_dir = str(tmp_path)
     set_seed(42)
-    quadnet = build_model(cfg, physical_wl)
+    quadnet = build_model(cfg_quadnet_full256, physical_wl_full)
     path = tmp_path / "best_stage1.pth"
     save_ckpt(
         small, str(path), 1, "Stage 1", quadnet, ModelEMA(quadnet, 0.99), val_f1=0.5, val_acc=0.5
     )
 
     set_seed(42)
-    seednet = build_model(cfg_default, physical_wl)
+    seednet = build_model(cfg_default, physical_wl_full)
     with pytest.raises(ArchitectureMismatchError, match="spectral_quadnet"):
         load_ckpt(str(path), seednet, ModelEMA(seednet, 0.99), torch.device("cpu"))
 
 
 def test_a_seednet_bundle_round_trips_into_its_own_class(
-    cfg_default, physical_wl, tmp_path
+    cfg_default, physical_wl_full, tmp_path
 ) -> None:
     small = cfg_default.copy()
     small.output_dir = str(tmp_path)
     set_seed(42)
-    source = build_model(cfg_default, physical_wl)
+    source = build_model(cfg_default, physical_wl_full)
     path = tmp_path / "best_stage1.pth"
     save_ckpt(
         small, str(path), 1, "Stage 1", source, ModelEMA(source, 0.99), val_f1=0.5, val_acc=0.5
     )
 
     set_seed(1)  # deliberately different init
-    target = build_model(cfg_default, physical_wl)
+    target = build_model(cfg_default, physical_wl_full)
     load_ckpt(str(path), target, ModelEMA(target, 0.99), torch.device("cpu"))
     for (_, a), (_, b) in zip(
         source.state_dict().items(), target.state_dict().items(), strict=True

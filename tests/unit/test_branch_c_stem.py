@@ -20,11 +20,19 @@ import pytest
 import torch
 import torch.nn as nn
 
-from spectralquadnet.models.branches.spatial_cnn import SpatialCNNBranch, SpectralSpatialStem3D
+from spectralquadnet.models.branches.spatial_cnn import (
+    DEFAULT_FOLDED_DEPTH,
+    SpatialCNNBranch,
+    SpectralSpatialStem3D,
+    kernel_depth,
+    spectral_stride_schedule,
+)
 
 pytestmark = pytest.mark.regression
 
 BANDS = 40
+#: The acquired band count — the primary pipeline's input.
+FULL_BANDS = 256
 
 
 def _band_reduce_1x1(num_bands: int = BANDS) -> nn.Sequential:
@@ -191,3 +199,116 @@ def test_the_stem_handles_an_odd_band_count() -> None:
         with torch.no_grad():
             out = stem(torch.randn(1, bands, 32, 32))
         assert out.shape == (1, 96, 8, 8), bands
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  256-band native — the spectral stride schedule
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_the_schedule_reproduces_the_audited_stem_at_forty_bands() -> None:
+    """The compatibility contract the whole derivation is built to satisfy.
+
+    The retained band-selection arms and every golden regression digest describe
+    a stem that halves the band axis three times. If the derivation ever stopped
+    returning that at k = 40, the primary path and the arms it is measured
+    against would no longer be the same network.
+    """
+    assert spectral_stride_schedule(40, DEFAULT_FOLDED_DEPTH) == (2, 2, 2)
+    stem = SpectralSpatialStem3D(40, 192)
+    assert stem.kernel_depths == (7, 5, 5), "the audited kernel depths, unwidened"
+    assert stem.folded_depth == 5
+    assert stem.fold[0].in_channels == 64 * 5
+
+
+def test_the_schedule_folds_the_full_cube_at_the_configured_depth() -> None:
+    """256 bands must not reach the fold at depth 32.
+
+    Three hardcoded halvings put 32 spectral positions into the fold, i.e. a
+    ``Conv2d(2048 -> 192)`` and a stage-2 cube 6.4x deeper than the design was
+    measured on. That is a 40-band stem carrying a full cube; the derivation
+    spends the extra reduction in stage 1, where one input channel makes it
+    cheapest.
+    """
+    assert spectral_stride_schedule(FULL_BANDS, DEFAULT_FOLDED_DEPTH) == (8, 2, 2)
+
+    stem = SpectralSpatialStem3D(FULL_BANDS, 192)
+    assert stem.folded_depth == DEFAULT_FOLDED_DEPTH
+    assert stem.fold[0].in_channels == 64 * DEFAULT_FOLDED_DEPTH
+    # The widest stride gets a kernel wide enough to cover it, so no band is
+    # stepped over — a stride-8 stage with the audited k = 7 would subsample the
+    # cube, which is the band selection the primary path exists to avoid.
+    assert stem.kernel_depths[0] >= stem.spectral_strides[0]
+    assert stem.kernel_depths == (15, 5, 5)
+
+
+def test_every_band_reaches_at_least_one_stage_one_tap() -> None:
+    """The no-subsampling property, checked rather than argued.
+
+    A stem whose first kernel is narrower than its first stride never multiplies
+    some bands by anything. Verified by pushing a one-hot spectrum through the
+    real stage-1 convolution and requiring a response.
+    """
+    for bands in (40, 100, 128, 192, 224, 256):
+        stem = SpectralSpatialStem3D(bands, 32).eval()
+        torch.nn.init.constant_(stem.stage1[0].weight, 1.0)
+        for band in range(bands):
+            x = torch.zeros(1, bands, 4, 4)
+            x[0, band] = 1.0
+            with torch.no_grad():
+                response = stem.stage1[0](x.unsqueeze(1))
+            assert float(response.abs().max()) > 0.0, f"band {band} of {bands} is never read"
+
+
+def test_the_kernel_widens_only_when_the_stride_demands_it() -> None:
+    assert kernel_depth(7, 1) == 7
+    assert kernel_depth(7, 2) == 7
+    assert kernel_depth(7, 4) == 7
+    assert kernel_depth(7, 8) == 15
+    assert kernel_depth(7, 16) == 31
+    assert kernel_depth(5, 2) == 5
+    for base in (5, 7):
+        for stride in (1, 2, 4, 8, 16, 32):
+            k = kernel_depth(base, stride)
+            assert k % 2 == 1, "symmetric padding needs an odd kernel"
+            # 2s-1, not s: covering the LAST band under symmetric padding
+            # needs (k-1)/2 >= s-1, which is where a stride-8 stage with a
+            # 9-tap kernel drops bands 253-255 of the acquired cube.
+            assert k >= 2 * stride - 1 and k >= base
+
+
+def test_the_folded_depth_never_exceeds_its_bound() -> None:
+    """The property the schedule solves for, over every budget the study uses."""
+    for bands in (1, 2, 5, 8, 16, 17, 20, 31, 40, 50, 64, 100, 128, 160, 192, 224, 256):
+        for target in (2, 4, 8):
+            strides = spectral_stride_schedule(bands, target)
+            stem = SpectralSpatialStem3D(bands, 32, folded_depth=target)
+            assert stem.spectral_strides == strides
+            assert stem.folded_depth <= max(target, 1), (bands, target)
+            # And it is the *smallest* such reduction: one stride less would
+            # overshoot, so the schedule is not simply reducing as far as it can.
+            assert -(-bands // (strides[0] * strides[1] * strides[2])) == stem.folded_depth
+
+
+def test_the_full_cube_stem_costs_less_than_a_naive_one() -> None:
+    """The reason the derivation exists, as a parameter count.
+
+    Three hardcoded halvings on 256 bands is a 2048-channel fold; the derived
+    schedule is a 512-channel one, and the difference is most of the stem.
+    """
+    derived = SpectralSpatialStem3D(FULL_BANDS, 192)
+    naive = SpectralSpatialStem3D(FULL_BANDS, 192, spectral_strides=(2, 2, 2))
+
+    assert naive.folded_depth == 32
+    assert naive.fold[0].in_channels == 64 * 32
+    n_derived = sum(p.numel() for p in derived.parameters())
+    n_naive = sum(p.numel() for p in naive.parameters())
+    assert n_naive > 2 * n_derived, f"derived {n_derived:,} vs naive {n_naive:,}"
+
+
+def test_the_full_cube_stem_still_feeds_the_same_2d_tail() -> None:
+    """The tail's contract is a shape, and the band count must not change it."""
+    for bands in (40, FULL_BANDS):
+        stem = SpectralSpatialStem3D(bands, 192).eval()
+        with torch.no_grad():
+            assert stem(torch.randn(1, bands, 64, 64)).shape == (1, 192, 16, 16), bands

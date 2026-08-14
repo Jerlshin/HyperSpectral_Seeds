@@ -1,16 +1,22 @@
-# 40-band SPA-selected VIS-NIR patches, 90 rice-seed varieties — P-fix protocol.
+# ══════════════════════════════════════════════════════════════════════
+#  ABLATION ARM — NOT the primary path.
 #
-# Same arrays as `spa40_90class.yaml`, different protocol: this is the config
-# IMPROVEMENT_PLAN §4.4 means by "RE-BASELINE everything on P-fix". It turns on
-# P-1 (scan-disjoint split) and P-5 (calibration split); P-2/P-3/P-4 are
-# properties of the arrays themselves and arrive when
-# `python scripts/prepare_dataset.py` is re-run, which is also what writes the
-# `groups.npy` this config requires.
+#  40 SPA-selected bands of the acquired 256, under the primary protocol
+#  (grouped + calib). This is A2's reduced arm: it differs from
+#  `configs/data/hsi256_grouped.yaml` in the band count and in nothing else, so
+#  `F1(256 bands) - F1(40 bands)` is a one-variable measurement of what the SPA
+#  reduction costs.
 #
-# Expect the headline number to FALL. That is the correct direction, and the
-# difference between the two protocols is itself a result worth reporting
-# (§4.5): an ungrouped 0.889 is a claim about acquisition sessions; a grouped
-# number is a claim about rice varieties.
+#  It is retained, not deprecated. What it may not be is the default: the
+#  k = 40 elbow was never demonstrated (the shipped curve terminates at its own
+#  chosen k — CHANGES M-14), so a headline number computed on it would inherit
+#  an undemonstrated choice. Select it explicitly:
+#
+#      python train.py data=ablation/spa40_grouped
+#
+#  The augmentation widths below are the ones the 256-band config scales *from*:
+#  8 of 40 bands is the same ~20% of the spectral axis as its 51 of 256.
+# ══════════════════════════════════════════════════════════════════════
 defaults:
   - base_data
   - _self_

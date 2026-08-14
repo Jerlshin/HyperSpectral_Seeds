@@ -1,11 +1,36 @@
-"""``SpectralSeedNet`` — the two-pathway replacement (IC-10 / CHANGES §16.2).
+"""``SpectralSeedNet`` — the two-pathway 256-band network (IC-10 / CHANGES §16.2).
+
+The primary architecture of this study. It consumes the **complete 256-band
+VIS–NIR cube**: no band selection, no PCA, no reduction of any kind stands
+between ``dataset/patches.npy`` and the first parameter. Every component below
+is sized from ``data.num_bands`` rather than tuned for one band count, which is
+what makes 256 the native case and the retained band-selection arms (k = 40,
+k = 100, the band study's sweep) the *reduced* ones.
+
+What "native at 256" means concretely
+─────────────────────────────────────
+Two components would otherwise make a full cube either unaffordable or
+mis-shaped, and both are solved rather than parameterised around:
+
+* the spatial path's 3-D stem derives its spectral strides from the band count
+  (:func:`~spectralquadnet.models.branches.spatial_cnn.spectral_stride_schedule`),
+  so 256 bands fold at depth 8 for 0.87 GMAC, instead of at depth 32 for
+  2.89 GMAC and a ``Conv2d(2048 → 192)`` fold;
+* the continuum hull is computed by an exact :math:`O(C^2)` suffix-maximum
+  (:class:`~spectralquadnet.models.branches.spectral_stats.ContinuumDepths`)
+  rather than by enumerating :math:`O(C^3)` chords, which at 256 bands would be
+  16.8 M chords and 570 MB of resident buffers.
+
+Nothing else in the network needed a band-count special case: the index bank,
+the Savitzky–Golay derivative operators, ``MaskedSpectralECA``'s ECA kernel width
+and the descriptor width are all functions of :math:`C` already.
 
 Why two pathways and not four
 ─────────────────────────────
 The audited evidence brackets exactly two information sources on this dataset,
 and the numbers are the most useful pair in the whole project:
 
-* **LDA on 40-band mean spectra scores 0.5916** accuracy
+* **LDA on mean spectra scores 0.5916** accuracy at k = 40
   (``dataset/band_selection_report.csv``, patch-level 5-fold, so also leaky).
   ~59 points are available from the global spectrum alone.
 * **The full 5.19 M model reaches ~84.5%** under the same leaky protocol. ~25
@@ -43,14 +68,18 @@ Doubled morphometrics            They entered the model twice, in Branch B *and*
 What is retained, and why
 ─────────────────────────
 Branch C verbatim (the only evidence-supported discriminative component), the
-index bank and continuum depths (1.8% of parameters, 0.005% of compute, and the
-signal the entire NIR-chemometrics literature is built on — kept on theoretical
-rather than evidential grounds, and flagged as such), ``MaskedSpectralECA`` (six
-parameters), the exact-zero background invariant, mixup, EMA, D₄, and the
-cosine/ArcFace head with its elaborations stripped.
+index bank and continuum depths (the signal the entire NIR-chemometrics
+literature is built on — kept on theoretical rather than evidential grounds, and
+flagged as such), ``MaskedSpectralECA`` (ten parameters at 256 bands; its ECA
+kernel width is ``f(log2 C)``), the exact-zero
+background invariant, mixup, EMA, D₄, and the cosine/ArcFace head with its
+elaborations stripped.
 
-≈2.8 M parameters and ≈1.4 GFLOP/sample: 54% of the parameters and 34% of the
-compute of ``SpectralQuadNet``.
+≈3.05 M parameters on the 256-band input, against ``SpectralQuadNet``'s ≈5.26 M
+on the same input. The exact counts are produced by
+:func:`~spectralquadnet.models.registry.parameter_breakdown` and written into
+every run's results JSON, so they are a recorded artifact rather than a number
+in a docstring.
 
 **``SpectralQuadNet`` is not deleted.** A3 and A8 need it as their control arm;
 removing the thing an ablation is supposed to falsify would make the removals
@@ -75,7 +104,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from spectralquadnet.models.blocks.attention import MaskedSpectralECA
-from spectralquadnet.models.branches.spatial_cnn import SpatialCNNBranch
+from spectralquadnet.models.branches.spatial_cnn import DEFAULT_FOLDED_DEPTH, SpatialCNNBranch
 from spectralquadnet.models.branches.spectral_stats import ContinuumDepths, SoftIndexBank
 from spectralquadnet.models.control import set_dropout as set_module_dropout
 from spectralquadnet.models.front_end import SpectralDerivatives, snv
@@ -95,14 +124,21 @@ class SpectralPath(nn.Module):
 
     .. code-block:: text
 
-        x̄ (B, C)
+        x̄ (B, 256)
           ├─ SoftIndexBank(64)        learned normalised-difference indices
           ├─ ContinuumDepths(16)      hull-removed absorption depths
-          ├─ snv(x̄)         (C)      ┐ Branch A's physics, as fixed features:
-          ├─ D₁ snv(x̄)      (C)      │ zero parameters, exact on the irregular
-          ├─ D₂ snv(x̄)      (C)      ┘ λ grid (Savitzky–Golay)
+          ├─ snv(x̄)       (256)      ┐ Branch A's physics, as fixed features:
+          ├─ D₁ snv(x̄)    (256)      │ zero parameters, exact on the irregular
+          ├─ D₂ snv(x̄)    (256)      ┘ λ grid (Savitzky–Golay)
           └─ morph          (8)       physical size and shape
-                → LayerNorm → MLP → (B, 256)
+                → LayerNorm(856) → MLP(856 → 256 → 256)
+
+    Descriptor width is ``n_indices + n_depths + 3C + n_morph``: **856** on the
+    full cube, 208 on the retained 40-band arm. The full-resolution SNV and
+    derivative vectors are the primary path's whole point — a continuum-removal
+    or derivative feature computed on a selected subset is a different physical
+    quantity from the same feature computed on the acquired spectrum, and the
+    study's question is what the acquired spectrum supports.
 
     The three SNV/derivative blocks are what makes removing Branch A a
     *relocation* rather than a loss. :class:`~spectralquadnet.models.front_end.SpectralDerivatives`
@@ -195,13 +231,14 @@ class SpectralSeedNet(nn.Module):
         cfg: ExperimentConfig | Any,
         physical_wl: torch.Tensor,
         num_classes: int = 90,
-        num_bands: int = 40,
+        num_bands: int = 256,
         dropout: float = 0.15,
         wl_embed_dim: int = 16,
     ) -> None:
         super().__init__()
         model_cfg = cfg.model
         self.n_morph = int(model_cfg.n_morphometrics)
+        self.num_bands = int(num_bands)
 
         # ── Shared spectral attention — 6 parameters, free, kept ───────
         self.se = MaskedSpectralECA(num_bands)
@@ -212,6 +249,7 @@ class SpectralSeedNet(nn.Module):
             EMBED_DIM,
             stem_channels=int(model_cfg.stem_channels),
             width_mult=float(model_cfg.spatial_width_mult),
+            stem_folded_depth=int(getattr(model_cfg, "stem_folded_depth", DEFAULT_FOLDED_DEPTH)),
         )
 
         # ── Spectral path ─────────────────────────────────────────────

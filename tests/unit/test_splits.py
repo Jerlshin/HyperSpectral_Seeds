@@ -364,7 +364,7 @@ def test_every_new_data_key_is_read_by_the_split_builder(cfg) -> None:
 
 
 def test_the_pfix_config_selects_the_grouped_protocol() -> None:
-    """``data=spa40_90class_pfix`` is the re-baseline config §4.4 sequences."""
+    """``data=ablation/spa40_grouped`` is the re-baseline config §4.4 sequences."""
     from pathlib import Path
 
     from hydra import compose, initialize_config_dir
@@ -376,7 +376,7 @@ def test_the_pfix_config_selects_the_grouped_protocol() -> None:
     with initialize_config_dir(config_dir=str(repo_root / "configs"), version_base="1.3"):
         pfix = compose(
             config_name="experiment/quadnet_audited",
-            overrides=["data=spa40_90class_pfix"],
+            overrides=["data=ablation/spa40_grouped"],
         )
     assert pfix.data.split_scheme == "grouped"
     assert pfix.data.calib_frac > 0.0

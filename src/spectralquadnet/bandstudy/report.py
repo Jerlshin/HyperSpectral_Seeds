@@ -119,7 +119,7 @@ def _protocol(cfg: BandStudyConfig, splits: dict[str, Any]) -> list[str]:
         f"Protocol: **{cfg.split_scheme}** (acquisition-disjoint), folds "
         f"{list(cfg.folds)}, `split_eval_frac={cfg.split_eval_frac}`, "
         f"`calib_frac={cfg.calib_frac}` — the same builder and the same parameters "
-        "`configs/data/spa40_90class_pfix.yaml` gives the training runs.\n",
+        "`configs/data/hsi256_grouped.yaml` gives the training runs.\n",
     ]
     folds = splits.get("folds", {})
     if folds:

@@ -45,8 +45,14 @@ structural change nobody wrote down.
 
 Artifacts written per schema directory
 ─────────────────────────────────────
-``physical_wl_spa40.npy``       the min-max-normalised wavelength vector, so the
-                                test never needs the gitignored ``dataset/``.
+``physical_wl_spa40.npy``       the 40-band min-max-normalised wavelength vector
+                                the goldens were captured on, so the test never
+                                needs the gitignored ``dataset/``.
+``physical_wl_full256.npy``     the **primary** path's 256-band λ axis, committed
+                                beside it for the same reason. Not itself a
+                                regression golden — nothing is digested against
+                                it — but every λ-aware operator is a function of
+                                it, so the 256-band unit tests read it.
 ``forward_logits_seed42.npy``   ``(4, 90)`` eval-mode logits.
 ``init_state_sha256.json``      SHA-256 of every one of the freshly initialised
                                 state-dict tensors, plus a combined digest.
@@ -372,14 +378,68 @@ def refactored_train_step(cfg: Any, physical_wl: torch.Tensor) -> dict[str, Any]
     )
 
 
+#: The **primary** path's λ axis, committed beside the 40-band one.
+#:
+#: Not a regression golden — no digest is compared against it — but the same
+#: kind of artifact and kept for the same reason: every λ-aware operator in the
+#: model is a function of this vector, so the unit tests that describe those
+#: operators at 256 bands must not depend on the gitignored ``dataset/``.
+PRIMARY_WL_FILE = "physical_wl_full256.npy"
+
+
+def capture_primary_wavelengths() -> bool:
+    """Refresh :data:`PRIMARY_WL_FILE` from the primary config's wavelength CSV.
+
+    A no-op returning ``False`` when ``dataset/`` is absent, which is the normal
+    state of a fresh clone — the committed copy is what the tests read, and it
+    only needs rewriting if the acquisition's band centres ever change.
+    """
+    from spectralquadnet.config.compose import load_experiment_config
+    from spectralquadnet.data.mmap_store import DataStore
+
+    cfg = load_experiment_config()
+    source = Path(str(cfg.data.wavelength_path))
+    if not source.exists():
+        print(f"  ! {source} absent — {PRIMARY_WL_FILE} left as committed")
+        return False
+
+    DataStore.reset()
+    store = DataStore()
+    store.load_wavelengths(str(source), "cpu")
+    wl = store.require_wavelengths().numpy().astype(np.float32)
+    DataStore.reset()
+
+    if wl.size != int(cfg.data.num_bands):
+        raise SystemExit(
+            f"{source} holds {wl.size} wavelengths but the primary config declares "
+            f"data.num_bands={cfg.data.num_bands}"
+        )
+    np.save(GOLDEN / PRIMARY_WL_FILE, wl)
+    print(f"  ✓ {PRIMARY_WL_FILE}: {wl.size} bands from {source}")
+    return True
+
+
 def capture_refactored(
     wl: np.ndarray[Any, Any],
 ) -> tuple[np.ndarray[Any, Any], dict[str, str], dict[str, Any], dict[str, Any]]:
-    from spectralquadnet.config.compose import load_experiment_config
+    """The current code's side of the comparison.
+
+    Composes :data:`~spectralquadnet.config.compose.AUDITED_EXPERIMENT`
+    explicitly, because that is the configuration the goldens *describe*: the
+    four-branch architecture on the 40-band SPA subset. Composing the repository
+    **default** here would have been silently wrong even when the default was
+    also 40 bands — it carries ``model=seed_net``, whose ``subcenter_K=1`` and
+    ``fusion_mode=concat_mlp`` build a different ``SpectralQuadNet`` from the one
+    the digests were taken from — and is now loudly wrong, since the default is
+    the 256-band primary composition. ``tests/conftest.py`` already passed the
+    audited config into :func:`refactored_train_step`; this makes the capture
+    agree with the gate it feeds.
+    """
+    from spectralquadnet.config.compose import AUDITED_EXPERIMENT, load_experiment_config
     from spectralquadnet.models.spectral_quadnet import SpectralQuadNet
     from spectralquadnet.utils.seed import set_seed
 
-    cfg = load_experiment_config()
+    cfg = load_experiment_config(AUDITED_EXPERIMENT)
     physical_wl = torch.from_numpy(wl).to(DEVICE)
 
     logits, sd = forward_pass(
@@ -715,6 +775,7 @@ def main() -> int:
         return 0
 
     np.save(GOLDEN / "physical_wl_spa40.npy", wl.astype(np.float32))
+    capture_primary_wavelengths()
     np.save(GOLDEN / "forward_logits_seed42.npy", base_logits.astype(np.float32))
     (GOLDEN / "init_state_sha256.json").write_text(json.dumps(base_digests, indent=2) + "\n")
     (GOLDEN / "stage1_epoch1_loss_seed42.json").write_text(json.dumps(base_loss, indent=2) + "\n")

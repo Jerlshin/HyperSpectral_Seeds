@@ -113,7 +113,7 @@ def test_every_masked_operator_takes_the_mask(cube_and_mask) -> None:
 def test_the_fallback_is_the_pre_tier3_behaviour_exactly(cube_and_mask) -> None:
     """``mask=None`` reproduces the threshold bit-for-bit.
 
-    This is what lets ``configs/data/spa40_90class.yaml`` keep reproducing the
+    This is what lets ``configs/data/ablation/spa40_audited.yaml`` keep reproducing the
     reference run: the arrays that predate T4-3 have no fill map, and a
     "compatible" path that was merely close would make that claim false.
     """
@@ -259,13 +259,124 @@ def test_the_hull_finds_an_absorption_feature_and_is_gain_free() -> None:
 
 
 def test_the_hull_buffers_stay_out_of_the_checkpoint() -> None:
-    """``O(C^3)`` interpolation weights are a function of λ, not a learned quantity.
+    """The hull's constants are a function of λ, not a learned quantity.
 
-    Persisting them would put half a megabyte of derivable constants into every
-    checkpoint, and the wavelength vector they derive from is already carried by
-    ``wl_pe_cnn.pe``.
+    Persisting them would put derivable constants into every checkpoint, and the
+    wavelength vector they derive from is already carried by ``wl_pe_cnn.pe``.
     """
     depths = ContinuumDepths(torch.linspace(0.0, 1.0, BANDS), n_depths=8)
 
     assert depths.state_dict() == {}
-    assert depths.chord_w.shape == (BANDS, BANDS, BANDS)
+    # And they are O(C), not O(C^3): the whole point of the suffix-maximum form.
+    assert depths.lam.shape == (BANDS,)
+    assert depths.order.shape == (BANDS,)
+    for buffer in depths.buffers():
+        assert buffer.ndim == 1, "no dense chord tensor may survive"
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  256-band native — the continuum hull is exact, not approximate
+# ══════════════════════════════════════════════════════════════════════
+
+
+def _reference_envelope(lam: torch.Tensor, r: torch.Tensor, chunk: int = 8) -> torch.Tensor:
+    """The ``O(C^3)`` chord enumeration, transcribed from the implementation it replaced.
+
+    Kept as a literal here rather than imported, because the point of the
+    comparison is that the fast form agrees with a *definition* — the pointwise
+    maximum over every chord bracketing each band — and not with a refactor of
+    itself.
+    """
+    la, lb, li = lam[:, None, None], lam[None, :, None], lam[None, None, :]
+    span = lb - la
+    valid = (span > 0) & (li >= la) & (li <= lb)
+    weight = torch.where(valid, (li - la) / span.clamp(min=1e-12), torch.zeros_like(span + li))
+
+    env = r.clone()
+    for start in range(0, r.shape[1], chunk):
+        stop = min(start + chunk, r.shape[1])
+        chords = (
+            r[:, start:stop, None, None] * (1.0 - weight[start:stop])
+            + r[:, None, :, None] * weight[start:stop]
+        )
+        env = torch.maximum(
+            env, chords.masked_fill(~valid[start:stop], -torch.inf).amax(dim=(1, 2))
+        )
+    return env
+
+
+@pytest.mark.parametrize("bands", [6, 12, 40, 64])
+def test_the_fast_hull_is_bit_identical_to_the_chord_enumeration(bands: int) -> None:
+    """Exactness, not closeness.
+
+    The ``O(C^3)`` form is infeasible on the acquired cube — 16.8 M chords and
+    570 MB of resident buffers at C = 256 — so the primary path needs the
+    suffix-maximum form. But the audited 40-band arm and every golden regression
+    digest were captured through the old one, so "equivalent" has to mean
+    *identical* rather than *within tolerance*, or the control arm silently stops
+    being the control arm.
+    """
+    generator = torch.Generator().manual_seed(bands)
+    lam = torch.sort(torch.rand(bands, generator=generator) * 600.0 + 400.0).values
+    module = ContinuumDepths(lam, n_depths=min(8, bands))
+
+    for _ in range(5):
+        spectrum = torch.rand(4, bands, generator=generator) + 0.2
+        assert torch.equal(module.envelope(spectrum), _reference_envelope(lam, spectrum))
+
+
+def test_the_hull_is_correct_on_an_unsorted_wavelength_axis() -> None:
+    """A selection-ordered CSV must produce the same hull, not a wrong one.
+
+    The suffix maximum is a statement about λ, so the module permutes into
+    λ-ascending order internally. A band-selection arm whose wavelength file
+    came out in relevance order rather than spectral order is the case this
+    exists for.
+    """
+    generator = torch.Generator().manual_seed(0)
+    lam = torch.sort(torch.rand(24, generator=generator) * 600.0 + 400.0).values
+    shuffled = lam[torch.randperm(24, generator=generator)]
+
+    module = ContinuumDepths(shuffled, n_depths=8)
+    spectrum = torch.rand(3, 24, generator=generator) + 0.2
+
+    assert torch.equal(module.envelope(spectrum), _reference_envelope(shuffled, spectrum))
+
+
+def test_the_hull_runs_on_the_full_cube_at_a_training_batch() -> None:
+    """The case the ``O(C^3)`` form could not reach at all.
+
+    Not a speed assertion — a feasibility one. The old form allocated a
+    ``(B, chunk, C, C)`` activation, which is 268 MB per chunk at batch 128 and
+    C = 256, thirty-two times per forward.
+    """
+    generator = torch.Generator().manual_seed(1)
+    lam = torch.sort(torch.rand(256, generator=generator) * 620.0 + 383.0).values
+    module = ContinuumDepths(lam, n_depths=16)
+
+    spectrum = (torch.rand(64, 256, generator=generator) + 0.2).requires_grad_(True)
+    out = module(spectrum)
+    out.sum().backward()
+
+    assert out.shape == (64, 16)
+    assert torch.isfinite(out).all()
+    # The hull is differentiable through its two active endpoints and nowhere
+    # else, so the gradient is sparse — but it must exist and must be finite.
+    assert spectrum.grad is not None
+    assert torch.isfinite(spectrum.grad).all()
+    assert float(spectrum.grad.abs().sum()) > 0.0
+
+
+def test_the_hull_is_gain_invariant_on_the_full_cube() -> None:
+    """BR-1(ii)'s reason for existing, checked at the primary band count.
+
+    The envelope is positively homogeneous, so the depth ratio is invariant to
+    the per-session illumination gain — which is the strongest single carrier of
+    acquisition-bundle identity on this dataset.
+    """
+    generator = torch.Generator().manual_seed(2)
+    lam = torch.sort(torch.rand(256, generator=generator) * 620.0 + 383.0).values
+    module = ContinuumDepths(lam, n_depths=16)
+
+    spectrum = torch.rand(4, 256, generator=generator) + 0.2
+    assert torch.allclose(module(spectrum), module(spectrum * 3.7), atol=1e-5)
