@@ -160,7 +160,10 @@ class ContinuumDepths(nn.Module):
     ) -> None:
         """
         Args:
-            wavelengths: ``(C,)`` band wavelengths, in any unit and any order.
+            wavelengths: ``(C,)`` band wavelengths, in any unit, any order and on
+                any device — the two buffers follow that device, as
+                :class:`~spectralquadnet.models.front_end.SpectralDerivatives`'
+                operators follow it.
             n_depths: How many of the deepest features to return, clamped to
                 ``C``.
             chunk: Left endpoints processed per iteration. A pure memory knob:
@@ -170,7 +173,17 @@ class ContinuumDepths(nn.Module):
             eps: Floor under the envelope in the depth ratio.
         """
         super().__init__()
-        raw = wavelengths.detach().flatten().float()
+        # λ arrives on whatever device the run's data lives on: `DataStore`
+        # loads the wavelength CSV onto that device, so under `torchrun` every
+        # rank builds this module from a `cuda:${LOCAL_RANK}` tensor. The
+        # permutation is a property of the wavelength *vector* and of nothing
+        # else, so it is derived on the CPU — as `savitzky_golay_operators`
+        # derives the λ-derivative operators — and placed on the caller's device
+        # at the end. Derived in place, the identity check below would compare an
+        # accelerator-resident `order` against a CPU `arange`, which raises
+        # rather than returning `False`.
+        device = wavelengths.device
+        raw = wavelengths.detach().cpu().flatten().float()
         n_bands = int(raw.numel())
         self.n_bands = n_bands
         self.n_depths = min(int(n_depths), n_bands)
@@ -180,12 +193,12 @@ class ContinuumDepths(nn.Module):
         # `stable=True` so an exactly repeated wavelength keeps band order, which
         # makes the operator a deterministic function of the wavelength vector.
         order = torch.argsort(raw, stable=True)
+        self.is_sorted = bool(torch.equal(order, torch.arange(n_bands)))
         # Non-persistent for the reason the chord buffers were: both are exact
         # functions of the wavelength vector the checkpoint already carries, and
         # a second copy is a second thing that can disagree with it.
-        self.register_buffer("order", order, persistent=False)
-        self.register_buffer("lam", raw[order], persistent=False)
-        self.is_sorted = bool(torch.equal(order, torch.arange(n_bands)))
+        self.register_buffer("order", order.to(device), persistent=False)
+        self.register_buffer("lam", raw[order].to(device), persistent=False)
 
     def envelope(self, r: torch.Tensor) -> torch.Tensor:
         """The upper concave envelope of ``r``, evaluated at every band. ``(B, C)``.
