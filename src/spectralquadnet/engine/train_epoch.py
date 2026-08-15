@@ -92,6 +92,7 @@ Behaviour worth keeping in mind when reading these loops:
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 from typing import TYPE_CHECKING, Any
@@ -268,8 +269,15 @@ def train_one_epoch(
     diag_clip: dict[str, torch.Tensor] = {}
     n_aux = n_branch = n_clip = 0
     n_skipped = 0
+    _train_log = logging.getLogger(__name__)
 
     for step, batch in enumerate(loader):
+        if step == 0:
+            _train_log.info(
+                "[TRAIN] First batch retrieved (ep=%d, batch_size=%s)",
+                current_ep, next(iter(batch)).shape[0] if batch else "?",
+            )
+            _first_fwd_t = time.perf_counter()
         x, y, mask, morph = unpack_batch(batch, device)
         # Mixup interpolates two patches, so it interpolates their fill maps and
         # their morphometrics too — both are continuous quantities and the
@@ -405,6 +413,12 @@ def train_one_epoch(
         total_loss += loss_value
         total_acc += acc_value
 
+        if step == 0:
+            _train_log.info(
+                "[TRAIN] First step completed in %.1f s (ep=%d)",
+                time.perf_counter() - _first_fwd_t, current_ep,
+            )
+
     n = max(len(loader), 1)
     scalars = _diagnostic_scalars(
         (diag_aux, n_aux),
@@ -532,6 +546,12 @@ def train_one_epoch_sam(
     cos_stride = max(1, len(loader) // GRAD_COS_SAMPLES) if want_grad_norms else 0
 
     for step, batch in enumerate(loader):
+        if step == 0:
+            _train_log.info(
+                "[TRAIN-SAM] First batch retrieved (ep=%d, batch_size=%s)",
+                current_ep, next(iter(batch)).shape[0] if batch else "?",
+            )
+            _first_sam_fwd_t = time.perf_counter()
         x, y, mask, morph = unpack_batch(batch, device)
         side = side_inputs(mask, morph)
 
@@ -593,6 +613,12 @@ def train_one_epoch_sam(
 
         total_loss += loss_value
         total_acc += acc_value
+
+        if step == 0:
+            _train_log.info(
+                "[TRAIN-SAM] First step completed in %.1f s (ep=%d)",
+                time.perf_counter() - _first_sam_fwd_t, current_ep,
+            )
 
     n = max(len(loader), 1)
     scalars = _diagnostic_scalars(

@@ -170,8 +170,17 @@ def supports_bfloat16(device: torch.device) -> bool:
             return False
         is_supported = getattr(torch.cuda, "is_bf16_supported", None)
         if is_supported is None:  # pragma: no cover - torch < 1.10
-            return torch.cuda.get_device_capability(device)[0] >= 8
-        return bool(is_supported())
+            try:
+                return torch.cuda.get_device_capability(device)[0] >= 8
+            except Exception:
+                return False
+        try:
+            return bool(is_supported())
+        except Exception:
+            try:
+                return torch.cuda.get_device_capability(device)[0] >= 8
+            except Exception:
+                return False
     if device.type == "mps":
         # bf16 on Metal needs macOS 14; torch raises rather than degrading.
         newer = getattr(torch.backends.mps, "is_macos_or_newer", None)
@@ -191,11 +200,17 @@ def bfloat16_is_native(device: torch.device) -> bool:
     if device.type == "cuda":
         is_supported = getattr(torch.cuda, "is_bf16_supported", None)
         if is_supported is None:  # pragma: no cover - torch < 1.10
-            return torch.cuda.get_device_capability(device)[0] >= 8
+            try:
+                return torch.cuda.get_device_capability(device)[0] >= 8
+            except Exception:
+                return False
         try:
             return bool(is_supported(including_emulation=False))
-        except TypeError:  # pragma: no cover - torch < 2.4 has no such keyword
-            return torch.cuda.get_device_capability(device)[0] >= 8
+        except (TypeError, Exception):
+            try:
+                return torch.cuda.get_device_capability(device)[0] >= 8
+            except Exception:
+                return False
     return supports_bfloat16(device)
 
 
@@ -444,11 +459,28 @@ def resolve_runtime(
     persistent = _tri_state(getattr(cfg, "persistent_workers", -1), workers > 0) and workers > 0
 
     compile_mode_str = str(getattr(cfg, "compile", "auto")).lower()
-    compile_enabled = (
-        device.type == "cuda"
-        if compile_mode_str == "auto"
-        else compile_mode_str in ("on", "true", "1", "yes")
-    )
+    if compile_mode_str == "auto":
+        if device.type == "cuda" and torch.cuda.is_available():
+            # Turing (sm_75 — the T4) has no bf16 Tensor Core path, and
+            # `torch.compile/inductor` takes 15-30+ minutes to compile this
+            # model's graph on it, with negligible runtime benefit.  That
+            # compilation is silent — no log, no progress bar — and looks
+            # exactly like a training hang.  Ampere (sm_80+) benefits.
+            try:
+                cap = torch.cuda.get_device_capability(device)
+                compile_enabled = cap[0] >= 8
+                if not compile_enabled:
+                    _log.info(
+                        "torch.compile auto-disabled: sm_%d%d is pre-Ampere and gains "
+                        "little from inductor. Set runtime.compile=on to force it.",
+                        *cap,
+                    )
+            except Exception:
+                compile_enabled = False
+        else:
+            compile_enabled = False
+    else:
+        compile_enabled = compile_mode_str in ("on", "true", "1", "yes")
 
     fused_str = str(getattr(cfg, "fused_optimizer", "auto")).lower()
     fused = (
@@ -756,11 +788,24 @@ def maybe_compile(model: nn.Module, plan: RuntimePlan) -> nn.Module:
     Returns the compiled wrapper, which forwards attribute access to the
     original module — so ``model.arcface_head`` and ``model.state_dict()`` keep
     working and the checkpoint schema is untouched.
+
+    .. note::
+       ``torch.compile`` traces the graph *lazily* on the first forward pass.
+       On Turing GPUs (T4 / sm_75) this can take 15–30+ minutes and produces
+       no log output, so the run appears to hang.  The ``auto`` mode now
+       disables compile on pre-Ampere cards to prevent this.
     """
     if not plan.compile_enabled:
+        _log.info("[COMPILE] torch.compile is OFF — running in eager mode")
         return model
     if not hasattr(torch, "compile"):  # pragma: no cover - torch < 2.0
         return model
+    _log.info(
+        "[COMPILE] torch.compile is ON (backend=%s, mode=%s). "
+        "The first forward pass will trigger compilation — this may take several minutes.",
+        plan.compile_backend,
+        plan.compile_mode,
+    )
     try:
         compiled = torch.compile(
             model, backend=plan.compile_backend, mode=plan.compile_mode, dynamic=False

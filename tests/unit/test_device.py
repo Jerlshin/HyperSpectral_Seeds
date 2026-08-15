@@ -195,3 +195,43 @@ def test_release_memory_reads_the_peak_before_it_sweeps(monkeypatch) -> None:
     dev.release_memory(torch.device("mps"))
     assert seen == ["swept"], "the sweep must still happen"
     assert dev.report_memory_use(torch.device("mps")) is None, "release_memory already reported"
+
+
+def test_compile_auto_disables_on_turing_and_enables_on_ampere(monkeypatch) -> None:
+    """Turing (T4 / sm_75) has no bf16 Tensor Cores and 20+ min compile times, so auto disables it."""
+    from spectralquadnet.utils.device import resolve_runtime
+
+    class _Cfg:
+        compile = "auto"
+        num_workers = 0
+        eval_num_workers = 0
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+
+    # Turing (sm_75) -> False
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda d: (7, 5))
+    plan_turing = resolve_runtime(_Cfg(), torch.device("cuda:0"))
+    assert plan_turing.compile_enabled is False
+
+    # Ampere (sm_80 / A100) -> True
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda d: (8, 0))
+    plan_ampere = resolve_runtime(_Cfg(), torch.device("cuda:0"))
+    assert plan_ampere.compile_enabled is True
+
+    # Explicit compile="on" on Turing overrides auto
+    class _CfgOn:
+        compile = "on"
+        num_workers = 0
+        eval_num_workers = 0
+
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda d: (7, 5))
+    plan_override = resolve_runtime(_CfgOn(), torch.device("cuda:0"))
+    assert plan_override.compile_enabled is True
+
+    # MPS / CPU -> False under auto
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    plan_mps = resolve_runtime(_Cfg(), torch.device("mps"))
+    assert plan_mps.compile_enabled is False
+    plan_cpu = resolve_runtime(_Cfg(), torch.device("cpu"))
+    assert plan_cpu.compile_enabled is False
+

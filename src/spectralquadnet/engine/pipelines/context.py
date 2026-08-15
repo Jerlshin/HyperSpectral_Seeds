@@ -28,6 +28,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+import logging
+import time
 
 import numpy.typing as npt
 import torch
@@ -159,6 +161,9 @@ def build_run_context(
             silently degrades is worse than one that fails, because the number
             it produces still looks like a variety-recognition number.
     """
+    _log = logging.getLogger(__name__)
+    t_ctx = time.monotonic()
+
     # ══════════════════════════════════════════════════════════════════
     #  RNG ORDERING. DO NOT MOVE THIS CALL. See the module docstring.
     # ══════════════════════════════════════════════════════════════════
@@ -195,7 +200,10 @@ def build_run_context(
         f"Samples/class (train): ~{len(splits.train) // cfg.data.num_classes}", level="plain"
     )
 
+    _log.info("[CONTEXT] Building model ...")
+    t0 = time.monotonic()
     model = build_model(cfg, store.require_wavelengths()).to(device)
+    _log.info("[CONTEXT] Model built and moved to %s in %.1f s", device, time.monotonic() - t0)
     path_notes = apply_runtime_optimisations(model, plan)
     ema = ModelEMA(model, decay=cfg.ema_decay)
 
@@ -235,13 +243,22 @@ def build_run_context(
     # keeping it plain is what lets `save_ckpt` write one schema.
     if plan.channels_last and device.type == "cuda":
         model = model.to(memory_format=torch.channels_last)  # type: ignore[call-overload]
+
+    _log.info("[CONTEXT] Wrapping model for DDP training ...")
+    t0 = time.monotonic()
     train_module = wrap_for_training(model, dist, sync_batchnorm=bool(cfg.runtime.sync_batchnorm))
+    _log.info("[CONTEXT] DDP wrap completed in %.1f s", time.monotonic() - t0)
+
+    t0 = time.monotonic()
     train_module = maybe_compile(train_module, plan)
+    _log.info("[CONTEXT] torch.compile step completed in %.1f s", time.monotonic() - t0)
 
     morph = standardised_morphometrics(store, splits.train)
     calib_loader = build_calib_loader(
         cfg, store, device, splits.calib, train_idx=splits.train, plan=plan, dist=dist
     )
+
+    _log.info("[CONTEXT] RunContext built in %.1f s total", time.monotonic() - t_ctx)
 
     return RunContext(
         cfg=cfg,
