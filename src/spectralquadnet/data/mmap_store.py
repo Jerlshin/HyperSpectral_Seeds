@@ -36,6 +36,21 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 import torch
+import mmap
+
+def _apply_madvise_random(array: npt.NDArray[Any]) -> None:
+    """Disable sequential read-ahead on memory-mapped arrays to prevent thrashing.
+    
+    DataLoaders access patches randomly, which causes the OS to eagerly prefetch
+    adjacent pages. On a 36 GB dataset, this completely exhausts host RAM and
+    causes severe disk thrashing. MADV_RANDOM instructs the kernel to only read
+    the explicitly requested pages.
+    """
+    if hasattr(array, "base") and hasattr(array.base, "madvise") and hasattr(mmap, "MADV_RANDOM"):
+        try:
+            array.base.madvise(mmap.MADV_RANDOM)
+        except Exception as e:
+            _log.debug("Failed to apply MADV_RANDOM: %s", e)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from spectralquadnet.config.schema import DataConfig
@@ -151,6 +166,7 @@ class DataStore:
 
         _log.info("[DATA] Memory-mapping dataset from disk (Zero-RAM footprint)...")
         self.patches = np.load(patches_path, mmap_mode="r")
+        _apply_madvise_random(self.patches)
         self.patches_path = str(patches_path)
         self.labels = np.load(labels_path)
         _log.info("[DATA] ✓ Indexed %d samples via mmap.", self.patches.shape[0])
@@ -173,6 +189,7 @@ class DataStore:
         """
         if masks_path and self.masks is None and Path(masks_path).exists():
             self.masks = np.load(masks_path, mmap_mode="r")
+            _apply_madvise_random(self.masks)
             self.masks_path = str(masks_path)
             self._check_rows(masks_path, self.masks)
             _log.info("[DATA] ✓ Mapped fill maps (FE-2): %s", self.masks.shape)

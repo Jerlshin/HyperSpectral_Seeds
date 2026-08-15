@@ -306,10 +306,25 @@ class RiceSeedDataset(Dataset):  # type: ignore[type-arg]
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Re-open the mmaps in this worker process. The inverse of :meth:`__getstate__`."""
         self.__dict__.update(state)
+        
+        # Import mmap locally so worker processes have access to MADV_RANDOM
+        import mmap
+        
         if self.patches is None and self._patches_path is not None:
             self.patches = np.load(self._patches_path, mmap_mode="r")
+            if hasattr(self.patches, "base") and hasattr(self.patches.base, "madvise") and hasattr(mmap, "MADV_RANDOM"):
+                try:
+                    self.patches.base.madvise(mmap.MADV_RANDOM)
+                except Exception:
+                    pass
+                    
         if self.masks is None and self._masks_path is not None:
             self.masks = np.load(self._masks_path, mmap_mode="r")
+            if hasattr(self.masks, "base") and hasattr(self.masks.base, "madvise") and hasattr(mmap, "MADV_RANDOM"):
+                try:
+                    self.masks.base.madvise(mmap.MADV_RANDOM)
+                except Exception:
+                    pass
 
     # ── Same-class partner bookkeeping (OP-6 / T2-7) ──────────────────
 
