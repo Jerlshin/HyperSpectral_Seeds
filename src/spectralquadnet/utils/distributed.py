@@ -61,6 +61,7 @@ from __future__ import annotations
 import datetime
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
@@ -188,9 +189,18 @@ def init_distributed(runtime_cfg: Any = None, fallback: torch.device | None = No
         backend = "gloo"
 
     if not dist.is_initialized():
+        _log.info(
+            "[RANK %d] Joining process group (backend=%s, world_size=%d) ...",
+            rank, backend, world_size,
+        )
+        t0 = time.monotonic()
         dist.init_process_group(
             backend=backend,
             timeout=datetime.timedelta(seconds=int(getattr(runtime_cfg, "dist_timeout_s", 1800))),
+        )
+        _log.info(
+            "[RANK %d] Process group joined in %.1f s",
+            rank, time.monotonic() - t0,
         )
 
     return DistContext(
