@@ -84,10 +84,11 @@ SPLIT_SCHEMES: tuple[str, ...] = ("stratified", "grouped")
 #: NumPy RNG (``train.py`` requires the split to consume no shared stream).
 SPLIT_SEED: int = 42
 
-#: Batch size every evaluation loader is built at. Was a literal repeated at
-#: four call sites; evaluation never touches a gradient, so this is bounded by
-#: activation memory alone and is not a hyperparameter.
-EVAL_BATCH: int = 256
+#: Batch size every evaluation loader is built at. Sized to prevent
+#: multi-gigabyte activation spikes on full 256-band hyperspectral cubes;
+#: evaluation never touches a gradient, so this is bounded by memory alone
+#: and is not a hyperparameter.
+EVAL_BATCH: int = 64
 
 #: What :func:`grouped_split` does about a class with only one group. ``error``
 #: refuses and names the classes — §3.1's "report the count explicitly … rather

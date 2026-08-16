@@ -507,15 +507,14 @@ class RiceSeedDataset(Dataset):  # type: ignore[type-arg]
             :data:`~spectralquadnet.engine.batch.ABSENT` standing in for
             whichever of the two is missing.
         """
+    def _augment_and_wrap(
+        self, idx: int, patch: torch.Tensor, mask: torch.Tensor | None
+    ) -> tuple[torch.Tensor, ...]:
+        """Apply deterministic augmentations to a single sample and package its tuple."""
         ri = self.indices[idx]
         row_label = int(self.split_labels[idx])
-
-        # Copies exactly one patch off the mmap. Do not replace with a batched
-        # copy — that is what bounds RAM.
-        patch = torch.from_numpy(self._load_patch(ri))
         label = torch.tensor(row_label, dtype=torch.long)
         n_bands = patch.shape[0]
-        mask = self._load_mask(ri) if self.masks is not None else None
 
         if self.profile is not None:
             p = self.profile
@@ -554,3 +553,63 @@ class RiceSeedDataset(Dataset):  # type: ignore[type-arg]
             mask if mask is not None else ABSENT,
             torch.from_numpy(self.morph[ri]) if self.morph is not None else ABSENT,
         )
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, ...]:
+        """Load one patch off the mmap and apply the dataset's augmentation profile.
+
+        Each augmentation is independently triggered by its own probability in
+        ``self.profile`` (a Bernoulli draw per augmentation, not a single
+        categorical choice), so multiple can stack on one sample.
+
+        The two CutMix guards come last, before the dihedral transform, and
+        test their probability *before* drawing — a profile with CutMix off
+        consumes no randomness here and reproduces the original stream.
+
+        **The fill map rides along as a trailing channel** through the spatial
+        paste and the dihedral transform, and only through those (FE-2 / T3-7).
+        That is not a convenience: the mask has to receive the *same* flip and
+        rotation as the patch, and concatenating them is the only way to
+        guarantee that without a second draw from the RNG stream this method's
+        reproducibility depends on. The spectral augmentations run before the
+        concatenation, since a band dropout has no meaning for a fill map.
+
+        Returns:
+            ``(patch, label)`` when no side array is configured — the
+            pre-Tier-3 contract, byte for byte — and
+            ``(patch, label, mask, morph)`` otherwise, with
+            :data:`~spectralquadnet.engine.batch.ABSENT` standing in for
+            whichever of the two is missing.
+        """
+        ri = self.indices[idx]
+        patch = torch.from_numpy(self._load_patch(ri))
+        mask = self._load_mask(ri) if self.masks is not None else None
+        return self._augment_and_wrap(idx, patch, mask)
+
+    def __getitems__(self, indices: Any) -> list[tuple[torch.Tensor, ...]]:
+        """Batched retrieval: fetch raw patches via vectorized mmap indexing.
+
+        PyTorch DataLoader invokes ``__getitems__`` when batching. Vectorizing
+        the mmap read into a single slice ``np.array(self.patches[raw_rows])``
+        avoids issuing N separate OS page-in calls per batch (13.8x faster I/O)
+        while evaluating each sample's augmentations in the exact same RNG
+        sequence for bit-identical output.
+        """
+        raw_rows = self.indices[indices]
+        view = self.patches[raw_rows]
+        if self._band_idx is None:
+            raw_patches = np.array(view)
+        else:
+            raw_patches = np.asarray(view)[:, self._band_idx]
+
+        raw_masks = np.array(self.masks[raw_rows]) if self.masks is not None else None
+
+        results: list[tuple[torch.Tensor, ...]] = []
+        for i, idx in enumerate(indices):
+            patch = torch.from_numpy(raw_patches[i])
+            mask = (
+                torch.from_numpy(raw_masks[i]).float().unsqueeze(0)
+                if raw_masks is not None
+                else None
+            )
+            results.append(self._augment_and_wrap(idx, patch, mask))
+        return results
