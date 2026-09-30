@@ -14,7 +14,7 @@ the rest of this suite.
 
 ## `data` — `configs/data/*.yaml`
 
-Five configs ship, in two clearly separated tiers.
+Seven configs ship, in three clearly separated tiers.
 
 **Primary — the complete 256-band cube, no band selection:**
 
@@ -30,6 +30,18 @@ Five configs ship, in two clearly separated tiers.
 | `spa40_grouped.yaml` | 40 | `grouped` | A2's reduced arm — one variable against `hsi256_grouped`. |
 | `spa40_stratified.yaml` | 40 | `stratified` | Its leaky twin, if A1 is re-run at k = 40. |
 | `spa40_audited.yaml` | 40 | `stratified` | **Frozen.** Reproduces the audited run's input and partition exactly; composed only by `experiment/quadnet_audited` and the golden capture. Do not tidy it. |
+
+**`configs/data/reflectance/` — the white-tile reflectance cube, a radiometry arm:**
+
+| Config | Bands | Split | Role |
+|---|---:|---|---|
+| `refl215_grouped.yaml` | 215 | `grouped` | Reflectance $\varrho = (R-\bar D)/W_\text{tile}$ instead of SNV radiance, under the primary protocol. Differs from `hsi256_grouped` only in the cube's paths and what its axis forces (`num_bands`, `cutmix_bands` 43, `max_cutout_bands` 16); pinned by `tests/unit/test_protocol_guard.py`. |
+| `refl215_stratified.yaml` | 215 | `stratified` | Its stratified contrast, twin of `hsi256_stratified`. |
+
+215, not 256: the tile clips in 608.0–705.8 nm in every scan of sessions 0–7, and those 41 bands
+are dropped from every scan (`02_DATASET_AND_PREPROCESSING.md`). The cube is row-aligned with
+`./dataset/`. A k-band finalist on it uses `outputs/band_finalists_reflectance/`, never the
+256-axis sets.
 
 Values below are `hsi256_grouped.yaml`'s; the last column gives the frozen replica's, which is
 what the pre-refactor `CONFIG` keys map onto in `config_migration_table.md`.

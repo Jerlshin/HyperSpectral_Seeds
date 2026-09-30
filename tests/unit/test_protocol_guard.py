@@ -270,12 +270,47 @@ def test_the_four_branch_control_differs_from_the_default_in_the_architecture() 
         "single": ("epochs", "batch", "max_lr", "mixup", "mixup_epochs", "arcface_m"),
     }.items():
         for key in keys:
-            assert getattr(getattr(default, group), key) == getattr(
-                getattr(control, group), key
-            ), f"{group}.{key}"
+            assert getattr(getattr(default, group), key) == getattr(getattr(control, group), key), (
+                f"{group}.{key}"
+            )
     assert default.pipeline == control.pipeline == "single"
     assert float(default.grad_clip) == float(control.grad_clip)
     # And the two confounds the audited model config carries are off here.
     assert list(control.model.branch_drop_profile) == [1.0, 1.0, 1.0, 1.0]
     assert control.model.per_class_margin is False
     assert control.model.pairwise_penalty is False
+
+
+@pytest.mark.parametrize(
+    ("arm", "twin"),
+    [
+        ("reflectance/refl215_grouped", "hsi256_grouped"),
+        ("reflectance/refl215_stratified", "hsi256_stratified"),
+    ],
+)
+def test_a_reflectance_arm_differs_from_its_twin_only_in_the_cube(arm: str, twin: str) -> None:
+    """Radiometry is the one variable: same protocol, same augmentation *fractions*.
+
+    Everything that may differ is the cube (its paths) and what its 215-band axis
+    forces — the band count and the band-expressed augmentation widths, which
+    must be the rule's values at that count.
+    """
+    from omegaconf import OmegaConf
+
+    from spectralquadnet.data.datasets import band_augmentation_widths
+
+    a = OmegaConf.to_container(load_experiment_config(overrides=[f"data={arm}"]).data)
+    b = OmegaConf.to_container(load_experiment_config(overrides=[f"data={twin}"]).data)
+    assert isinstance(a, dict) and isinstance(b, dict)
+    differing = {k for k in set(a) | set(b) if a.get(k) != b.get(k)}
+    band_keys = {"num_bands", "cutmix_bands", "max_cutout_bands"}
+    path_keys = {k for k in differing if k.endswith("_path") or k == "patches_data"}
+    assert differing == band_keys | path_keys, sorted(differing - band_keys - path_keys)
+    assert all(str(a[k]).startswith("./dataset_reflectance/") for k in path_keys if a[k])
+    assert a["num_bands"] == 215
+    assert not str(a["band_indices_path"])
+    widths = band_augmentation_widths(215)
+    assert (a["cutmix_bands"], a["max_cutout_bands"]) == (
+        widths["cutmix_bands"],
+        widths["max_cutout_bands"],
+    )

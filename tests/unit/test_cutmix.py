@@ -348,6 +348,8 @@ def test_the_band_widths_are_a_fixed_share_of_the_spectral_axis() -> None:
         ("data=ablation/spa40_grouped", 40),
         ("data=ablation/spa40_stratified", 40),
         ("data=ablation/spa40_audited", 40),
+        ("data=reflectance/refl215_grouped", 215),
+        ("data=reflectance/refl215_stratified", 215),
     ],
 )
 def test_every_shipped_data_config_uses_the_scaled_widths(config: str, bands: int) -> None:

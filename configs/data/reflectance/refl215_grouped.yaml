@@ -1,0 +1,69 @@
+# ══════════════════════════════════════════════════════════════════════
+#  REFLECTANCE ARM — the grouped (leave-one-bundle-out) protocol
+#
+#  The in-scene white-tile reflectance cube (`--radiometry tile`), identical to
+#  `configs/data/hsi256_grouped.yaml` in every setting except the radiometric domain and
+#  the band axis it forces:
+#
+#    * reflectance rho = (R - D) / W_tile per scan, instead of per-pixel SNV of
+#      radiance — the illumination's spectral shape, which acts as a session
+#      fingerprint under SNV, is divided out;
+#    * 215 of the 256 instrument bands. The tile clips at 4095 DN in the same
+#      41 bands (608.0-705.8 nm) in every scan of sessions 0-7, so no white level
+#      exists there and they are dropped from every scan rather than filled
+#      (`--tile-drop-unresolved`; `dataset_reflectance/radiometry.json` lists them).
+#
+#  Rows are aligned with `./dataset/` patch for patch: labels, groups, masks,
+#  morphology and scan table are byte-identical, so splits and kernels match.
+#
+#      python train.py data=reflectance/refl215_grouped
+#
+#  A k-band finalist on this cube must use the sets cut from THIS axis —
+#  `outputs/band_finalists_reflectance/` — never `outputs/band_finalists/`,
+#  whose indices address the 256-band axis.
+#
+#  Build it with:
+#      python scripts/prepare_dataset.py --root ./dataset_reflectance \
+#          --radiometry tile --tile-drop-unresolved
+# ══════════════════════════════════════════════════════════════════════
+defaults:
+  - base_data
+  - _self_
+
+# ── Paths (relative to the process CWD) ────────────────────────────────
+patches_data: ./dataset_reflectance/patches.npy
+labels_path: ./dataset_reflectance/labels.npy
+wavelength_path: ./dataset_reflectance/wavelengths.csv
+groups_path: ./dataset_reflectance/groups.npy
+
+# Session breakdown — see `hsi256_grouped.yaml`. Never a model input.
+scan_table_path: ./dataset_reflectance/scan_table.csv
+
+# ── Side inputs (FE-2 / T3-7, FU-4 / P-4) ──────────────────────────────
+masks_path: ./dataset_reflectance/masks.npy
+morphology_path: ./dataset_reflectance/morphology.npy
+
+# IC-14. Never fed to a model. Under `tile` it is the per-pixel (mean, sd) of
+# the reflectance spectrum, which the leakage probe reads.
+gain_path: ./dataset_reflectance/gain.npy
+
+# ── Geometry ───────────────────────────────────────────────────────────
+# The kept band count. `data.band_geometry` fails the run at startup if the
+# cube, `wavelengths.csv` and this number disagree.
+num_bands: 215
+num_classes: 90
+
+# ── Augmentation — `band_augmentation_widths(215)` ─────────────────────
+# The same fractions of the spectral axis as the 256-band configs' 19 and 51
+# (7.5 % and ~20 %), so the augmentations mean the same thing at this count.
+noise_std: 0.02
+max_cutout_bands: 16
+cutmix_bands: 43
+cutmix_spatial: 24
+
+# ── Split protocol — identical to `hsi256_grouped.yaml` ─────────────────────
+split_scheme: grouped
+split_eval_frac: 0.30
+split_fold: 0
+single_group_policy: error
+calib_frac: 0.15
