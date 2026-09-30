@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -37,7 +38,7 @@ pytest.importorskip("skimage")
 from scipy.ndimage import gaussian_filter  # noqa: E402
 from spectral.io import envi  # noqa: E402
 
-from spectralquadnet.data.prep.config import PrepConfig  # noqa: E402
+from spectralquadnet.data.prep.config import PrepConfig, TileConfig  # noqa: E402
 from spectralquadnet.data.prep.patch_extraction import (  # noqa: E402
     build_patch_dataset,
     probe_white_tiles,
@@ -85,9 +86,8 @@ def cube(variety: str, session: int, boost: float, seed: int) -> np.ndarray:
     return np.clip(np.round(raw), 0, 4095).astype(np.uint16)
 
 
-@pytest.fixture(scope="module")
-def archive(tmp_path_factory) -> Path:
-    root = tmp_path_factory.mktemp("archive")
+def _write_archive(root: Path, boost_of: Callable[[str, int, int], float]) -> Path:
+    """The synthetic archive; ``boost_of(variety, bundle, session)`` scales that scan's lamp."""
     staging = root / "staging"
     members: list[Path] = []
     rng = np.random.default_rng(0)
@@ -101,7 +101,7 @@ def archive(tmp_path_factory) -> Path:
     seed = 1
     for variety, (s1, s2) in VARIETIES.items():
         for bundle, session in ((1, s1), (2, s2)):
-            boost = 1.45 if (variety, bundle) == ("CCC", 2) else 1.0
+            boost = boost_of(variety, bundle, session)
             folder = staging / TOP / SESSIONS[session]
             stem = folder / f"{variety}-0{bundle}"
             envi.save_image(str(stem) + ".hdr", cube(variety, session, boost, seed),
@@ -117,6 +117,29 @@ def archive(tmp_path_factory) -> Path:
         for m in members:
             zf.write(m, m.relative_to(staging).as_posix())
     return zpath
+
+
+@pytest.fixture(scope="module")
+def archive(tmp_path_factory) -> Path:
+    """One scan (CCC-02) saturates its tile; its session's other scan does not."""
+    return _write_archive(
+        tmp_path_factory.mktemp("archive"),
+        lambda variety, bundle, session: 1.45 if (variety, bundle) == ("CCC", 2) else 1.0,
+    )
+
+
+#: Bands a 1.45x session-1 lamp clips on the tile: 190 + 1.45 * lamp >= 4095 DN
+#: at 600, 650 and 700 nm (4267, 4540, 4490 DN) and nowhere else (<= 3791 DN).
+CLIPPED_IN_SESSION_1 = [4, 5, 6]
+
+
+@pytest.fixture(scope="module")
+def clipped_archive(tmp_path_factory) -> Path:
+    """Every scan of session 1 saturates its tile in the same bands — the real archive's case."""
+    return _write_archive(
+        tmp_path_factory.mktemp("clipped_archive"),
+        lambda variety, bundle, session: 1.45 if session == 1 else 1.0,
+    )
 
 
 @pytest.fixture(scope="module")
@@ -204,3 +227,75 @@ def test_the_probe_measures_without_extracting(archive, tmp_path) -> None:
     assert len(table) == 3 and table["found"].all()
     assert set(table["session_id"]) == {0, 1}, "round-robin over sessions"
     assert not cfg.patches_path.exists()
+
+
+@pytest.mark.parametrize("n_rows", [17280, 17279, 9999, 1])
+def test_a_short_stream_is_truncated_in_place(tmp_path, n_rows) -> None:
+    """Trimming uncounted rows rewrites the header and truncates — no second copy of the cube."""
+    from spectralquadnet.data.prep.patch_extraction import _finalise_stream, _open_stream
+
+    path = tmp_path / "patches.npy"
+    stream = _open_stream(path, (17280, 3, 2, 2), np.float32)
+    stream[:] = np.arange(stream.size, dtype=np.float32).reshape(stream.shape)
+    expected = np.array(stream[:n_rows])
+    inode = (tmp_path / "patches.npy.partial").stat().st_ino
+
+    _finalise_stream(stream, path, n_rows)
+
+    assert not (tmp_path / "patches.npy.partial").exists()
+    assert path.stat().st_ino == inode
+    out = np.load(path, mmap_mode="r")
+    assert out.shape == (n_rows, 3, 2, 2)
+    np.testing.assert_array_equal(out, expected)
+    assert path.stat().st_size == out.offset + expected.nbytes
+
+
+def test_a_band_no_session_tile_measured_is_refused_by_default(clipped_archive, tmp_path) -> None:
+    cfg = PrepConfig(root=tmp_path, archive=clipped_archive, num_bands=C, radiometry="tile")
+    with pytest.raises(RuntimeError, match="--tile-drop-unresolved"):
+        build_patch_dataset(cfg)
+    assert not cfg.patches_path.exists()
+    assert not list(tmp_path.glob("*.partial"))
+    assert cfg.white_tiles_path.exists(), "the QC table is written before refusing"
+
+
+def test_unresolved_bands_are_dropped_from_every_scan_on_request(clipped_archive, tmp_path) -> None:
+    cfg = PrepConfig(
+        root=tmp_path,
+        archive=clipped_archive,
+        num_bands=C,
+        radiometry="tile",
+        tile=TileConfig(drop_unresolved_bands=True),
+    )
+    build_patch_dataset(cfg)
+    keep = np.setdiff1d(np.arange(C), CLIPPED_IN_SESSION_1)
+
+    patches = np.load(cfg.patches_path, mmap_mode="r")
+    assert patches.shape == (len(VARIETIES) * 2 * len(SEEDS), keep.size, 64, 64)
+    wl = pd.read_csv(cfg.wavelengths_path)
+    assert list(wl.columns) == ["index", "Wavelength (nm)"]
+    assert wl["index"].tolist() == (keep + 1).tolist()
+    np.testing.assert_allclose(wl["Wavelength (nm)"], WL[keep])
+
+    log = json.loads(cfg.radiometry_log_path.read_text())
+    assert log["tile"]["drop_unresolved_bands"] is True
+    assert log["bands"]["n_kept"] == keep.size
+    assert log["bands"]["dropped_instrument_index"] == CLIPPED_IN_SESSION_1
+    np.testing.assert_allclose(log["bands"]["dropped_nm"], WL[CLIPPED_IN_SESSION_1])
+
+    # Every scan — session 2's too, whose tile measured these bands — is still
+    # true reflectance on the kept axis.
+    spectra = np.median(patches[:, :, 30:34, 30:34].reshape(len(patches), keep.size, -1), axis=2)
+    variety = pd.read_csv(cfg.scan_table_path).set_index("scan_id")["variety"]
+    for spectrum, g in zip(spectra, np.load(cfg.groups_path), strict=True):
+        assert np.allclose(spectrum, REFLECTANCE[variety[g]][keep], rtol=0.03), variety[g]
+
+
+def test_the_full_axis_is_written_when_nothing_is_dropped(built) -> None:
+    for cfg in built.values():
+        wl = pd.read_csv(cfg.wavelengths_path)
+        assert wl["index"].tolist() == list(range(1, C + 1))
+        assert (
+            json.loads(cfg.radiometry_log_path.read_text())["bands"]["dropped_instrument_index"]
+            == []
+        )

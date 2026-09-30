@@ -365,22 +365,52 @@ def _partial(path: Path) -> Path:
     return path.with_name(path.name + ".partial")
 
 
-def _finalise_stream(stream: npt.NDArray[Any], path: Path, n_rows: int, chunk: int = 256) -> None:
-    """Truncate a streamed array to ``n_rows`` if needed, flush it, and move it into place."""
+def _finalise_stream(stream: npt.NDArray[Any], path: Path, n_rows: int) -> None:
+    """Truncate a streamed array to ``n_rows`` if needed, flush it, and move it into place.
+
+    The trim is done **in place** (:func:`_truncate_npy_rows`) rather than by
+    copying the kept rows into a new file: a copy needs a second 36 GB of free
+    disk at the moment the first file is fullest.
+    """
     partial = _partial(path)
-    if n_rows == stream.shape[0]:
-        stream.flush()  # type: ignore[attr-defined]
-        del stream
-        partial.replace(path)
-        return
-    trimmed = np.lib.format.open_memmap(  # type: ignore[no-untyped-call]
-        path, mode="w+", dtype=stream.dtype, shape=(n_rows, *stream.shape[1:])
-    )
-    for start in range(0, n_rows, chunk):
-        trimmed[start : start + chunk] = stream[start : min(start + chunk, n_rows)]
-    trimmed.flush()
-    del trimmed, stream
-    partial.unlink()
+    n_total = stream.shape[0]
+    stream.flush()  # type: ignore[attr-defined]
+    del stream
+    if n_rows != n_total:
+        _truncate_npy_rows(partial, n_rows)
+    partial.replace(path)
+
+
+def _truncate_npy_rows(path: Path, n_rows: int) -> None:
+    """Shrink a C-order ``.npy`` file to its first ``n_rows`` rows without copying any data.
+
+    The header is rewritten with the new shape at its original length — fewer
+    rows never needs more digits, and the reader accepts any space padding
+    before the header's closing newline — and the file is truncated after the
+    last kept row.
+    """
+    fmt = np.lib.format
+    with open(path, "r+b") as fh:
+        version = fmt.read_magic(fh)  # type: ignore[no-untyped-call]
+        read_header = fmt.read_array_header_1_0 if version == (1, 0) else fmt.read_array_header_2_0
+        shape, fortran_order, dtype = read_header(fh)  # type: ignore[no-untyped-call]
+        if fortran_order or not 0 <= n_rows <= shape[0]:
+            raise ValueError(f"cannot truncate {path} (shape {shape}) to {n_rows} rows")
+        offset = fh.tell()
+        header_len = offset - (10 if version == (1, 0) else 12)
+        new_shape = (n_rows, *shape[1:])
+        text = repr(
+            {
+                "descr": fmt.dtype_to_descr(dtype),  # type: ignore[no-untyped-call]
+                "fortran_order": False,
+                "shape": new_shape,
+            }
+        )
+        if len(text) + 1 > header_len:
+            raise ValueError(f"new header for {path} does not fit in {header_len} bytes")
+        fh.seek(offset - header_len)
+        fh.write((text.ljust(header_len - 1) + "\n").encode("latin1"))
+        fh.truncate(offset + int(np.prod(new_shape, dtype=np.int64)) * dtype.itemsize)
 
 
 def probe_white_tiles(cfg: PrepConfig | None = None, limit: int = 10) -> pd.DataFrame:
@@ -453,8 +483,12 @@ def build_patch_dataset(cfg: PrepConfig | None = None) -> None:
     ``scan_table.csv``   one row per cube       P-1 — what each ``scan_id`` is
     ==================== ====================== ====================================
 
-    plus ``radiometry.json`` always, and ``white_tiles.csv`` /
-    ``white_spectra.npz`` under the ``tile`` modes.
+    plus ``radiometry.json`` and ``wavelengths.csv`` (the cube's band axis)
+    always, and ``white_tiles.csv`` / ``white_spectra.npz`` under the ``tile``
+    modes. With :attr:`TileConfig.drop_unresolved_bands`, a band no tile in some
+    scan's session could measure is dropped from **every** scan instead of
+    refusing, so ``C`` is the kept count; ``radiometry.json`` lists the dropped
+    bands and ``wavelengths.csv`` carries the kept ones' instrument indices.
 
     Args:
         cfg: Prep configuration; a default :class:`PrepConfig` is used if
@@ -464,7 +498,8 @@ def build_patch_dataset(cfg: PrepConfig | None = None) -> None:
         FileExistsError: ``patches.npy`` already exists in ``cfg.root`` and
             ``cfg.overwrite`` is off.
         RuntimeError: Under a ``tile`` mode, some scan has a band whose white
-            level no measurement in its session could supply.
+            level no measurement in its session could supply, and
+            ``drop_unresolved_bands`` is off.
     """
     cfg = cfg or PrepConfig()
     cfg.ensure_root()
@@ -540,12 +575,26 @@ def build_patch_dataset(cfg: PrepConfig | None = None) -> None:
     print("Total patches:", total_patches)
 
     refs: WhiteReferences | None = None
+    # Instrument bands written to the cube. Every band, unless a `tile` mode drops
+    # the ones no tile could measure — from every scan, so the axis is common.
+    keep = np.arange(len(wl))
+    dropped = np.zeros(0, dtype=np.int64)
     if use_tile:
         refs = resolve_white_references(measurements, df["session_id"].tolist(), len(wl))
         qc = write_tile_qc(cfg, df, measurements, refs, wl)
         n_found = sum(m.found for m in measurements)
         print(f"White tiles: found in {n_found}/{len(df)} scans; values {refs.counts()}  → {qc}")
-        if not refs.ok:
+        if not refs.ok and cfg.tile.drop_unresolved_bands:
+            dropped = np.unique(np.concatenate([np.asarray(b) for b in refs.unresolved.values()]))
+            keep = np.setdiff1d(keep, dropped)
+            if keep.size == 0:
+                raise RuntimeError(f"every band is unresolved in some scan; see {qc}")
+            print(
+                f"Dropping {dropped.size} band(s) unresolved in {len(refs.unresolved)} scan(s), "
+                f"{wl[dropped].min():.1f}-{wl[dropped].max():.1f} nm, from every scan: "
+                f"{keep.size} of {len(wl)} bands kept  → {cfg.wavelengths_path}"
+            )
+        elif not refs.ok:
             bad = ", ".join(
                 f"{df.iloc[i].scan_key} ({len(b)} bands)"
                 for i, b in list(refs.unresolved.items())[:8]
@@ -553,7 +602,8 @@ def build_patch_dataset(cfg: PrepConfig | None = None) -> None:
             raise RuntimeError(
                 f"{len(refs.unresolved)} scan(s) have bands with no measurable white level — "
                 f"{bad}{' …' if len(refs.unresolved) > 8 else ''}. No patch was written. "
-                f"Inspect {qc} and retune PrepConfig.tile (see --probe-tiles)."
+                f"Inspect {qc} and retune PrepConfig.tile (see --probe-tiles), or drop "
+                "those bands from every scan with --tile-drop-unresolved."
             )
 
     # ========================================================
@@ -561,8 +611,9 @@ def build_patch_dataset(cfg: PrepConfig | None = None) -> None:
     # ========================================================
 
     S = cfg.patch_size
+    n_bands = keep.size if dropped.size else cfg.num_bands
     # Streamed to disk: at N × 256 × 64 × 64 float32 this is 36 GB.
-    X = _open_stream(cfg.patches_path, (total_patches, cfg.num_bands, S, S), np.float32)
+    X = _open_stream(cfg.patches_path, (total_patches, n_bands, S, S), np.float32)
     y = np.zeros((total_patches,), dtype=np.int64)
     groups = np.full((total_patches,), -1, dtype=np.int64)  # P-1
     masks = np.zeros((total_patches, S, S), dtype=np.float16)  # P-3
@@ -592,9 +643,10 @@ def build_patch_dataset(cfg: PrepConfig | None = None) -> None:
                     del raw
                     # Segment on radiance, extract from reflectance: see the docstring.
                     labeled, regs = segment(radiance, wl)
-                    cube = tile_reflectance(
-                        radiance, refs.spectra[row.scan_id], cfg.tile.reference_reflectance
-                    )
+                    white = refs.spectra[row.scan_id]
+                    if dropped.size:
+                        radiance, white = radiance[..., keep], white[keep]
+                    cube = tile_reflectance(radiance, white, cfg.tile.reference_reflectance)
                 else:
                     files = [m for m in zf.infolist() if row.session in m.filename]
                     resolved = _resolve_cube_members(files, row.member)
@@ -674,6 +726,11 @@ def build_patch_dataset(cfg: PrepConfig | None = None) -> None:
     np.save(cfg.gain_path, gains)
     np.save(cfg.morphology_path, morph)
     scan_table.to_csv(cfg.scan_table_path, index=False)
+    # The cube's own band axis, in the archive's format: `index` is the 1-based
+    # instrument band, so a dropped band shows as a jump in it.
+    wl_lines = ["index,Wavelength (nm)"]
+    wl_lines += [f"{int(b) + 1},{float(wl[b]):.6f}" for b in keep]
+    cfg.wavelengths_path.write_text("\n".join(wl_lines) + "\n")
     cfg.radiometry_log_path.write_text(
         json.dumps(
             {
@@ -683,6 +740,19 @@ def build_patch_dataset(cfg: PrepConfig | None = None) -> None:
                 "tile": cfg.tile.as_dict() if use_tile else None,
                 "white_reference_sources": refs.counts() if refs is not None else None,
                 "tiles_found": (int(sum(m.found for m in measurements)) if use_tile else None),
+                "bands": {
+                    "n_instrument": int(len(wl)),
+                    "n_kept": int(keep.size),
+                    # 0-based instrument band indices, the convention of band-index files.
+                    "dropped_instrument_index": [int(b) for b in dropped],
+                    "dropped_nm": [round(float(wl[b]), 6) for b in dropped],
+                    "dropped_reason": (
+                        "no tile in the scan's session measured a white level "
+                        "(saturated, or no tile found)"
+                        if dropped.size
+                        else None
+                    ),
+                },
                 "n_scans": int(len(df)),
                 "n_patches": int(patch_index),
                 "archive": str(cfg.zip_file),
@@ -699,4 +769,5 @@ def build_patch_dataset(cfg: PrepConfig | None = None) -> None:
     print("gain      :", gains.shape)
     print("morphology:", morph.shape, f"({', '.join(MORPHOMETRIC_NAMES)})")
     print("scan table:", cfg.scan_table_path)
+    print("wavelength:", cfg.wavelengths_path, f"({keep.size} bands)")
     print("radiometry:", cfg.radiometry_log_path)

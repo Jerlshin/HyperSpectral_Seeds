@@ -15,6 +15,7 @@ venv/
 
 # ── Large binaries & run artifacts (REFACTOR_PLAN.md §2) ─────────────
 dataset/
+dataset_*/
 outputs/
 *.pth
 

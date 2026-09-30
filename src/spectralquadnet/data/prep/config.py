@@ -64,6 +64,14 @@ class TileConfig:
     min_contrast: float = 1.5
     #: Certified reflectance of the panel; the Zenodo record states 100 %.
     reference_reflectance: float = 1.0
+    #: What to do with a band whose white level no tile in its session could
+    #: measure. ``False`` refuses to extract. ``True`` drops every such band from
+    #: **every** scan — one common axis, written to ``<root>/wavelengths.csv`` —
+    #: rather than filling it. On this archive the tile clips in the same
+    #: 608-706 nm bands in every scan of sessions 0-7 (the lamp peak), so no
+    #: scan in those sessions can supply them and any fill would be a model of
+    #: the lamp, not a measurement.
+    drop_unresolved_bands: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -79,6 +87,7 @@ class TileConfig:
             "max_core_cv": self.max_core_cv,
             "min_contrast": self.min_contrast,
             "reference_reflectance": self.reference_reflectance,
+            "drop_unresolved_bands": self.drop_unresolved_bands,
         }
 
 
@@ -128,6 +137,11 @@ class PrepConfig:
     @property
     def labels_path(self) -> Path:
         return self.root / "labels.npy"
+
+    @property
+    def wavelengths_path(self) -> Path:
+        """The cube's band axis: ``index`` (1-based instrument band) and ``Wavelength (nm)``."""
+        return self.root / "wavelengths.csv"
 
     # ── Tier-4 outputs ────────────────────────────────────────────────
 

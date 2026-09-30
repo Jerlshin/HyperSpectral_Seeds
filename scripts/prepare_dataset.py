@@ -23,6 +23,9 @@ Reflectance from the in-scene Spectralon tile (a **new** dataset, so a new root)
         --root ./dataset_reflectance --radiometry tile --probe-tiles 18   # measure, extract nothing
     python scripts/prepare_dataset.py --archive ./dataset/rice_hsi.zip \
         --root ./dataset_reflectance --radiometry tile                     # full extraction
+    python scripts/prepare_dataset.py --archive ./dataset/rice_hsi.zip \
+        --root ./dataset_reflectance --radiometry tile --tile-drop-unresolved
+        # ... dropping the bands no tile could measure (this archive: 41 bands, 608-706 nm)
 
 The probe writes ``white_tiles_probe.csv`` so the detection thresholds can be
 checked on real tiles first. The full run writes ``white_tiles.csv`` and
@@ -127,6 +130,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=tile.reference_reflectance,
         help="Certified reflectance of the panel.",
     )
+    parser.add_argument(
+        "--tile-drop-unresolved",
+        action="store_true",
+        help="Drop, from every scan, the bands whose white level no tile in the session "
+        "could measure (instead of refusing). The kept axis is written to wavelengths.csv.",
+    )
     return parser.parse_args(argv)
 
 
@@ -142,6 +151,7 @@ def main(argv: list[str] | None = None) -> None:
         saturation_dn=args.tile_saturation_dn,
         min_area_px=args.tile_min_area,
         reference_reflectance=args.tile_reflectance,
+        drop_unresolved_bands=args.tile_drop_unresolved,
     )
     cfg = PrepConfig(
         root=args.root,

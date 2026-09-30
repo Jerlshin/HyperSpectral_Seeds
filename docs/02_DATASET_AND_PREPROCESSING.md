@@ -192,7 +192,11 @@ that do not (`reporting/session.py`). Dividing each scene by its own tile remove
 * **Resolution** (`resolve_white_references`): unmeasured bands, and scans with no tile, are
   filled from their *session* — its median illumination shape, scaled by the scan's own gain (or
   the session's median gain). Every filled value is marked. A band no scan in the session measured
-  is **unresolved**, and extraction refuses to start.
+  is **unresolved**, and extraction refuses to start — unless `--tile-drop-unresolved` is given,
+  which drops every unresolved band from **every** scan (one common axis, written to
+  `wavelengths.csv` with the kept instrument band numbers, the dropped ones listed in
+  `radiometry.json`). Dropping rather than filling is deliberate: a fill across a window no tile
+  measured would be a model of the lamp, not a measurement.
 * **Extraction:** seeds are still segmented on dark-corrected *radiance*, and patches are cut
   from the reflectance cube $\varrho = r_\text{ref}(R - \bar D)/W_c$. So the `tile` dataset is
   **row-aligned** with an `snv` extraction of the same archive — identical labels, groups, masks,
@@ -200,14 +204,34 @@ that do not (`reporting/session.py`). Dividing each scene by its own tile remove
 * **QC, before any patch is written:** `white_tiles.csv` (per scan: found, bbox, core size,
   contrast, uniformity, saturated and session-filled band counts), `white_spectra.npz` (measured
   and resolved spectra, each value's source) and `radiometry.json`.
-* **Thresholds are provisional** — informed by the scene geometry, not yet fitted to real tile
-  pixels. `python scripts/prepare_dataset.py --radiometry tile --probe-tiles 18` measures real
-  scans and writes `white_tiles_probe.csv` without extracting anything.
+* **Probing:** `python scripts/prepare_dataset.py --radiometry tile --probe-tiles 27` measures
+  real scans and writes `white_tiles_probe.csv` without extracting anything.
+
+**Measured on the real archive (2026-09-30).** The tile is found in 180/180 scans: a full-width
+strip (all 336 columns), ~26,000 core pixels, 5–13× brighter than its surroundings, core robust CV
+≤ 0.07. Raw values are float32 with a hard clip at exactly 4,095 DN. In sessions 0–7 the lamp peak
+saturates the tile in the **same 28–41 bands (608.0–705.8 nm at the union) in every scan** — up to
+63 % of core pixels at the ceiling — so no scan in those sessions can supply them; session 8
+(2017-02-03) never clips. `--radiometry tile` therefore refuses on this archive (147 of 180 scans
+unresolved), and the reflectance dataset is built with `--tile-drop-unresolved`:
+
+```bash
+python scripts/prepare_dataset.py --archive <zip> --root ./dataset_reflectance \
+    --radiometry tile --tile-drop-unresolved
+```
+
+giving **8,624 × 215 × 64 × 64** (30.4 GB) over 383.2–605.6 nm and 708.2–1006.5 nm, row-aligned
+with the SNV cube. Seed-pixel reflectance: median 0.10 at 432 nm rising to 0.57 at 999 nm, p99.9
+0.86, no negatives, 3 × 10⁻⁶ of values above 1. One further observation: in sessions 5–8 the
+tile's top edge lies at rows ~587–597, i.e. inside the seed crop (`SEED_ROWS = 600`) — segmentation
+is unaffected (the patch count and every seed region equal the SNV extraction's), but the tile's
+reported `row0 = 600` there is the search window's edge, not the tile's.
 
 A changed radiometry is a new dataset, so it goes to a new root, and `build_patch_dataset` refuses
 to replace an existing `patches.npy` without `--overwrite`. The patch array is streamed to a
 disk-backed `patches.npy.partial` and renamed into place at the end, rather than allocated in RAM
-(it is 36 GB).
+(it is 36 GB). If fewer patches are written than counted, the file is trimmed in place (header
+rewritten, file truncated) rather than copied, so no second 36 GB is needed at the fullest moment.
 
 **Resulting artifacts**, all row-aligned on the patch index except the last:
 
