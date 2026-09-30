@@ -2,9 +2,13 @@
 """Write the finalist band sets — evenly spaced, >= 430 nm — for neural training.
 
 Thin CLI over :mod:`spectralquadnet.bandstudy.finalists`. Reads only the
-wavelength axis, so it needs neither the patch cube nor a GPU, and its output is
-valid for any cube cut from the same 256-band instrument axis (the current SNV
-cube and the forthcoming reflectance cube alike).
+wavelength axis, so it needs neither the patch cube nor a GPU. Its output is
+valid only for a cube with that same axis: the reflectance cube drops the bands
+the white tile could not measure, so it gets its own sets::
+
+    python scripts/write_finalist_bands.py \\
+        --wavelengths dataset_reflectance/wavelengths.csv \\
+        --out-dir outputs/band_finalists_reflectance
 
 Usage
 ─────

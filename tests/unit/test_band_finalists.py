@@ -17,6 +17,7 @@ import pytest
 from spectralquadnet.bandstudy.finalists import (
     FINALIST_BUDGETS,
     LOWER_BOUND_NM,
+    measured_axis,
     read_wavelengths,
     window_uniform_bands,
     write_finalists,
@@ -86,3 +87,20 @@ def test_written_files_pass_the_training_validators(wavelength_csv, tmp_path) ->
         assert f"data.max_cutout_bands={widths['max_cutout_bands']}" in entry["overrides"]
     on_disk = json.loads((out / "manifest.json").read_text())
     assert len(on_disk["source_sha256"]) == 64
+
+
+def test_a_gap_in_the_axis_spreads_the_set_over_the_measured_spectrum() -> None:
+    """The reflectance cube drops the 608-706 nm bands the tile could not measure."""
+    gap = (WL >= 607.0) & (WL <= 707.0)
+    wl = WL[~gap]
+    for k in FINALIST_BUDGETS:
+        bands = window_uniform_bands(wl, k, LOWER_BOUND_NM)
+        assert bands.size == k and np.unique(bands).size == k
+        steps = np.diff(measured_axis(wl)[bands])
+        # Even over the measured spectrum: the gap costs one ordinary step, not a pile-up.
+        assert steps.max() - steps.min() <= 2 * float(np.mean(np.diff(WL))) + 1e-9
+    assert (bands[0], bands[-1]) == (np.flatnonzero(wl >= LOWER_BOUND_NM)[0], wl.size - 1)
+
+
+def test_the_measured_axis_is_the_wavelength_when_there_is_no_gap() -> None:
+    np.testing.assert_allclose(measured_axis(WL), WL)

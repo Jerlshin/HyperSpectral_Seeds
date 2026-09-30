@@ -453,10 +453,24 @@ python scripts/write_finalist_bands.py        # k = 16 24 32 48 64 → outputs/b
 Each `uniform430_k{K}.npy` + `_wavelengths.csv` pair is in the band study's own format, and
 `manifest.json` records the exact overrides, including the rescaled augmentation widths — e.g. for
 k = 32: `data.band_indices_path=… data.wavelength_path=… data.num_bands=32 data.cutmix_bands=6
-data.max_cutout_bands=2`. The indices address the instrument's 256-band axis, so the same files
-serve the SNV cube and the reflectance cube the white tile will produce. Every band lies within one
-instrument band (2.4 nm) of the sets the study evaluated, which snapped to the band nearest 430 nm
-(429.6 nm).
+data.max_cutout_bands=2`. Every band lies within one instrument band (2.4 nm) of the sets the
+study evaluated, which snapped to the band nearest 430 nm (429.6 nm).
+
+The indices address the axis of the wavelength file they were cut from. The **reflectance cube has
+its own 215-band axis** — the 41 bands the white tile could not measure (608.0–705.8 nm) are
+dropped — so it has its own sets, and the SNV files must never be pointed at it:
+
+```bash
+python scripts/write_finalist_bands.py --wavelengths dataset_reflectance/wavelengths.csv \
+    --out-dir outputs/band_finalists_reflectance
+```
+
+A gap in the axis is collapsed before the targets are spaced (`finalists.measured_axis`), so the k
+bands spread evenly over the *measured* spectrum instead of piling onto the gap's edges; on a
+gap-free axis this is the plain rule, and the SNV sets are unchanged by it. The price is that the
+two radiometries' sets differ: at k = 32 the reflectance set samples every ~14.7 nm on either side
+of the gap and shares 5 of its 32 bands with the SNV set, so an SNV-vs-reflectance comparison at
+matched k is also a comparison of band positions.
 
 ## 8. Limitations, stated up front
 

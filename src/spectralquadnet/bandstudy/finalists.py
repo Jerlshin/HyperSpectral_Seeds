@@ -15,13 +15,18 @@ deterministic, label-free rule rather than the output of a selector:
   explained by one whole-spectrum statistic — a normalisation artifact, not a
   measurement a k-band instrument could reproduce.
 * **Targets are spaced evenly in wavelength** from the first candidate to the
-  last, and each target takes the nearest candidate band.
+  last, and each target takes the nearest candidate band. A gap in the axis —
+  bands removed upstream, e.g. the 608-706 nm window the white tile could not
+  measure in the reflectance cube — is collapsed first, so the targets spread
+  over the *measured* spectrum instead of piling onto the gap's two edges. On a
+  gap-free axis this is exactly the plain rule.
 * **No label is read**, so a set is the same for both folds, needs no nested
   selection and cannot leak — one wavelength list per budget for the paper.
 
-The indices address the instrument's 256-band axis, which recalibration does not
-change, so the same files serve the current SNV cube and the reflectance cube
-the in-scene white tile will produce.
+The indices address the axis of the wavelength file the sets were cut from. The
+SNV cube carries the instrument's full 256 bands; the reflectance cube drops the
+bands no tile could measure, so it has its own axis and needs its own sets —
+cut from ``dataset_reflectance/wavelengths.csv``, never reused from the SNV ones.
 
 Each set is written in the band study's own format — ``<name>.npy`` (int64
 indices) plus ``<name>_wavelengths.csv`` (``index,Wavelength (nm)``) — so it is
@@ -53,6 +58,11 @@ LOWER_BOUND_NM: float = 430.0
 #: plus one step either side of it.
 FINALIST_BUDGETS: tuple[int, ...] = (16, 24, 32, 48, 64)
 
+#: A step between neighbouring candidates wider than this multiple of the median
+#: step is a gap (bands removed upstream), not the instrument's spacing, which
+#: varies by well under 1 %.
+GAP_FACTOR: float = 1.5
+
 #: Prefix of every finalist file name. Encodes the rule, not a fold: the sets
 #: are fold-independent by construction.
 NAME_PREFIX: str = "uniform430"
@@ -64,6 +74,23 @@ def read_wavelengths(path: str | Path) -> npt.NDArray[np.float64]:
     return np.asarray(frame.iloc[:, -1].values, dtype=np.float64)
 
 
+def measured_axis(wavelengths: npt.NDArray[Any]) -> npt.NDArray[np.float64]:
+    """Wavelength with every gap collapsed to one median step — the "measured spectrum" coordinate.
+
+    Monotone in wavelength and equal to it (up to a constant) wherever the axis
+    has no gap, so spacing evenly in it is spacing evenly in wavelength over the
+    bands that exist.
+    """
+    wl = np.asarray(wavelengths, dtype=np.float64)
+    if wl.size < 2:
+        return wl.copy()
+    steps = np.diff(wl)
+    typical = float(np.median(steps))
+    excess = np.where(steps > GAP_FACTOR * typical, steps - typical, 0.0)
+    out: npt.NDArray[np.float64] = wl - np.concatenate([[0.0], np.cumsum(excess)])
+    return out
+
+
 def window_uniform_bands(
     wavelengths: npt.NDArray[Any], k: int, lo_nm: float, hi_nm: float | None = None
 ) -> npt.NDArray[np.int64]:
@@ -72,7 +99,8 @@ def window_uniform_bands(
     Only bands inside the window are candidates, so every returned band honours
     the bound — the nearest band to 430 nm on this instrument is 429.6 nm, which
     the window excludes. Targets run from the first candidate's wavelength to
-    the last one's, so both ends of the usable range are always sampled.
+    the last one's, so both ends of the usable range are always sampled. Gaps in
+    the axis are collapsed first (:func:`measured_axis`).
 
     Raises:
         ValueError: ``k`` is below 1, or the window holds fewer than ``k``
@@ -85,8 +113,9 @@ def window_uniform_bands(
     candidates = np.flatnonzero((wl >= lo_nm) & (wl <= upper))
     if candidates.size < k:
         raise ValueError(f"only {candidates.size} bands lie in [{lo_nm}, {upper}] nm; k={k}")
-    targets = np.linspace(wl[candidates[0]], wl[candidates[-1]], k)
-    picked = candidates[np.abs(wl[candidates][None, :] - targets[:, None]).argmin(axis=1)]
+    u = measured_axis(wl[candidates])
+    targets = np.linspace(u[0], u[-1], k)
+    picked = candidates[np.abs(u[None, :] - targets[:, None]).argmin(axis=1)]
     bands: npt.NDArray[np.int64] = np.unique(picked).astype(np.int64)
     if bands.size != k:
         raise ValueError(
@@ -172,9 +201,9 @@ def write_finalists(
     ]
     manifest: dict[str, Any] = {
         "rule": (
-            f"k bands spaced evenly in wavelength over the instrument bands >= {lo_nm} nm "
-            "(first to last candidate), nearest band per target; label-free and "
-            "fold-independent"
+            f"k bands spaced evenly in wavelength over the source axis's bands >= {lo_nm} nm "
+            "(first to last candidate, gaps in the axis collapsed), nearest band per "
+            "target; label-free and fold-independent"
         ),
         "lower_bound_nm": lo_nm,
         "budgets": list(budgets),
