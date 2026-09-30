@@ -126,6 +126,8 @@ from spectralquadnet.utils.device import unwrap_model
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from spectralquadnet.config.schema import ExperimentConfig
 
+_log = logging.getLogger(__name__)
+
 #: How many steps per epoch contribute to ``sam/grad_cos``.
 #:
 #: :func:`~spectralquadnet.engine.diagnostics.flat_grad` copies every gradient
@@ -269,13 +271,13 @@ def train_one_epoch(
     diag_clip: dict[str, torch.Tensor] = {}
     n_aux = n_branch = n_clip = 0
     n_skipped = 0
-    _train_log = logging.getLogger(__name__)
 
     for step, batch in enumerate(loader):
         if step == 0:
-            _train_log.info(
+            _log.info(
                 "[TRAIN] First batch retrieved (ep=%d, batch_size=%s)",
-                current_ep, next(iter(batch)).shape[0] if batch else "?",
+                current_ep,
+                next(iter(batch)).shape[0] if batch else "?",
             )
             _first_fwd_t = time.perf_counter()
         x, y, mask, morph = unpack_batch(batch, device)
@@ -414,9 +416,10 @@ def train_one_epoch(
         total_acc += acc_value
 
         if step == 0:
-            _train_log.info(
+            _log.info(
                 "[TRAIN] First step completed in %.1f s (ep=%d)",
-                time.perf_counter() - _first_fwd_t, current_ep,
+                time.perf_counter() - _first_fwd_t,
+                current_ep,
             )
 
     n = max(len(loader), 1)
@@ -547,9 +550,10 @@ def train_one_epoch_sam(
 
     for step, batch in enumerate(loader):
         if step == 0:
-            _train_log.info(
+            _log.info(
                 "[TRAIN-SAM] First batch retrieved (ep=%d, batch_size=%s)",
-                current_ep, next(iter(batch)).shape[0] if batch else "?",
+                current_ep,
+                next(iter(batch)).shape[0] if batch else "?",
             )
             _first_sam_fwd_t = time.perf_counter()
         x, y, mask, morph = unpack_batch(batch, device)
@@ -615,9 +619,10 @@ def train_one_epoch_sam(
         total_acc += acc_value
 
         if step == 0:
-            _train_log.info(
+            _log.info(
                 "[TRAIN-SAM] First step completed in %.1f s (ep=%d)",
-                time.perf_counter() - _first_sam_fwd_t, current_ep,
+                time.perf_counter() - _first_sam_fwd_t,
+                current_ep,
             )
 
     n = max(len(loader), 1)
