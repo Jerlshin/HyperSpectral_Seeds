@@ -157,7 +157,7 @@ def cfg():
 
 @pytest.fixture(scope="session")
 def cfg_default():
-    """The composed **primary** experiment — `SpectralSeedNet`, 256 bands, single stage, grouped."""
+    """The composed **primary** experiment — `SpectralSeedNet`, 215 reflectance bands, single stage, grouped."""
     from spectralquadnet.config.compose import load_experiment_config
 
     return load_experiment_config()
@@ -191,7 +191,7 @@ def physical_wl() -> torch.Tensor:
     gitignored dataset directory. ``test_mmap_store.py`` separately checks that
     ``DataStore`` reproduces it from the real CSV when that CSV is present.
 
-    For the primary 256-band path use :func:`physical_wl_full`.
+    For the primary 215-band path use :func:`physical_wl_full`.
     """
     path = GOLDEN_V1 / "physical_wl_spa40.npy"
     if not path.exists():
@@ -201,15 +201,16 @@ def physical_wl() -> torch.Tensor:
 
 @pytest.fixture(scope="session")
 def physical_wl_full() -> torch.Tensor:
-    """The **complete 256-band** normalised wavelength vector — the primary path's λ axis.
+    """The primary path's normalised wavelength vector — the 215-band reflectance axis.
 
-    383.2 nm … 1006.5 nm, min-max normalised to ``[0, 1]`` exactly as
+    383.2 nm … 1006.5 nm with 608.0-705.8 nm absent (the bands the white tile
+    could not measure), min-max normalised to ``[0, 1]`` exactly as
     ``DataStore.load_wavelengths`` does. Pairs with ``cfg_default`` and
     ``cfg_quadnet_full256``. Committed for the same reason the 40-band vector is:
     every λ-aware operator in the model is a function of it, so the tests that
     describe those operators must not need the gitignored ``dataset/``.
     """
-    path = GOLDEN_V1 / "physical_wl_full256.npy"
+    path = GOLDEN_V1 / "physical_wl_primary.npy"
     if not path.exists():
         pytest.skip(f"{path} missing — run `python scripts/capture_golden.py`")
     return torch.from_numpy(np.load(path))

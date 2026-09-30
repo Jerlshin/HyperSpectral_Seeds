@@ -20,7 +20,7 @@ PATCHES_PER_BUNDLE = 12
 N_BANDS = 8
 SPATIAL = 16
 
-#: The **acquired** band count — what `configs/data/hsi256_grouped.yaml` declares
+#: The **acquired** band count — what `configs/data/refl215_grouped.yaml` declares
 #: and what a default `python train.py` reads. The `full_spectrum_dataset`
 #: fixture builds a miniature cube at exactly this width so the primary
 #: composition's own `data.num_bands` can be left untouched: every other smoke

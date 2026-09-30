@@ -23,10 +23,10 @@ deterministic, label-free rule rather than the output of a selector:
 * **No label is read**, so a set is the same for both folds, needs no nested
   selection and cannot leak — one wavelength list per budget for the paper.
 
-The indices address the axis of the wavelength file the sets were cut from. The
-SNV cube carries the instrument's full 256 bands; the reflectance cube drops the
-bands no tile could measure, so it has its own axis and needs its own sets —
-cut from ``dataset_reflectance/wavelengths.csv``, never reused from the SNV ones.
+The indices address the axis of the wavelength file the sets were cut from —
+``dataset/wavelengths.csv``, the 215-band reflectance axis, which drops the
+bands the white tile could not measure. Sets cut from the previous 256-band SNV
+axis address different bands and must not be reused on it.
 
 Each set is written in the band study's own format — ``<name>.npy`` (int64
 indices) plus ``<name>_wavelengths.csv`` (``index,Wavelength (nm)``) — so it is

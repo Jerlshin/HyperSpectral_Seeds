@@ -13,28 +13,25 @@ Requires the ``prep`` extra (ENVI reading, OpenCV, scikit-image)::
 
 Usage
 ─────
-    python scripts/prepare_dataset.py                     # full pipeline
-    python scripts/prepare_dataset.py --root ./data       # elsewhere
+    python scripts/prepare_dataset.py                     # ./dataset, exactly as trained on
+    python scripts/prepare_dataset.py --probe-tiles 27    # measure tiles only, extract nothing
     python scripts/prepare_dataset.py --download-only     # fetch the zip, stop
 
-Reflectance from the in-scene Spectralon tile (a **new** dataset, so a new root)::
+The defaults build the dataset the configs read: **reflectance** from each
+scan's in-scene Spectralon tile (``--radiometry tile``), with the bands no tile
+could measure dropped from every scan (``--tile-drop-unresolved``; on this
+archive the 41 bands 608.0-705.8 nm, clipped at 4095 DN in sessions 0-7). The
+zip lands at ``<root>/rice_hsi.zip`` and can be deleted once the run is verified.
+``--no-tile-drop-unresolved`` refuses on unresolved bands instead, and
+``--radiometry snv`` builds the previous per-pixel-SNV radiance cube (a
+different dataset: give it its own ``--root``).
 
-    python scripts/prepare_dataset.py --archive ./dataset/rice_hsi.zip \
-        --root ./dataset_reflectance --radiometry tile --probe-tiles 18   # measure, extract nothing
-    python scripts/prepare_dataset.py --archive ./dataset/rice_hsi.zip \
-        --root ./dataset_reflectance --radiometry tile                     # full extraction
-    python scripts/prepare_dataset.py --archive ./dataset/rice_hsi.zip \
-        --root ./dataset_reflectance --radiometry tile --tile-drop-unresolved
-        # ... dropping the bands no tile could measure (this archive: 41 bands, 608-706 nm)
+The run writes ``white_tiles.csv`` and ``white_spectra.npz`` before extracting
+any patch, and ``radiometry.json`` / ``wavelengths.csv`` at the end. An existing
+``patches.npy`` is never replaced without ``--overwrite``.
 
-The probe writes ``white_tiles_probe.csv`` so the detection thresholds can be
-checked on real tiles first. The full run writes ``white_tiles.csv`` and
-``white_spectra.npz`` before extracting any patch, and refuses to extract if any
-scan has a band no tile measurement can supply. An existing ``patches.npy`` is
-never replaced without ``--overwrite``.
-
-The output is the **256-band** patch cube, and it is what the primary pipeline
-trains on directly — ``configs/data/hsi256_grouped.yaml`` points at
+The output is the **215-band** reflectance cube, and it is what the primary
+pipeline trains on directly — ``configs/data/refl215_grouped.yaml`` points at
 ``dataset/patches.npy`` and ``dataset/wavelengths.csv``. There is no reduction
 step between this script and ``python train.py``.
 
@@ -42,10 +39,10 @@ step between this script and ``python train.py``.
 ablation pathway** and is optional: run it only to produce the reduced arrays
 ablation A2 compares against (see ``docs/07_BAND_SELECTION_PATHWAY.md``).
 
-Six arrays are written, all row-aligned on the patch index:
+Six arrays are written, all row-aligned on the patch index (``C`` = 215 here):
 
 ==================  ============================  ==================================
-``patches.npy``     ``(N, 256, 64, 64)`` float32  the cube itself
+``patches.npy``     ``(N, C, 64, 64)`` float32    the cube itself
 ``labels.npy``      ``(N,)`` int64                variety index, 0…89
 ``groups.npy``      ``(N,)`` int64                acquisition-bundle id — P-1
 ``masks.npy``       ``(N, 64, 64)`` float16       the fill map alpha — P-3
@@ -94,7 +91,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=RADIOMETRY_MODES,
         default=defaults.radiometry,
         help="Radiometric domain. 'tile'/'tile_snv' divide each scene by its in-scene "
-        "Spectralon tile; 'auto' never inspects a scene and resolves to 'snv' on this archive.",
+        "Spectralon tile (the default); 'snv' is the previous per-pixel SNV radiance cube; 'auto' never inspects a scene and resolves to 'snv' on this archive.",
     )
     parser.add_argument(
         "--archive",
@@ -132,9 +129,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--tile-drop-unresolved",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=tile.drop_unresolved_bands,
         help="Drop, from every scan, the bands whose white level no tile in the session "
-        "could measure (instead of refusing). The kept axis is written to wavelengths.csv.",
+        "could measure; --no-tile-drop-unresolved refuses instead. The kept axis is "
+        "written to wavelengths.csv.",
     )
     return parser.parse_args(argv)
 

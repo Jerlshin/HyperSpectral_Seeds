@@ -441,7 +441,7 @@ The system exposes ablations through Hydra overrides — no code changes require
 | Margin annealing off | `stage3.margin_kappa_final=1.0` | freezes Stage 2's calibrated margin vector for the whole of Stage 3 |
 | SWA transient rejection off | `stage3.swa_warmup_cycles=0` | the first post-Adam-warmup cycle becomes a candidate immediately |
 | Greedy SWA off | `stage3.greedy=false` | every cycle-end candidate is accepted unconditionally |
-| Split protocol | `data=hsi256_stratified` | the patch-level, scan-leaky contrast arm, instead of the default scan-disjoint (`grouped`) split + calibration split (§2.8) |
+| Split protocol | `data=refl215_stratified` | the patch-level, scan-leaky contrast arm, instead of the default scan-disjoint (`grouped`) split + calibration split (§2.8) |
 | TTA views | `tta_spatial=…` `tta_spectral=…` | 1–8 dihedral views, 0–$n$ spectral gains |
 | Multi-GPU | `runtime.multi_gpu=ddp` (with `torchrun`) | see `06_EXECUTION_AND_HARDWARE.md` |
 | Sweeps | `python train.py -m stage1.max_lr=1e-4,5e-4,1e-3` | Hydra multirun into `outputs/multirun/` |

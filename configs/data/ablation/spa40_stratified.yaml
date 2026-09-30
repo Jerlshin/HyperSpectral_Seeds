@@ -1,5 +1,5 @@
-# ABLATION ARM — NOT the primary path. The reduced-band twin of
-# `configs/data/hsi256_stratified.yaml`: patch-level splitting at k = 40, so
+# ABLATION ARM — NOT the primary path. The k = 40 SNV-cube counterpart of
+# `configs/data/refl215_stratified.yaml`: patch-level splitting at k = 40, so
 # that the leakage gap can also be measured on the reduced representation if
 # A2 shows the two representations behave differently.
 #

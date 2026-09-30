@@ -22,7 +22,7 @@ always, CUDA and Metal when present. On the two-GPU box the failure was reported
 from, ``device="cuda"`` is the failing case; on a Metal laptop ``device="mps"``
 is, and it fails identically.
 
-The last test builds the 256-band primary model on both ranks of a real
+The last test builds the 215-band primary model on both ranks of a real
 two-process group, which is the reported failure as a job rather than as a call.
 Its rank body is shared with this file's ``__main__``, so the same coverage is
 reachable through the launcher the report named::
@@ -51,7 +51,7 @@ from spectralquadnet.models.spectral_seed_net import SpectralSeedNet
 
 #: The primary path's band count — the case in the report, and the one where the
 #: hull's O(C²) form matters.
-BANDS = 256
+BANDS = 215
 #: The smallest job that is a job: rank 1 is the one that has to agree with rank 0.
 WORLD_SIZE = 2
 #: The training step under DDP is a shape and device check, not a learning one,
@@ -130,7 +130,7 @@ def test_the_primary_model_builds_from_an_accelerator_resident_wavelength_vector
     """``build_run_context``'s call, on every device this machine has.
 
     ``build_model(cfg, store.require_wavelengths())`` is the line that crashed;
-    this is that line with the real 256-band λ axis and the real composed
+    this is that line with the real 215-band λ axis and the real composed
     config, one step short of the ``.to(device)`` that follows it.
     """
     model = build_model(cfg_default, physical_wl_full.to(device))
@@ -219,7 +219,7 @@ def test_the_primary_model_constructs_on_every_rank_of_a_two_rank_job(monkeypatc
     """The reported failure, reproduced as a job.
 
     Two processes, the project's own ``init_distributed`` and
-    ``wrap_for_training``, and the 256-band model built from a wavelength tensor
+    ``wrap_for_training``, and the 215-band model built from a wavelength tensor
     on each rank's device. On a multi-GPU box that device is ``cuda:${LOCAL_RANK}``
     and this is the crash verbatim; over gloo it is the construction and
     buffer-broadcast plumbing without the cross-device comparison, which is

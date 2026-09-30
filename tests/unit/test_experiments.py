@@ -108,7 +108,7 @@ def test_the_architecture_ablations_run_on_the_primary_protocol_and_input() -> N
     from spectralquadnet.config.compose import load_experiment_config
 
     control = load_experiment_config(registry.CONTROL_CONFIG)
-    assert control.data.num_bands == 256
+    assert control.data.num_bands == 215
     assert control.data.split_scheme == "grouped"
     assert control.evaluation.select_split == "calib"
 
@@ -139,7 +139,7 @@ def test_a1_varies_the_split_and_only_the_split() -> None:
     for arm in a1.arms:
         data = next(o for o in arm.overrides if o.startswith("data="))
         cfg = load_experiment_config(a1.config, overrides=[data])
-        assert cfg.data.num_bands == 256, arm.name
+        assert cfg.data.num_bands == 215, arm.name
         assert not str(cfg.data.band_indices_path), arm.name
 
 

@@ -3,7 +3,7 @@
 **The retained band-selection research pathway. Not the primary pipeline.**
 
 The primary methodology is the complete 256-band cube with no reduction of any
-kind (``configs/data/hsi256_grouped.yaml``), and this package is the reason that
+kind (``configs/data/refl215_grouped.yaml``), and this package is the reason that
 is a *choice* rather than an assumption: it is the experiment that could show
 the choice to be unnecessary. Nothing here runs during a default
 ``python train.py``, nothing here writes to the primary path's arrays, and its

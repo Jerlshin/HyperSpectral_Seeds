@@ -79,7 +79,7 @@ def test_the_default_config_builds_the_replacement(cfg_default, seed_model) -> N
 
 def test_the_primary_path_is_the_full_acquired_cube(cfg_default) -> None:
     """The methodology, as a config assertion rather than a claim in a docstring."""
-    assert cfg_default.data.num_bands == 256, "no band reduction on the primary path"
+    assert cfg_default.data.num_bands == 215, "no band reduction on the primary path"
     assert not str(cfg_default.data.band_indices_path), "and no index-file subsetting either"
     assert cfg_default.data.patches_data.endswith("patches.npy")
     assert cfg_default.data.wavelength_path.endswith("wavelengths.csv")
@@ -97,7 +97,7 @@ def test_the_control_arm_builds_on_the_primary_input(cfg_quadnet_full256, physic
     set_seed(42)
     control = build_model(cfg_quadnet_full256, physical_wl_full)
     assert isinstance(control, SpectralQuadNet)
-    assert cfg_quadnet_full256.data.num_bands == 256
+    assert cfg_quadnet_full256.data.num_bands == 215
     assert cfg_quadnet_full256.data.split_scheme == "grouped"
     assert list(cfg_quadnet_full256.model.branch_drop_profile) == [1.0, 1.0, 1.0, 1.0]
 

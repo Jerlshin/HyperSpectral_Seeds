@@ -2,10 +2,13 @@
 #  ABLATION ARM — NOT the primary path.
 #
 #  40 SPA-selected bands of the acquired 256, under the primary protocol
-#  (grouped + calib). This is A2's reduced arm: it differs from
-#  `configs/data/hsi256_grouped.yaml` in the band count and in nothing else, so
-#  `F1(256 bands) - F1(40 bands)` is a one-variable measurement of what the SPA
-#  reduction costs.
+#  (grouped + calib). This is A2's reduced arm. It was cut from the former
+#  256-band per-pixel-SNV cube, so against the current primary
+#  (`configs/data/refl215_grouped.yaml`, 215-band reflectance) it differs in the
+#  radiometry as well as the band count; for a one-variable reduction on the
+#  primary cube use `data.band_indices_path` with `outputs/band_finalists/`.
+#  `patches_spa_40b.npy` is not part of `./dataset/`: rebuild it with
+#  `scripts/select_bands.py` from an SNV cube before selecting this arm.
 #
 #  It is retained, not deprecated. What it may not be is the default: the
 #  k = 40 elbow was never demonstrated (the shipped curve terminates at its own

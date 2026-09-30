@@ -9,6 +9,12 @@ acquired cube** on their shipped compositions; the reduced-band arms are ablatio
 | **§3.0** | `spectral_seed_net` | `configs/model/seed_net.yaml` | **3,052,682** | **The primary architecture.** Two pathways, concat + MLP, K=1 head, one auxiliary head. |
 | **§3.1 →** | `spectral_quadnet` | `configs/model/quadnet_v4_audited.yaml` | 5,260,246 | The four-branch control arm, retained unchanged. `experiment/quadnet_full256` runs it on the primary protocol; `experiment/quadnet_audited` is the frozen 40-band replica. |
 
+
+> Counts in this document are derived at 256 bands. The primary input is now the 215-band
+> white-tile reflectance cube (`02_DATASET_AND_PREPROCESSING.md`), where the totals are
+> **3,003,412** (`spectral_seed_net`) and **5,242,710** (`spectral_quadnet`); the stem's stride
+> schedule is `(8, 2, 2)` at both counts.
+
 The audit's case for the reduction, in the numbers this document measures (all at the
 audited 40-band input, which is where they were taken):
 

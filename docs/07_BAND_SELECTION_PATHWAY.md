@@ -11,7 +11,7 @@
 
 **Nothing in this document is on the primary path.** The study's primary methodology is to
 train on the **complete 256-band cube with no band selection and no dimensionality reduction
-of any kind** (`configs/data/hsi256_grouped.yaml`, `01_ABSTRACT_AND_OVERVIEW.md` §1.1). A
+of any kind** (`configs/data/refl215_grouped.yaml`, `01_ABSTRACT_AND_OVERVIEW.md` §1.1). A
 default `python train.py` never runs a selector, never reads a band-index file, and prints
 `Spectral: 256 bands — the full acquired cube, no band selection (primary methodology)` on its
 first screen.
@@ -97,7 +97,7 @@ The `confirm` stage refuses to run before `analyse` has written a recommendation
 is the entire reason the stage is separate.
 
 The splits come from `spectralquadnet.data.loaders.grouped_split` — the *same* builder the
-training runs use, with the same parameters as `configs/data/hsi256_grouped.yaml` — so the
+training runs use, with the same parameters as `configs/data/refl215_grouped.yaml` — so the
 rows a selector may see are exactly the rows a training run would put a gradient through.
 
 ### 2.3 Two selection scopes
@@ -456,21 +456,16 @@ k = 32: `data.band_indices_path=… data.wavelength_path=… data.num_bands=32 d
 data.max_cutout_bands=2`. Every band lies within one instrument band (2.4 nm) of the sets the
 study evaluated, which snapped to the band nearest 430 nm (429.6 nm).
 
-The indices address the axis of the wavelength file they were cut from. The **reflectance cube has
-its own 215-band axis** — the 41 bands the white tile could not measure (608.0–705.8 nm) are
-dropped — so it has its own sets, and the SNV files must never be pointed at it:
-
-```bash
-python scripts/write_finalist_bands.py --wavelengths dataset_reflectance/wavelengths.csv \
-    --out-dir outputs/band_finalists_reflectance
-```
+The indices address the axis of the wavelength file they were cut from: `dataset/wavelengths.csv`,
+the **215-band reflectance axis** — the 41 bands the white tile could not measure (608.0–705.8 nm)
+are dropped. Regenerate the sets whenever the dataset is rebuilt; sets cut from the former
+256-band SNV axis address different bands and must never be pointed at this cube.
 
 A gap in the axis is collapsed before the targets are spaced (`finalists.measured_axis`), so the k
 bands spread evenly over the *measured* spectrum instead of piling onto the gap's edges; on a
-gap-free axis this is the plain rule, and the SNV sets are unchanged by it. The price is that the
-two radiometries' sets differ: at k = 32 the reflectance set samples every ~14.7 nm on either side
-of the gap and shares 5 of its 32 bands with the SNV set, so an SNV-vs-reflectance comparison at
-matched k is also a comparison of band positions.
+gap-free axis this is the plain rule. At k = 32 the set samples every ~14.7 nm on either side of
+the gap and shares 5 of its 32 bands with the former SNV-axis set, so results at matched k are not
+comparable across the two band axes band for band.
 
 ## 8. Limitations, stated up front
 
@@ -492,7 +487,7 @@ matched k is also a comparison of band positions.
 
 | | |
 |---|---|
-| `configs/data/hsi256_grouped.yaml` | **the primary path**, and this study's reference point. The protocol is mirrored exactly — same split builder, same `split_eval_frac`, same `calib_frac` — so a budget curve is comparable with the headline runs. |
+| `configs/data/refl215_grouped.yaml` | **the primary path**, and this study's reference point. The protocol is mirrored exactly — same split builder, same `split_eval_frac`, same `calib_frac` — so a budget curve is comparable with the headline runs. |
 | `scripts/select_bands.py` | the build step. Materialises one reduced cube at one k. Use it *after* this study has decided k; the neural arms do not need it at all. |
 | `configs/data/ablation/` | the shipped reduced arms: `spa40_grouped`, `spa40_stratified`, and the frozen `spa40_audited` replica. |
 | **A2** (`cli ablate A2`) | the gateway. Three arms — `full_256` (reference), `spa40_whole_corpus`, `spa40_within_fold` — reading two deltas from one table: what the reduction costs, and what selecting outside the fold leaks. The `bands/` artifacts here supply matched within-fold selections at *every* budget, which turns A2 into a curve. |

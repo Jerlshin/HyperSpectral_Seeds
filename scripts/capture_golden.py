@@ -48,11 +48,12 @@ Artifacts written per schema directory
 ``physical_wl_spa40.npy``       the 40-band min-max-normalised wavelength vector
                                 the goldens were captured on, so the test never
                                 needs the gitignored ``dataset/``.
-``physical_wl_full256.npy``     the **primary** path's 256-band λ axis, committed
-                                beside it for the same reason. Not itself a
-                                regression golden — nothing is digested against
-                                it — but every λ-aware operator is a function of
-                                it, so the 256-band unit tests read it.
+``physical_wl_primary.npy``     the **primary** path's λ axis (the 215-band
+                                reflectance cube), committed beside it for the
+                                same reason. Not itself a regression golden —
+                                nothing is digested against it — but every
+                                λ-aware operator is a function of it, so the
+                                primary-path unit tests read it.
 ``forward_logits_seed42.npy``   ``(4, 90)`` eval-mode logits.
 ``init_state_sha256.json``      SHA-256 of every one of the freshly initialised
                                 state-dict tensors, plus a combined digest.
@@ -383,8 +384,8 @@ def refactored_train_step(cfg: Any, physical_wl: torch.Tensor) -> dict[str, Any]
 #: Not a regression golden — no digest is compared against it — but the same
 #: kind of artifact and kept for the same reason: every λ-aware operator in the
 #: model is a function of this vector, so the unit tests that describe those
-#: operators at 256 bands must not depend on the gitignored ``dataset/``.
-PRIMARY_WL_FILE = "physical_wl_full256.npy"
+#: operators on the primary axis must not depend on the gitignored ``dataset/``.
+PRIMARY_WL_FILE = "physical_wl_primary.npy"
 
 
 def capture_primary_wavelengths() -> bool:

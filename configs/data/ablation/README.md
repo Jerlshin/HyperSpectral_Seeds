@@ -1,13 +1,13 @@
 # `configs/data/ablation/` — reduced-band arms
 
 **Nothing here is on the primary path.** The primary data configuration is
-`configs/data/hsi256_grouped.yaml`: the complete 256-band cube, no selection.
+`configs/data/refl215_grouped.yaml`: the complete 215-band reflectance cube, no selection.
 These files exist so that band reduction stays a *measurable* research question
 rather than an inherited assumption.
 
 | Config | Bands | Split | What it is for |
 |---|---:|---|---|
-| `spa40_grouped.yaml` | 40 | `grouped` | A2's reduced arm — the shipped SPA subset under the primary protocol, so `full 256 − SPA 40` is a clean one-variable delta. |
+| `spa40_grouped.yaml` | 40 | `grouped` | A2's reduced arm — the SPA subset of the former 256-band SNV cube under the primary protocol (differs from the reflectance primary in radiometry too; `patches_spa_40b.npy` must be rebuilt). |
 | `spa40_stratified.yaml` | 40 | `stratified` | The reduced arm's leaky twin. Only needed if A1 is re-run at k = 40. |
 | `spa40_audited.yaml` | 40 | `stratified` | Frozen. Reproduces the *audited run's* input and partition exactly, and is what `configs/experiment/quadnet_audited.yaml` and the golden regression gates compose. Do not tidy it. |
 

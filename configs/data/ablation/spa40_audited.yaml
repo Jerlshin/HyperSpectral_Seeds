@@ -8,7 +8,7 @@
 #  Composed only by `configs/experiment/quadnet_audited.yaml` and by
 #  `scripts/capture_golden.py`. For a reduced-band *experiment*, use
 #  `configs/data/ablation/spa40_grouped.yaml`; for the study's primary path, use
-#  `configs/data/hsi256_grouped.yaml`.
+#  `configs/data/refl215_grouped.yaml`.
 # ══════════════════════════════════════════════════════════════════════
 # 40-band SPA-selected VIS-NIR patches, 90 rice-seed varieties.
 defaults:

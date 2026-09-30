@@ -3,12 +3,9 @@
 
 Thin CLI over :mod:`spectralquadnet.bandstudy.finalists`. Reads only the
 wavelength axis, so it needs neither the patch cube nor a GPU. Its output is
-valid only for a cube with that same axis: the reflectance cube drops the bands
-the white tile could not measure, so it gets its own sets::
-
-    python scripts/write_finalist_bands.py \\
-        --wavelengths dataset_reflectance/wavelengths.csv \\
-        --out-dir outputs/band_finalists_reflectance
+valid only for a cube with that same axis — by default ``dataset/wavelengths.csv``,
+the 215-band reflectance axis (608-706 nm dropped). Regenerate the sets
+whenever the dataset is rebuilt.
 
 Usage
 ─────

@@ -109,7 +109,7 @@ def test_the_guard_passes_a_genuinely_disjoint_grouped_split() -> None:
 
 
 def test_a_stratified_run_is_warned_that_its_number_is_a_mixture() -> None:
-    cfg = load_experiment_config(overrides=["data=hsi256_stratified"])
+    cfg = load_experiment_config(overrides=["data=refl215_stratified"])
     labels, groups = _two_bundles_per_class()
     splits = grouped_split(labels, groups, eval_frac=0.30, calib_frac=0.15)
     recorder = _Recorder()
@@ -144,8 +144,8 @@ def test_the_stratified_contrast_arm_differs_in_exactly_one_thing() -> None:
     representation would measure the two together and attribute the sum to the
     split, which is the shape of the defect A1 exists to quantify.
     """
-    grouped = load_experiment_config(overrides=["data=hsi256_grouped"])
-    strat = load_experiment_config(overrides=["data=hsi256_stratified"])
+    grouped = load_experiment_config(overrides=["data=refl215_grouped"])
+    strat = load_experiment_config(overrides=["data=refl215_stratified"])
     assert grouped.data.split_scheme != strat.data.split_scheme
     for key in (
         "calib_frac",
@@ -212,7 +212,7 @@ def test_the_default_experiment_reads_every_acquired_band(cfg_default) -> None:
     so a config change that quietly reintroduced a reduction would fail here
     instead of being discovered in a results table months later.
     """
-    assert cfg_default.data.num_bands == 256
+    assert cfg_default.data.num_bands == 215, "every band with a measured reflectance"
     assert not str(cfg_default.data.band_indices_path)
     assert cfg_default.data.patches_data.endswith("/patches.npy")
     assert cfg_default.data.wavelength_path.endswith("/wavelengths.csv")
@@ -226,11 +226,11 @@ def test_no_reduced_band_config_can_be_reached_without_naming_it() -> None:
     primary = sorted(p.stem for p in data_group.glob("*.yaml"))
     reduced = sorted(p.stem for p in (data_group / "ablation").glob("*.yaml"))
 
-    assert primary == ["hsi256_grouped", "hsi256_stratified"], primary
+    assert primary == ["refl215_grouped", "refl215_stratified"], primary
     assert reduced, "the band-selection pathway's arms must still ship"
     for name in primary:
         cfg = load_experiment_config(overrides=[f"data={name}"])
-        assert cfg.data.num_bands == 256, name
+        assert cfg.data.num_bands == 215, name
         assert not str(cfg.data.band_indices_path), name
 
 
@@ -243,10 +243,11 @@ def test_every_shipped_experiment_declares_its_spectral_regime() -> None:
     )
 
     expected = {
-        DEFAULT_EXPERIMENT: (256, "spectral_seed_net", "grouped"),
-        QUADNET_FULL256_EXPERIMENT: (256, "spectral_quadnet", "grouped"),
-        # The frozen historical replica — the only shipped experiment that is not
-        # 256 bands, and the only one whose numbers describe the audited run.
+        DEFAULT_EXPERIMENT: (215, "spectral_seed_net", "grouped"),
+        QUADNET_FULL256_EXPERIMENT: (215, "spectral_quadnet", "grouped"),
+        # The frozen historical replica — the only shipped experiment not on the
+        # 215-band reflectance cube, and the only one whose numbers describe the
+        # audited run.
         AUDITED_EXPERIMENT: (40, "spectral_quadnet", "stratified"),
     }
     for name, (bands, arch, scheme) in expected.items():
@@ -281,36 +282,17 @@ def test_the_four_branch_control_differs_from_the_default_in_the_architecture() 
     assert control.model.pairwise_penalty is False
 
 
-@pytest.mark.parametrize(
-    ("arm", "twin"),
-    [
-        ("reflectance/refl215_grouped", "hsi256_grouped"),
-        ("reflectance/refl215_stratified", "hsi256_stratified"),
-    ],
-)
-def test_a_reflectance_arm_differs_from_its_twin_only_in_the_cube(arm: str, twin: str) -> None:
-    """Radiometry is the one variable: same protocol, same augmentation *fractions*.
-
-    Everything that may differ is the cube (its paths) and what its 215-band axis
-    forces — the band count and the band-expressed augmentation widths, which
-    must be the rule's values at that count.
-    """
+def test_the_primary_configs_read_the_reflectance_cube_in_dataset() -> None:
+    """The two primary configs differ only in the split, and read ./dataset/ — nothing else."""
     from omegaconf import OmegaConf
 
-    from spectralquadnet.data.datasets import band_augmentation_widths
-
-    a = OmegaConf.to_container(load_experiment_config(overrides=[f"data={arm}"]).data)
-    b = OmegaConf.to_container(load_experiment_config(overrides=[f"data={twin}"]).data)
-    assert isinstance(a, dict) and isinstance(b, dict)
-    differing = {k for k in set(a) | set(b) if a.get(k) != b.get(k)}
-    band_keys = {"num_bands", "cutmix_bands", "max_cutout_bands"}
-    path_keys = {k for k in differing if k.endswith("_path") or k == "patches_data"}
-    assert differing == band_keys | path_keys, sorted(differing - band_keys - path_keys)
-    assert all(str(a[k]).startswith("./dataset_reflectance/") for k in path_keys if a[k])
-    assert a["num_bands"] == 215
-    assert not str(a["band_indices_path"])
-    widths = band_augmentation_widths(215)
-    assert (a["cutmix_bands"], a["max_cutout_bands"]) == (
-        widths["cutmix_bands"],
-        widths["max_cutout_bands"],
+    grouped = OmegaConf.to_container(
+        load_experiment_config(overrides=["data=refl215_grouped"]).data
     )
+    strat = OmegaConf.to_container(
+        load_experiment_config(overrides=["data=refl215_stratified"]).data
+    )
+    assert isinstance(grouped, dict) and isinstance(strat, dict)
+    assert {k for k in grouped if grouped[k] != strat.get(k)} == {"split_scheme"}
+    paths = [v for k, v in grouped.items() if (k.endswith("_path") or k == "patches_data") and v]
+    assert paths and all(str(v).startswith("./dataset/") for v in paths)

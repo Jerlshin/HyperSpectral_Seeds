@@ -65,13 +65,14 @@ class TileConfig:
     #: Certified reflectance of the panel; the Zenodo record states 100 %.
     reference_reflectance: float = 1.0
     #: What to do with a band whose white level no tile in its session could
-    #: measure. ``False`` refuses to extract. ``True`` drops every such band from
-    #: **every** scan — one common axis, written to ``<root>/wavelengths.csv`` —
-    #: rather than filling it. On this archive the tile clips in the same
-    #: 608-706 nm bands in every scan of sessions 0-7 (the lamp peak), so no
-    #: scan in those sessions can supply them and any fill would be a model of
-    #: the lamp, not a measurement.
-    drop_unresolved_bands: bool = False
+    #: measure. ``True`` (the default, and how ``./dataset`` is built) drops
+    #: every such band from **every** scan — one common axis, written to
+    #: ``<root>/wavelengths.csv`` — rather than filling it. ``False`` refuses to
+    #: extract instead. On this archive the tile clips in the same 608-706 nm
+    #: bands in every scan of sessions 0-7 (the lamp peak), so no scan in those
+    #: sessions can supply them and any fill would be a model of the lamp, not a
+    #: measurement: 215 of 256 bands are kept.
+    drop_unresolved_bands: bool = True
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -106,12 +107,13 @@ class PrepConfig:
     patch_size: int = 64
     num_bands: int = 256
 
-    #: P-2 / T4-2. ``auto`` divides by a white panel when the archive has one
-    #: and applies per-pixel SNV when it does not — which is this archive's
-    #: case, verified: its only reference cubes are ``black.hdr``. ``none``
-    #: reproduces the pre-Tier-4 radiance domain, and therefore §2.1.1's leak
-    #: channel; it exists so the two can be compared rather than argued about.
-    radiometry: str = "auto"
+    #: P-2 / T4-2. ``tile`` (the default, and the radiometry of ``./dataset``)
+    #: divides each scan by its own in-scene Spectralon tile — reflectance. The
+    #: others remain selectable: ``snv`` is the previous per-pixel SNV of
+    #: radiance (what ``auto`` resolves to on this archive, whose only
+    #: reference cubes are ``black.hdr``), and ``none`` the pre-Tier-4 radiance
+    #: domain, kept so the domains can be compared rather than argued about.
+    radiometry: str = "tile"
 
     #: The downloaded archive. ``None`` keeps it at ``<root>/rice_hsi.zip``; set it
     #: to build a second dataset (e.g. the reflectance cube) into a new ``root``

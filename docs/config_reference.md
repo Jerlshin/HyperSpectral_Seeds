@@ -14,47 +14,40 @@ the rest of this suite.
 
 ## `data` — `configs/data/*.yaml`
 
-Seven configs ship, in three clearly separated tiers.
+Five configs ship, in two clearly separated tiers.
 
-**Primary — the complete 256-band cube, no band selection:**
+**Primary — the 215-band white-tile reflectance cube in `./dataset/`, no band selection:**
 
 | Config | Split | Role |
 |---|---|---|
-| **`hsi256_grouped.yaml`** | `grouped` | **The default.** Leave-one-acquisition-bundle-out + a calibration split. |
-| `hsi256_stratified.yaml` | `stratified` | A1's *contrast* arm, identical in everything but `split_scheme`, so the gap between them measures the split and nothing else. |
+| **`refl215_grouped.yaml`** | `grouped` | **The default.** Leave-one-acquisition-bundle-out + a calibration split. |
+| `refl215_stratified.yaml` | `stratified` | A1's *contrast* arm, identical in everything but `split_scheme`, so the gap between them measures the split and nothing else. |
+
+Reflectance $\varrho = (R-\bar D)/W_\text{tile}$ per scan. 215, not 256 bands: the tile clips in
+608.0–705.8 nm in every scan of sessions 0–7, and those 41 bands are dropped from every scan
+(`02_DATASET_AND_PREPROCESSING.md`). A k-band finalist uses `outputs/band_finalists/`, cut from
+this axis by `scripts/write_finalist_bands.py`.
 
 **`configs/data/ablation/` — reduced-band arms, never on the primary path:**
 
 | Config | Bands | Split | Role |
 |---|---:|---|---|
-| `spa40_grouped.yaml` | 40 | `grouped` | A2's reduced arm — one variable against `hsi256_grouped`. |
+| `spa40_grouped.yaml` | 40 | `grouped` | A2's reduced arm (SPA subset of the former 256-band SNV cube; its `patches_spa_40b.npy` must be rebuilt by `scripts/select_bands.py`). |
 | `spa40_stratified.yaml` | 40 | `stratified` | Its leaky twin, if A1 is re-run at k = 40. |
 | `spa40_audited.yaml` | 40 | `stratified` | **Frozen.** Reproduces the audited run's input and partition exactly; composed only by `experiment/quadnet_audited` and the golden capture. Do not tidy it. |
 
-**`configs/data/reflectance/` — the white-tile reflectance cube, a radiometry arm:**
-
-| Config | Bands | Split | Role |
-|---|---:|---|---|
-| `refl215_grouped.yaml` | 215 | `grouped` | Reflectance $\varrho = (R-\bar D)/W_\text{tile}$ instead of SNV radiance, under the primary protocol. Differs from `hsi256_grouped` only in the cube's paths and what its axis forces (`num_bands`, `cutmix_bands` 43, `max_cutout_bands` 16); pinned by `tests/unit/test_protocol_guard.py`. |
-| `refl215_stratified.yaml` | 215 | `stratified` | Its stratified contrast, twin of `hsi256_stratified`. |
-
-215, not 256: the tile clips in 608.0–705.8 nm in every scan of sessions 0–7, and those 41 bands
-are dropped from every scan (`02_DATASET_AND_PREPROCESSING.md`). The cube is row-aligned with
-`./dataset/`. A k-band finalist on it uses `outputs/band_finalists_reflectance/`, never the
-256-axis sets.
-
-Values below are `hsi256_grouped.yaml`'s; the last column gives the frozen replica's, which is
+Values below are `refl215_grouped.yaml`'s; the last column gives the frozen replica's, which is
 what the pre-refactor `CONFIG` keys map onto in `config_migration_table.md`.
 
 | Key | Value | Meaning | `ablation/spa40_audited.yaml` |
 |---|---|---|---|
 | `patches_data` | `./dataset/patches.npy` | patch cube path — the direct product of `scripts/prepare_dataset.py` | `./dataset/patches_spa_40b.npy` |
 | `labels_path` | `./dataset/labels.npy` | class index per patch | — |
-| `wavelength_path` | `./dataset/wavelengths.csv` | the 256-band wavelength axis, 383.2–1006.5 nm | `./dataset/wavelengths_spa_40b.csv` |
+| `wavelength_path` | `./dataset/wavelengths.csv` | the 215-band reflectance axis, 383.2–1006.5 nm without 608.0–705.8 nm | `./dataset/wavelengths_spa_40b.csv` |
 | `band_indices_path` | `""` | **BS-1** — optional `.npy` of band indices sliced off the mmap as each patch is read. Empty on every primary config, and that emptiness *is* the no-band-selection methodology; the band study's neural arms set it | `""` |
 | `masks_path` | `./dataset/masks.npy` | persisted fill map $\alpha$; empty uses the `sum_c\|x_c\|>10^{-5}` fallback (`02_DATASET_AND_PREPROCESSING.md` §2.3, `03_MODEL_ARCHITECTURE.md` §3.1) | `""` |
 | `morphology_path` | `./dataset/morphology.npy` | persisted 8-column morphometrics; empty substitutes zeros | `""` |
-| `num_bands` | `256` | **every acquired band.** Checked against the cube and the wavelength CSV by `data/mmap_store.py::band_geometry` before the model is built | `40` |
+| `num_bands` | `215` | **every band with a measured reflectance.** Checked against the cube and the wavelength CSV by `data/mmap_store.py::band_geometry` before the model is built | `40` |
 | `num_classes` | `90` | rice-seed varieties | — |
 | `groups_path` | `./dataset/groups.npy` | per-patch scan id; required by `grouped`, read under `stratified` only to measure train/eval scan overlap | — |
 | `scan_table_path` | `./dataset/scan_table.csv` | one row per scan naming its acquisition **session**. Read only by the final evaluation's session breakdown (`spectralquadnet.reporting.session`): same- vs cross-session recall, attraction to the kernel's own session, session-prediction entropy. **Never a model input** | `""` (breakdown skipped) |
@@ -62,9 +55,9 @@ what the pre-refactor `CONFIG` keys map onto in `config_migration_table.md`.
 | `split_eval_frac` | `0.30` | share held out for val∪test | — |
 | `split_fold` | `0` | which scan(s) are held out under `grouped`; must stay `0` under `stratified`. Sweeping `{0, 1}` is the complete leave-one-bundle-out CV this dataset supports | — |
 | `calib_frac` | `0.15` | share of the training pool carved into `calib`, where per-class margins/CDWS/oversampling weights are fitted; `0.0` fits them on `val` instead | `0.0` |
-| `max_cutout_bands` | `19` | max contiguous bands zeroed by the `cutout` augmentation — **7.5% of the band axis**, derived by `data/datasets.py::band_augmentation_widths` so the augmentation means the same thing at every band count | `3` |
+| `max_cutout_bands` | `16` | max contiguous bands zeroed by the `cutout` augmentation — **7.5% of the band axis**, derived by `data/datasets.py::band_augmentation_widths` so the augmentation means the same thing at every band count | `3` |
 | `noise_std` | `0.02` | base σ of the spectral-noise augmentation; a per-band amplitude, band-count independent | — |
-| `cutmix_bands` | `51` | band-window width of same-class spectral CutMix — **20% of the band axis**, same derivation | `8` |
+| `cutmix_bands` | `43` | band-window width of same-class spectral CutMix — **20% of the band axis**, same derivation | `8` |
 | `cutmix_spatial` | `24` | side length of same-class spatial CutMix; band-count independent | — |
 | `single_group_policy` | `error` | **IC-3** — what `grouped` does about a class captured in a single bundle. `error` refuses and names them; `patch_split` accepts a patch-level split for those classes with the leak recorded in the report | `error` |
 | `gain_path` | `./dataset/gain.npy` | **IC-14** — per-pixel `(mean, sd)` along λ. **Never a model input**: it is the residual brightness SNV divided out, and therefore the strongest single carrier of acquisition-bundle identity (CHANGES §3.3). Consumed by `spectralquadnet.experiments.leakage`, which *measures* the acquisition signal instead of feeding it to the classifier | `""` |
@@ -74,8 +67,8 @@ what the pre-refactor `CONFIG` keys map onto in `config_migration_table.md`.
 ## `model` — `configs/model/{seed_net,quadnet_v4_audited}.yaml`
 
 Two architectures ship, selected by `model.arch`. `seed_net` (the default) is CHANGES §16.2's
-two-pathway replacement — **3,052,682** parameters on the 256-band primary input;
-`quadnet_v4_audited` is the audited four-branch model — **5,260,246** at 256 bands and
+two-pathway replacement — **3,003,412** parameters on the 215-band primary input;
+`quadnet_v4_audited` is the audited four-branch model — **5,242,710** at 215 bands and
 5,194,578 at the audited 40 — retained unmodified because ablations A3/A4/A5/A8 are comparisons
 *against* it. Every width in both is a function of `data.num_bands`; only three components move
 with it at all (`03_MODEL_ARCHITECTURE.md` §3.7).
@@ -299,7 +292,7 @@ a throughput knob that must never change a reported metric — a config that nev
 ## Root — `configs/experiment/*.yaml`
 
 Three experiments ship — see the `experiment` section below for the full table.
-**`seednet_full256`** is the default (`SpectralSeedNet`, the complete 256-band cube, one stage,
+**`seednet_full256`** is the default (`SpectralSeedNet`, the complete 215-band reflectance cube, one stage,
 `grouped`, selection on `calib`); **`quadnet_full256`** is the four-branch control on the same
 protocol and input; **`quadnet_audited`** is the audited run reproduced bit-for-bit, including
 the three runtime overrides that make it incomparable to the shipped defaults. `pipeline`
@@ -326,8 +319,8 @@ Three ship, and which one a number came from is always recorded in `results/run.
 
 | Config | Composes | Role |
 |---|---|---|
-| **`seednet_full256.yaml`** | `data/hsi256_grouped` · `model/seed_net` · `single/one_stage` · `evaluation/held_out_once` · `tracking/console` | **The default.** What bare `python train.py` runs, and the only configuration whose numbers are the study's headline. |
-| `quadnet_full256.yaml` | `data/hsi256_grouped` · `model/quadnet_v4_audited` (with symmetric branch dropout, head elaborations off, `specf_tokens: 32`) · `single/one_stage` · `evaluation/held_out_once` | The four-branch control arm **on the primary protocol and the primary input**, so an ablation arm differs from the default in the architecture alone. A3/A4/A5/A8 run here. |
+| **`seednet_full256.yaml`** | `data/refl215_grouped` · `model/seed_net` · `single/one_stage` · `evaluation/held_out_once` · `tracking/console` | **The default.** What bare `python train.py` runs, and the only configuration whose numbers are the study's headline. |
+| `quadnet_full256.yaml` | `data/refl215_grouped` · `model/quadnet_v4_audited` (with symmetric branch dropout, head elaborations off, `specf_tokens: 32`) · `single/one_stage` · `evaluation/held_out_once` | The four-branch control arm **on the primary protocol and the primary input**, so an ablation arm differs from the default in the architecture alone. A3/A4/A5/A8 run here. |
 | `quadnet_audited.yaml` | `data/ablation/spa40_audited` · `model/quadnet_v4_audited` · `stage{1,2,3}` · `evaluation/audited_replica` | The **frozen historical replica** of the audited run, and the subject of every golden regression digest. Not an ablation arm. |
 
 The three-stage groups (`stage1`/`stage2`/`stage3`) compose in every experiment because

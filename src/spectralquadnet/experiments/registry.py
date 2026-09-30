@@ -184,12 +184,12 @@ _register(
         arms=(
             Arm(
                 "grouped",
-                overrides=("data=hsi256_grouped",),
+                overrides=("data=refl215_grouped",),
                 note="Leave-one-acquisition-bundle-out. Training sees one bundle per class.",
             ),
             Arm(
                 "stratified",
-                overrides=("data=hsi256_stratified", "data.split_fold=0"),
+                overrides=("data=refl215_stratified", "data.split_fold=0"),
                 note="Patch-level. All 180 bundles appear in train AND in eval.",
             ),
         ),

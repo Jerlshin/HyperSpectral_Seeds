@@ -29,6 +29,7 @@ Non-negotiable invariants
 from __future__ import annotations
 
 import logging
+import mmap
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -36,11 +37,11 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 import torch
-import mmap
+
 
 def _apply_madvise_random(array: npt.NDArray[Any]) -> None:
     """Disable sequential read-ahead on memory-mapped arrays to prevent thrashing.
-    
+
     DataLoaders access patches randomly, which causes the OS to eagerly prefetch
     adjacent pages. On a 36 GB dataset, this completely exhausts host RAM and
     causes severe disk thrashing. MADV_RANDOM instructs the kernel to only read
@@ -51,6 +52,7 @@ def _apply_madvise_random(array: npt.NDArray[Any]) -> None:
             array.base.madvise(mmap.MADV_RANDOM)
         except Exception as e:
             _log.debug("Failed to apply MADV_RANDOM: %s", e)
+
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from spectralquadnet.config.schema import DataConfig
@@ -306,7 +308,9 @@ def band_geometry(cfg: DataConfig | Any, store: DataStore) -> dict[str, int]:
     index_path = str(getattr(cfg, "band_indices_path", "") or "")
     selected = stored
     if index_path:
-        selected = int(np.asarray(np.load(index_path)).reshape(-1).size)
+        indices = np.asarray(np.load(index_path)).reshape(-1)
+        selected = int(indices.size)
+        _check_index_axis(cfg, indices, stored, index_path)
 
     if selected != configured:
         detail = (
@@ -317,7 +321,8 @@ def band_geometry(cfg: DataConfig | Any, store: DataStore) -> dict[str, int]:
         raise BandGeometryError(
             f"data.num_bands={configured} but {detail}. num_bands sets the model's input "
             "width; the two must agree. The primary pipeline is the full cube "
-            "(num_bands=256, no band_indices_path); a reduced arm must set both."
+            "(num_bands = the stored band count, no band_indices_path); a reduced arm "
+            "must set both."
         )
     if n_wl != configured:
         raise BandGeometryError(
@@ -332,3 +337,43 @@ def band_geometry(cfg: DataConfig | Any, store: DataStore) -> dict[str, int]:
         "wavelengths": n_wl,
         "configured": configured,
     }
+
+
+#: Largest disagreement, in nm, between an index file's claimed wavelengths and
+#: the cube's own axis at those indices. Band centres are ~2.4 nm apart.
+AXIS_TOLERANCE_NM: float = 0.05
+
+
+def _check_index_axis(
+    cfg: DataConfig | Any, indices: npt.NDArray[Any], stored: int, path: str
+) -> None:
+    """Refuse a band-index file cut from a different band axis than the cube's.
+
+    Counts alone cannot tell: a set cut from the former 256-band SNV axis has the
+    right length for a k-band run on the 215-band reflectance cube, and every
+    index below 215 would silently read a different band. So every index must
+    lie inside the cube, and — when the cube's own ``wavelengths.csv`` sits next
+    to ``patches.npy``, as ``prepare_dataset.py`` writes it — the wavelengths the
+    run's ``data.wavelength_path`` claims must be the cube's at those indices.
+    """
+    if indices.size and (int(indices.min()) < 0 or int(indices.max()) >= stored):
+        raise BandGeometryError(
+            f"{Path(path).name} indexes band {int(indices.max())} but the cube stores "
+            f"{stored} bands (0..{stored - 1}); it was cut from a different band axis."
+        )
+    cube_axis = Path(str(cfg.patches_data)).parent / "wavelengths.csv"
+    claimed = Path(str(cfg.wavelength_path))
+    if not cube_axis.exists() or not claimed.exists() or claimed.resolve() == cube_axis.resolve():
+        return
+    full = pd.read_csv(cube_axis, sep=None, engine="python").iloc[:, -1].to_numpy(float)
+    subset = pd.read_csv(claimed, sep=None, engine="python").iloc[:, -1].to_numpy(float)
+    if full.size != stored or subset.size != indices.size:
+        return  # the count checks in `band_geometry` report these
+    worst = float(np.abs(full[indices.astype(np.int64)] - subset).max()) if subset.size else 0.0
+    if worst > AXIS_TOLERANCE_NM:
+        raise BandGeometryError(
+            f"{Path(path).name} and {claimed.name} name wavelengths up to {worst:.1f} nm away "
+            f"from the cube's own axis ({cube_axis}) at the same indices: the index file was "
+            "cut from a different band axis. Regenerate it from the cube's wavelengths.csv "
+            "(e.g. scripts/write_finalist_bands.py)."
+        )

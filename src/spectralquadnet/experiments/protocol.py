@@ -67,13 +67,13 @@ class ProtocolArm:
 PROTOCOL_ARMS: tuple[ProtocolArm, ...] = (
     ProtocolArm(
         name="grouped",
-        data_config="hsi256_grouped",
+        data_config="refl215_grouped",
         folds=PROTOCOL_FOLDS,
         note="Leave-one-acquisition-bundle-out. The headline.",
     ),
     ProtocolArm(
         name="stratified",
-        data_config="hsi256_stratified",
+        data_config="refl215_stratified",
         folds=(0,),
         note="Patch-level. Reported as the contrast; the gap is the result.",
     ),

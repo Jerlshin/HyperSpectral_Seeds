@@ -238,7 +238,7 @@ INTENDED_ADDITIONS: dict[str, str] = {
         "kept because the archived checkpoints were selected on it; `grouped` "
         "is the scan-disjoint protocol. The default stays `stratified` so this "
         "config keeps reproducing the run it describes; "
-        "`configs/data/hsi256_grouped.yaml` is the P-fix protocol."
+        "`configs/data/refl215_grouped.yaml` is the P-fix protocol."
     ),
     "data.split_eval_frac": (
         "T4-1 / P-1 — share held out for val+test. 0.30 reproduces the "

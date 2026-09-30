@@ -1,0 +1,79 @@
+# The A1 CONTRAST arm: the same 215-band reflectance cube, split at patch level.
+#
+# CHANGES §19.2. The grouped number is the headline; this is reported *beside*
+# it, and the gap `F1_stratified - F1_grouped` is not an embarrassment — it is
+# the result. Given that the published literature on this exact dataset reports
+# 92.73-96.17% precision (Taheri et al., J Ambient Intell Human Comput
+# 15:2883-2899, 2024) without stating a bundle-disjoint protocol, that gap is
+# arguably the most valuable number this project can produce: it quantifies how
+# much of reported rice-seed HSI performance is acquisition recognition.
+#
+# The ONLY difference from `refl215_grouped` is `split_scheme`. Everything else —
+# the calibration split, the arrays, the augmentation geometry, the band count —
+# is held identical on purpose, because an experiment whose two arms differ in
+# three things measures none of them.
+defaults:
+  - base_data
+  - _self_
+
+# ── Paths (relative to the process CWD) ────────────────────────────────
+# All direct products of `python scripts/prepare_dataset.py`; nothing runs
+# between them and training.
+patches_data: ./dataset/patches.npy
+labels_path: ./dataset/labels.npy
+wavelength_path: ./dataset/wavelengths.csv
+groups_path: ./dataset/groups.npy
+
+# Session breakdown. `scan_table.csv` names each scan's acquisition session; the
+# final evaluation reads it to report same- vs cross-session recall, attraction
+# to the kernel's own session and session-prediction entropy. 73 of 90 varieties
+# share a session across their two bundles, so the grouped macro-F1 alone cannot
+# say whether a model recognises varieties or sessions. Never a model input.
+scan_table_path: ./dataset/scan_table.csv
+
+# ── Validated side inputs (FE-2 / T3-7, FU-4 / P-4) ────────────────────
+masks_path: ./dataset/masks.npy
+morphology_path: ./dataset/morphology.npy
+
+# IC-14. Never fed to a model: the per-pixel (mean, sd) of each reflectance
+# spectrum, which `spectralquadnet.experiments.leakage` reads to *measure* how
+# much acquisition-bundle signal survives preprocessing.
+gain_path: ./dataset/gain.npy
+
+# ── Geometry ───────────────────────────────────────────────────────────
+# Every band with a measured white level. `band_indices_path` is deliberately
+# absent: `data.band_geometry` fails the run at startup if the cube, the
+# wavelength CSV and this number ever disagree.
+num_bands: 215
+num_classes: 90
+
+# ── Augmentation — `band_augmentation_widths(215)` ─────────────────────
+# `noise_std` is a per-band amplitude, so band-count independent. The cutout
+# (16 of 215) and same-class spectral CutMix (43 of 215) windows are the same
+# 7.5 % and ~20 % of the spectral axis the reduced arms use, so an augmentation
+# means one thing at every band count; the 24x24 paste is ~14 % of the patch.
+noise_std: 0.02
+max_cutout_bands: 16
+cutmix_bands: 43
+cutmix_spatial: 24
+
+# ── Split protocol (P-1, P-5 / T4-1, T4-5) ─────────────────────────────
+# `grouped` holds out whole scans: no scan in train appears in val or test. On
+# this dataset every variety was captured exactly twice, so a class has two
+# groups and `split_eval_frac` can only resolve to "one scan out" — the split
+# realises ~50/50 rather than 70/30, and val/test are two halves of the same
+# held-out scan. Both facts are reported at startup (`SplitReport`). Sweeping
+# `split_fold` over {0, 1} is the COMPLETE leave-one-bundle-out cross-validation
+# this dataset supports; report both folds, never their maximum.
+split_scheme: stratified
+split_eval_frac: 0.30
+split_fold: 0
+
+# IC-3. `error` refuses to run rather than silently accepting a class whose
+# eval patches share a scan with its training patches.
+single_group_policy: error
+
+# Fraction of the *training pool* held out for calibration. The margins, the
+# CDWS weights and the oversampling weights are fitted here, so the split that
+# selects the checkpoint carries no fitted parameters at all.
+calib_frac: 0.15

@@ -24,7 +24,7 @@
 # ══════════════════════════════════════════════════════════════════════
 defaults:
   - /base_experiment
-  - /data: hsi256_grouped
+  - /data: refl215_grouped
   - /model: quadnet_v4_audited
   - /single: one_stage
   - /stage1: progressive_3phase

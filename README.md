@@ -95,9 +95,9 @@ wavelength CSV and `data.num_bands` ever disagree.
 
 ---
 
-## 3 · The 256-band architecture
+## 3 · The architecture on the 215-band reflectance cube
 
-`SpectralSeedNet` — **3,052,682 parameters**, two pathways over the full cube.
+`SpectralSeedNet` — **3,003,412 parameters** on the 215-band primary input (3,052,682 at 256), two pathways over the full cube.
 
 ```
 x (B, 256, 64, 64)  +  mask (B, 1, 64, 64)  +  morph (B, 8)
@@ -193,7 +193,7 @@ of the O(C³) form, not against a refactor of itself.
 
 ### The retained four-branch control
 
-`SpectralQuadNet` (5,260,246 parameters at 256 bands) adds Branch A (a
+`SpectralQuadNet` (5,242,710 parameters at 215 bands) adds Branch A (a
 continuous-λ-kernel spectral profile tower over an 8×8 grid), Branch D (a λ-uniform
 SpecFormer, window count set directly by `model.specf_tokens`), a rank-128 gated bilinear
 fusion over five modalities, K=3 sub-centres and four auxiliary heads. It is **kept
@@ -208,20 +208,22 @@ Full derivation: [`docs/03_MODEL_ARCHITECTURE.md`](docs/03_MODEL_ARCHITECTURE.md
 
 ```
 Zenodo 3241923 (ENVI cubes + RGB)
-   │  scripts/prepare_dataset.py           [prep extra; ~hours, ~36 GB]
+   │  scripts/prepare_dataset.py           [prep extra; 17 GB zip, ~10 min, ~30 GB]
    ├─ download + extract
-   ├─ radiometry            per-pixel SNV (this archive has no white panel; only black.hdr)
+   ├─ radiometry            reflectance: each scan ÷ its in-scene Spectralon tile;
+   │                        608–706 nm dropped (the tile clips there in sessions 0–7)
    ├─ segmentation          Otsu + connected components → one component per kernel
    ├─ morphometrics         8 descriptors per kernel
    └─ patch extraction      64×64 crops, background exactly zero
    │
-   ├─ dataset/patches.npy      (8624, 256, 64, 64) float32   36.2 GB   ← the model's input
+   ├─ dataset/patches.npy      (8624, 215, 64, 64) float32   30.4 GB   ← the model's input
    ├─ dataset/labels.npy       (8624,)             int64     variety index 0…89
    ├─ dataset/groups.npy       (8624,)             int64     acquisition-bundle id
    ├─ dataset/masks.npy        (8624, 64, 64)      float16   fill-map alpha ∈ [0,1]
    ├─ dataset/morphology.npy   (8624, 8)           float32   size/shape, unstandardised
    ├─ dataset/gain.npy         (8624, 2, 64, 64)   float32   per-pixel (mean, sd) along λ
-   └─ dataset/wavelengths.csv  256 rows            383.2 … 1006.5 nm
+   ├─ dataset/wavelengths.csv  215 rows            383.2 … 1006.5 nm, 608.0–705.8 absent
+   └─ dataset/radiometry.json, white_tiles.csv, white_spectra.npz   tile QC
    │
    │  train.py  →  DataStore (mmap, read-only, process-wide singleton)
    │               band_geometry() — cube ⇔ wavelengths ⇔ num_bands must agree
@@ -396,7 +398,7 @@ Details: [`docs/04_CURRICULUM_AND_LOSSES.md`](docs/04_CURRICULUM_AND_LOSSES.md),
 
 ```
 configs/                      Hydra composition
-  data/                       hsi256_grouped (PRIMARY) | hsi256_stratified
+  data/                       refl215_grouped (PRIMARY) | refl215_stratified
     ablation/                 spa40_{grouped,stratified,audited} — reduced arms only
   model/                      seed_net (primary) | quadnet_v4_audited (control)
   single/ stage{1,2,3}/       the collapsed curriculum | the audited three-stage one
@@ -479,7 +481,7 @@ Overriding anything:
 
 ```bash
 python train.py data.split_fold=1 seed=1
-python train.py data=hsi256_stratified                       # the contrast arm
+python train.py data=refl215_stratified                       # the contrast arm
 python train.py --config-name experiment/quadnet_full256     # the four-branch control
 python train.py --config-name experiment/quadnet_audited     # the frozen replica
 python train.py single.max_lr=1e-4 single.epochs=80
@@ -560,7 +562,8 @@ against the machine that captured the goldens — not a regression. Re-capture w
 pip install -e ".[tracking,figures]"
 
 # 2 — build the dataset: download → radiometry → segment → extract
-#     ~hours, ~36 GB. Writes patches/labels/groups/masks/morphology/gain + wavelengths.
+#     17 GB download, ~10 min, ~30 GB. Writes patches/labels/groups/masks/morphology/gain
+#     + wavelengths + tile QC. Delete dataset/rice_hsi.zip once it has finished.
 pip install -e ".[prep]"
 python scripts/prepare_dataset.py
 
@@ -573,7 +576,7 @@ python train.py
 | | |
 |---|---|
 | Input | **256 bands**, `dataset/patches.npy`, no selection |
-| Architecture | `SpectralSeedNet` — 3,052,682 parameters, two pathways |
+| Architecture | `SpectralSeedNet` — 3,003,412 parameters (215 bands), two pathways |
 | Curriculum | one stage, 150 epochs, early stop on `calib` |
 | Split | `grouped` — leave-one-acquisition-bundle-out, fold 0 |
 | Selection | on `calib` (carved from train, by group) |

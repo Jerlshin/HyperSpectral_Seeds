@@ -213,15 +213,17 @@ strip (all 336 columns), ~26,000 core pixels, 5–13× brighter than its surroun
 saturates the tile in the **same 28–41 bands (608.0–705.8 nm at the union) in every scan** — up to
 63 % of core pixels at the ceiling — so no scan in those sessions can supply them; session 8
 (2017-02-03) never clips. `--radiometry tile` therefore refuses on this archive (147 of 180 scans
-unresolved), and the reflectance dataset is built with `--tile-drop-unresolved`:
+unresolved) unless the unresolved bands are dropped — which the defaults do, so
+`./dataset/` is built by
 
 ```bash
-python scripts/prepare_dataset.py --archive <zip> --root ./dataset_reflectance \
-    --radiometry tile --tile-drop-unresolved
+python scripts/prepare_dataset.py          # --radiometry tile --tile-drop-unresolved
 ```
 
-giving **8,624 × 215 × 64 × 64** (30.4 GB) over 383.2–605.6 nm and 708.2–1006.5 nm, row-aligned
-with the SNV cube. Seed-pixel reflectance: median 0.10 at 432 nm rising to 0.57 at 999 nm, p99.9
+giving **8,624 × 215 × 64 × 64** (30.4 GB) over 383.2–605.6 nm and 708.2–1006.5 nm. It replaced
+the former 256-band per-pixel-SNV cube in `./dataset/` and is row-aligned with it (identical
+labels, groups, masks, morphology and scan table); `--radiometry snv` rebuilds that cube into
+another `--root` if a comparison needs it. Seed-pixel reflectance: median 0.10 at 432 nm rising to 0.57 at 999 nm, p99.9
 0.86, no negatives, 3 × 10⁻⁶ of values above 1. One further observation: in sessions 5–8 the
 tile's top edge lies at rows ~587–597, i.e. inside the seed crop (`SEED_ROWS = 600`) — segmentation
 is unaffected (the patch count and every seed region equal the SNV extraction's), but the tile's
@@ -230,14 +232,14 @@ reported `row0 = 600` there is the search window's edge, not the tile's.
 A changed radiometry is a new dataset, so it goes to a new root, and `build_patch_dataset` refuses
 to replace an existing `patches.npy` without `--overwrite`. The patch array is streamed to a
 disk-backed `patches.npy.partial` and renamed into place at the end, rather than allocated in RAM
-(it is 36 GB). If fewer patches are written than counted, the file is trimmed in place (header
-rewritten, file truncated) rather than copied, so no second 36 GB is needed at the fullest moment.
+(30 GB). If fewer patches are written than counted, the file is trimmed in place (header
+rewritten, file truncated) rather than copied, so no second 30 GB is needed at the fullest moment.
 
 **Resulting artifacts**, all row-aligned on the patch index except the last:
 
 | File | Shape | Item |
 |---|---|---|
-| `dataset/patches.npy` | $(8624, 256, 64, 64)$ `float32` | the patches |
+| `dataset/patches.npy` | $(8624, 215, 64, 64)$ `float32` | the patches (reflectance) |
 | `dataset/labels.npy` | $(8624,)$ `int64` | class index, 90 classes at 91–96 patches each |
 | `dataset/groups.npy` | $(8624,)$ `int64` | the `scan_id` a grouped split needs |
 | `dataset/masks.npy` | $(8624, 64, 64)$ `float16` | the fill map $\alpha$ |
@@ -629,7 +631,7 @@ mechanics are in `06_EXECUTION_AND_HARDWARE.md`.
 `cfg.data.split_scheme`, with a module-level `SPLIT_SEED = 42` deliberately decoupled from
 `cfg.seed`.
 
-**`stratified`** (`configs/data/hsi256_stratified.yaml`) — a two-step stratified
+**`stratified`** (`configs/data/refl215_stratified.yaml`) — a two-step stratified
 `train_test_split` at the **patch** level, $8{,}624\to6{,}036/1{,}294/1{,}294$ (70/15/15). It
 puts every one of the dataset's **180 acquisition bundles** in train *and* in val/test — the
 executed run measured `180 of 180 scans are in train and in val/test` — so part of the reported
@@ -649,7 +651,7 @@ from `grouped` is a claim about rice varieties. `stratified` is retained as the 
 ablation A1, whose gap `F1_stratified − F1_grouped` quantifies how much of reported performance
 on this dataset is acquisition recognition.
 
-**`grouped`** (`configs/data/hsi256_grouped.yaml`, **the default**) — holds out whole scans via
+**`grouped`** (`configs/data/refl215_grouped.yaml`, **the default**) — holds out whole scans via
 `grouped_split`, rotating which scans are held by `data.split_fold` and targeting
 `data.split_eval_frac` of each class's **groups** (not patches) for val∪test. It requires
 `groups.npy`. On this archive every variety was captured in exactly **two** scans, so a class has

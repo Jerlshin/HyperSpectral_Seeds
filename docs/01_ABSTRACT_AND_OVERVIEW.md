@@ -118,7 +118,7 @@ measured question with its own experiment (§1.6) rather than an inherited assum
    scalar once mixup stops. Per-class margins and the pairwise confusion penalty remain
    in the code, off by default, measured by ablation A7.
 
-`SpectralSeedNet` has **3,052,682 parameters**, all trainable. Full derivation in
+`SpectralSeedNet` has **3,003,412 parameters** on the 215-band reflectance cube (3,052,682 at 256 bands), all trainable. Full derivation in
 `03_MODEL_ARCHITECTURE.md` §3.8.
 
 ### Recorded performance
@@ -304,14 +304,14 @@ because A8 is the experiment that decides whether the collapse was correct.
 `cfg.data.split_scheme`, with a module-level seed deliberately decoupled from `cfg.seed`
 so overriding the run seed cannot silently re-partition the data.
 
-- **`grouped`** (`configs/data/hsi256_grouped.yaml`, the default) holds out whole
+- **`grouped`** (`configs/data/refl215_grouped.yaml`, the default) holds out whole
   acquisition bundles. Per class: order the class's groups deterministically, rotate by
   `split_fold`, take $\max(1, \mathrm{round}(m \cdot \texttt{eval\_frac}))$ of them (never
   all) as the class's eval groups, split those into val/test by group when there are ≥ 2
   and by patch when there is 1, then carve `calib_frac` out of the remaining train pool.
   This guarantees the contract regardless of what the later steps can manage: an eval
   group is never a train group.
-- **`stratified`** (`configs/data/hsi256_stratified.yaml`) is the patch-level contrast
+- **`stratified`** (`configs/data/refl215_stratified.yaml`) is the patch-level contrast
   arm. `groups.npy` is still loaded — not to *build* the split but to **measure** it: the
   banner reports how many of the 180 bundles cross the train/eval boundary. Expect
   `180 of 180`.

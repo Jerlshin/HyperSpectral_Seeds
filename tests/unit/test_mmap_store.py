@@ -264,3 +264,48 @@ def test_band_geometry_reports_a_reduced_arm_as_reduced(
     assert "no band selection" in describe_band_geometry(
         {"stored": BANDS, "selected": BANDS, "wavelengths": BANDS, "configured": BANDS}
     )
+
+
+def _subset_run(tmp_path, tiny_dataset, indices, claimed_nm):
+    """A k-band run's data config: an index file plus the wavelength CSV it claims."""
+    from types import SimpleNamespace
+
+    _, _, patches_path, labels_path, _ = tiny_dataset
+    np.save(tmp_path / "bands.npy", np.asarray(indices, dtype=np.int64))
+    (tmp_path / "bands_wavelengths.csv").write_text(
+        "index,Wavelength (nm)\n"
+        + "".join(f"{i},{w}\n" for i, w in zip(indices, claimed_nm, strict=True))
+    )
+    cfg = SimpleNamespace(
+        patches_data=patches_path,
+        band_indices_path=str(tmp_path / "bands.npy"),
+        wavelength_path=str(tmp_path / "bands_wavelengths.csv"),
+        num_bands=len(indices),
+    )
+    store = DataStore(patches_path=patches_path, labels_path=labels_path)
+    store.load_wavelengths(cfg.wavelength_path, "cpu")
+    return cfg, store
+
+
+def test_an_index_file_from_this_cube_axis_passes(fresh_store, tmp_path, tiny_dataset):
+    from spectralquadnet.data.mmap_store import band_geometry
+
+    cfg, store = _subset_run(tmp_path, tiny_dataset, [0, 2], [385.0, 415.0])
+    assert band_geometry(cfg, store)["selected"] == 2
+
+
+def test_an_index_file_from_another_band_axis_is_refused(fresh_store, tmp_path, tiny_dataset):
+    """Right count, wrong axis — e.g. a 256-band SNV set on the 215-band reflectance cube."""
+    from spectralquadnet.data.mmap_store import BandGeometryError, band_geometry
+
+    cfg, store = _subset_run(tmp_path, tiny_dataset, [0, 2], [385.0, 430.0])
+    with pytest.raises(BandGeometryError, match="different band axis"):
+        band_geometry(cfg, store)
+
+
+def test_an_index_beyond_the_cube_is_refused(fresh_store, tmp_path, tiny_dataset):
+    from spectralquadnet.data.mmap_store import BandGeometryError, band_geometry
+
+    cfg, store = _subset_run(tmp_path, tiny_dataset, [0, BANDS], [385.0, 445.0])
+    with pytest.raises(BandGeometryError, match="stores"):
+        band_geometry(cfg, store)

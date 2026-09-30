@@ -250,8 +250,16 @@ def test_a_short_stream_is_truncated_in_place(tmp_path, n_rows) -> None:
     assert path.stat().st_size == out.offset + expected.nbytes
 
 
-def test_a_band_no_session_tile_measured_is_refused_by_default(clipped_archive, tmp_path) -> None:
-    cfg = PrepConfig(root=tmp_path, archive=clipped_archive, num_bands=C, radiometry="tile")
+def test_a_band_no_session_tile_measured_is_refused_when_dropping_is_off(
+    clipped_archive, tmp_path
+) -> None:
+    cfg = PrepConfig(
+        root=tmp_path,
+        archive=clipped_archive,
+        num_bands=C,
+        radiometry="tile",
+        tile=TileConfig(drop_unresolved_bands=False),
+    )
     with pytest.raises(RuntimeError, match="--tile-drop-unresolved"):
         build_patch_dataset(cfg)
     assert not cfg.patches_path.exists()

@@ -97,7 +97,7 @@ def full_spectrum_dataset(tmp_path_factory) -> dict[str, str]:
     `synthetic_dataset` shrinks the spectral axis to 8 bands along with
     everything else, which exercises the machinery but not the number this study
     is about. This fixture keeps the band count at exactly what
-    `configs/data/hsi256_grouped.yaml` declares and shrinks only the spatial and
+    `configs/data/refl215_grouped.yaml` declares and shrinks only the spatial and
     sample axes, so a run against it composes the primary configuration's
     `data.num_bands`, its band-fraction augmentation widths and the stem's
     derived `(8, 2, 2)` schedule without touching any of them.
