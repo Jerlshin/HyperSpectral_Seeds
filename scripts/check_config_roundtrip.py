@@ -220,6 +220,13 @@ INTENDED_ADDITIONS: dict[str, str] = {
         "14 GB reduced cube per cell. Empty by default, which reads the stored "
         "cube unchanged and is what the golden gates reproduce."
     ),
+    "data.scan_table_path": (
+        "Session breakdown — `scan_table.csv`, which names each scan's acquisition "
+        "session. Read only by the final evaluation to report same- vs cross-session "
+        "recall, attraction to the kernel's own session and session-prediction "
+        "entropy; 73 of 90 varieties share a session across their two bundles. Never "
+        "a model input. Empty by default, which skips the breakdown."
+    ),
     "data.groups_path": (
         "T4-1 / P-1 — the per-patch scan id `scripts/prepare_dataset.py` now "
         "writes. Required by the grouped scheme; read under `stratified` too, "

@@ -33,6 +33,7 @@ them changes an array that already exists on disk.
 
 from __future__ import annotations
 
+import json
 import shutil
 import tempfile
 import traceback
@@ -46,21 +47,35 @@ import numpy.typing as npt
 import pandas as pd
 from tqdm import tqdm
 
-from spectralquadnet.data.prep.config import PrepConfig
+from spectralquadnet.data.prep.config import SEED_ROWS, PrepConfig, TileConfig
 from spectralquadnet.data.prep.download import download
 from spectralquadnet.data.prep.radiometry import (
     RADIOMETRY_EPS,
+    TILE_MODES,
     apply_radiometry,
     find_white_reference,
     resolve_radiometry,
+    tile_reflectance,
     white_gain,
 )
 from spectralquadnet.data.prep.segmentation import (
     MORPHOMETRIC_NAMES,
+    dark_correct,
+    dark_frame,
     load_hsi,
     morphometrics,
     preprocess_raw,
     segment,
+)
+from spectralquadnet.data.prep.white_tile import (
+    SOURCE_OWN,
+    SOURCE_SESSION_GAIN,
+    SOURCE_SESSION_SHAPE,
+    SOURCE_UNRESOLVED,
+    TileMeasurement,
+    WhiteReferences,
+    detect_white_tile,
+    resolve_white_references,
 )
 
 #: P-3 / T4-3. A resized pixel is foreground when the resized mask says at
@@ -204,43 +219,12 @@ def _materialise(zf: zipfile.ZipFile, members: list[zipfile.ZipInfo], tmp: Path)
             shutil.copyfileobj(src, dst)
 
 
-def build_patch_dataset(cfg: PrepConfig | None = None) -> None:
-    """Download, segment and extract fixed-size patches, saving the full data contract.
+def _read_wavelengths(zf: zipfile.ZipFile) -> npt.NDArray[np.float64]:
+    """The archive's ``wavelengths.csv``, as a float array in nm.
 
-    Downloads the archive if needed, then makes two passes over every cube
-    in it: pass 1 segments each cube to count the total number of seed
-    patches (so the output arrays can be allocated exactly once), and pass 2
-    re-segments and writes each patch through :func:`extract_patch`. Class
-    labels are factorised from each cube's variety name.
-
-    Writes seven artifacts, all row-aligned on the patch index except the last:
-
-    ==================== ====================== ====================================
-    File                 Shape                  Item
-    ==================== ====================== ====================================
-    ``patches.npy``      ``(N, C, S, S)``       the patches themselves
-    ``labels.npy``       ``(N,)``               class index
-    ``groups.npy``       ``(N,)``               P-1 — cube-level ``scan_id``
-    ``masks.npy``        ``(N, S, S)`` fp16     P-3 — the fill map alpha
-    ``gain.npy``         ``(N, 2, S, S)``       P-2 — per-pixel (mean, sd)
-    ``morphology.npy``   ``(N, 8)``             P-4 — shape descriptors
-    ``scan_table.csv``   one row per cube       P-1 — what each ``scan_id`` is
-    ==================== ====================== ====================================
-
-    Args:
-        cfg: Prep configuration; a default :class:`PrepConfig` is used if
-            omitted.
+    Raises:
+        RuntimeError: The archive has no ``wavelengths.csv``.
     """
-    cfg = cfg or PrepConfig()
-    cfg.ensure_root()
-
-    download(cfg)
-    zf = zipfile.ZipFile(cfg.zip_file, "r")
-
-    # --------------------------------------------------------
-    # Load wavelengths
-    # --------------------------------------------------------
-    wl = None
     for m in zf.infolist():
         if m.filename.endswith("wavelengths.csv"):
             with tempfile.TemporaryDirectory() as tmp_dir:
@@ -248,22 +232,12 @@ def build_patch_dataset(cfg: PrepConfig | None = None) -> None:
                 with zf.open(m) as src, open(tmp / "wl.csv", "wb") as dst:
                     shutil.copyfileobj(src, dst)
                 wl_df = pd.read_csv(tmp / "wl.csv")
-                wl = wl_df["Wavelength (nm)"].values.astype(float)
-            break
+                return np.asarray(wl_df["Wavelength (nm)"].values, dtype=np.float64)
+    raise RuntimeError("wavelengths.csv not found")
 
-    if wl is None:
-        raise RuntimeError("wavelengths.csv not found")
 
-    # --------------------------------------------------------
-    # P-2 / T4-2 — decide the radiometry, once, and say so
-    # --------------------------------------------------------
-    white_ref = find_white_reference(m.filename for m in zf.infolist())
-    radiometry, why = resolve_radiometry(cfg.radiometry, white_ref)
-    print(f"Radiometry: {radiometry}  ({why})")
-
-    # --------------------------------------------------------
-    # Index cubes
-    # --------------------------------------------------------
+def _index_cubes(zf: zipfile.ZipFile) -> pd.DataFrame:
+    """One row per seed cube: session, variety, member, label, scan key/id, session id."""
     cubes = []
     for m in zf.infolist():
         fname = m.filename.lower()
@@ -289,35 +263,262 @@ def build_patch_dataset(cfg: PrepConfig | None = None) -> None:
     df["scan_key"] = df["session"] + "/" + df["member"].map(lambda m: Path(m.filename).stem)
     df["scan_id"] = np.arange(len(df), dtype=np.int64)
     df["session_id"] = pd.factorize(df["session"])[0]
+    return df
 
+
+def _load_scene(
+    zf: zipfile.ZipFile, row: Any, tmp: Path
+) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]] | None:
+    """``(raw, dark)`` for one cube, **uncropped** and not dark-corrected, or ``None``."""
+    files = [m for m in zf.infolist() if row.session in m.filename]
+    resolved = _resolve_cube_members(files, row.member)
+    if resolved is None:
+        return None
+    data_member, black_hdr, black_data = resolved
+    _materialise(zf, [row.member, data_member, black_hdr, black_data], tmp)
+    return load_hsi(tmp / row.member.filename), load_hsi(tmp / black_hdr.filename)
+
+
+def _measure_tile(
+    zf: zipfile.ZipFile, row: Any, wl: npt.NDArray[Any], tile_cfg: TileConfig, tmp: Path
+) -> tuple[TileMeasurement, int]:
+    """Measure one scan's white tile and count its seeds, in one read of the scene."""
+    scene = _load_scene(zf, row, tmp)
+    if scene is None:
+        return (
+            TileMeasurement(
+                found=False,
+                reason="cube members missing from the archive",
+                n_bands=len(wl),
+                spectrum=np.full(len(wl), np.nan),
+                saturated_frac=np.full(len(wl), np.nan),
+            ),
+            0,
+        )
+    raw, dark = scene
+    measurement = detect_white_tile(raw, dark_frame(dark), wl, tile_cfg)
+    _, regs = segment(dark_correct(raw, dark)[:SEED_ROWS], wl)
+    return measurement, len(regs)
+
+
+def write_tile_qc(
+    cfg: PrepConfig,
+    df: pd.DataFrame,
+    measurements: list[TileMeasurement],
+    refs: WhiteReferences | None,
+    wl: npt.NDArray[Any],
+    path: Path | None = None,
+) -> Path:
+    """Write the per-scan tile QC table (and, with ``refs``, the spectra archive).
+
+    Written **before** any patch is extracted, so a detection problem is visible
+    — and fixable — before hours of extraction are spent on top of it.
+    """
+    rows = []
+    for row, m in zip(df.itertuples(), measurements, strict=True):
+        entry: dict[str, Any] = {
+            "scan_id": int(row.scan_id),
+            "scan_key": row.scan_key,
+            "session": row.session,
+            "session_id": int(row.session_id),
+            **m.as_row(),
+        }
+        if refs is not None:
+            src = refs.source[int(row.scan_id)]
+            entry["n_bands_own"] = int((src == SOURCE_OWN).sum())
+            entry["n_bands_session_filled"] = int(
+                ((src == SOURCE_SESSION_SHAPE) | (src == SOURCE_SESSION_GAIN)).sum()
+            )
+            entry["n_bands_unresolved"] = int((src == SOURCE_UNRESOLVED).sum())
+        rows.append(entry)
+    out = path or cfg.white_tiles_path
+    pd.DataFrame(rows).to_csv(out, index=False)
+    if refs is not None:
+        np.savez_compressed(
+            cfg.white_spectra_path,
+            scan_id=df["scan_id"].to_numpy(),
+            session_id=df["session_id"].to_numpy(),
+            wavelengths=np.asarray(wl, dtype=np.float64),
+            measured=np.stack([m.spectrum for m in measurements]),
+            saturated_frac=np.stack([m.saturated_frac for m in measurements]),
+            resolved=refs.spectra,
+            source=refs.source,
+        )
+    return out
+
+
+def _open_stream(path: Path, shape: tuple[int, ...], dtype: Any) -> npt.NDArray[Any]:
+    """A disk-backed output array, written in place and renamed into place at the end.
+
+    The patch cube is ``N × 256 × 64 × 64`` float32 — 36 GB for this archive —
+    so it cannot be allocated in RAM on a 16 GB machine; this writes it straight
+    into a ``.partial`` file the size of the final array. The ``.partial``
+    suffix means an interrupted run never leaves a file named ``patches.npy``.
+    """
+    stream: npt.NDArray[Any] = np.lib.format.open_memmap(  # type: ignore[no-untyped-call]
+        _partial(path), mode="w+", dtype=dtype, shape=shape
+    )
+    return stream
+
+
+def _partial(path: Path) -> Path:
+    return path.with_name(path.name + ".partial")
+
+
+def _finalise_stream(stream: npt.NDArray[Any], path: Path, n_rows: int, chunk: int = 256) -> None:
+    """Truncate a streamed array to ``n_rows`` if needed, flush it, and move it into place."""
+    partial = _partial(path)
+    if n_rows == stream.shape[0]:
+        stream.flush()  # type: ignore[attr-defined]
+        del stream
+        partial.replace(path)
+        return
+    trimmed = np.lib.format.open_memmap(  # type: ignore[no-untyped-call]
+        path, mode="w+", dtype=stream.dtype, shape=(n_rows, *stream.shape[1:])
+    )
+    for start in range(0, n_rows, chunk):
+        trimmed[start : start + chunk] = stream[start : min(start + chunk, n_rows)]
+    trimmed.flush()
+    del trimmed, stream
+    partial.unlink()
+
+
+def probe_white_tiles(cfg: PrepConfig | None = None, limit: int = 10) -> pd.DataFrame:
+    """Measure the white tile in up to ``limit`` scans, spread across sessions; extract nothing.
+
+    The dry run for the ``tile`` modes: it reads real scenes, runs exactly the
+    detector the extraction will run, and writes ``white_tiles_probe.csv`` so the
+    thresholds in :class:`~spectralquadnet.data.prep.config.TileConfig` can be
+    checked against real tiles before a full extraction is started.
+    """
+    cfg = cfg or PrepConfig()
+    cfg.ensure_root()
+    download(cfg)
+    with zipfile.ZipFile(cfg.zip_file, "r") as zf:
+        wl = _read_wavelengths(zf)
+        df = _index_cubes(zf)
+        # Round-robin over sessions, so a small probe sees every session's lamp.
+        order = (
+            df.assign(_rank=df.groupby("session_id").cumcount())
+            .sort_values(["_rank", "session_id"])
+            .head(max(1, int(limit)))
+        )
+        measurements = []
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+            for row in tqdm(order.itertuples(), total=len(order), desc="probing tiles"):
+                m, _ = _measure_tile(zf, row, wl, cfg.tile, tmp)
+                measurements.append(m)
+                shutil.rmtree(tmp)
+                tmp.mkdir()
+    probe = order.drop(columns="_rank").reset_index(drop=True)
+    out = write_tile_qc(cfg, probe, measurements, None, wl, cfg.root / "white_tiles_probe.csv")
+    table = pd.read_csv(out)
+    print(table.to_string(index=False))
+    print(f"\nProbe → {out}  ({int(table['found'].sum())}/{len(table)} tiles found)")
+    return table
+
+
+def build_patch_dataset(cfg: PrepConfig | None = None) -> None:
+    """Download, segment and extract fixed-size patches, saving the full data contract.
+
+    Downloads the archive if needed, then makes two passes over every cube
+    in it: pass 1 segments each cube to count the total number of seed
+    patches (so the output arrays can be allocated exactly once), and pass 2
+    re-segments and writes each patch through :func:`extract_patch`. Class
+    labels are factorised from each cube's variety name.
+
+    Under the ``tile`` modes pass 1 also finds and measures every scene's
+    in-scene white tile, resolves one white spectrum per scan
+    (:func:`~spectralquadnet.data.prep.white_tile.resolve_white_references`) and
+    writes the QC table **before** pass 2 — refusing to start pass 2 if any
+    scan has a band no measurement can supply. Pass 2 then segments on the
+    dark-corrected **radiance**, exactly as the other modes do, and extracts
+    from the reflectance cube. Segmenting on radiance is deliberate: the seed
+    regions, and therefore the row order, labels, groups, masks and morphology,
+    come out identical to an SNV extraction of the same archive, so the two
+    datasets are row-aligned and can be compared kernel for kernel.
+
+    Writes seven artifacts, all row-aligned on the patch index except the last:
+
+    ==================== ====================== ====================================
+    File                 Shape                  Item
+    ==================== ====================== ====================================
+    ``patches.npy``      ``(N, C, S, S)``       the patches themselves
+    ``labels.npy``       ``(N,)``               class index
+    ``groups.npy``       ``(N,)``               P-1 — cube-level ``scan_id``
+    ``masks.npy``        ``(N, S, S)`` fp16     P-3 — the fill map alpha
+    ``gain.npy``         ``(N, 2, S, S)``       P-2 — per-pixel (mean, sd)
+    ``morphology.npy``   ``(N, 8)``             P-4 — shape descriptors
+    ``scan_table.csv``   one row per cube       P-1 — what each ``scan_id`` is
+    ==================== ====================== ====================================
+
+    plus ``radiometry.json`` always, and ``white_tiles.csv`` /
+    ``white_spectra.npz`` under the ``tile`` modes.
+
+    Args:
+        cfg: Prep configuration; a default :class:`PrepConfig` is used if
+            omitted.
+
+    Raises:
+        FileExistsError: ``patches.npy`` already exists in ``cfg.root`` and
+            ``cfg.overwrite`` is off.
+        RuntimeError: Under a ``tile`` mode, some scan has a band whose white
+            level no measurement in its session could supply.
+    """
+    cfg = cfg or PrepConfig()
+    cfg.ensure_root()
+    if cfg.patches_path.exists() and not cfg.overwrite:
+        raise FileExistsError(
+            f"{cfg.patches_path} already exists. A rebuild is hours of work and a changed "
+            "radiometry is a new dataset: write it to a new --root (pointing --archive at the "
+            "existing zip), or pass --overwrite to replace this one."
+        )
+
+    download(cfg)
+    zf = zipfile.ZipFile(cfg.zip_file, "r")
+    wl = _read_wavelengths(zf)
+
+    # --------------------------------------------------------
+    # P-2 / T4-2 — decide the radiometry, once, and say so
+    # --------------------------------------------------------
+    white_ref = find_white_reference(m.filename for m in zf.infolist())
+    radiometry, why = resolve_radiometry(cfg.radiometry, white_ref)
+    use_tile = radiometry in TILE_MODES
+    print(f"Radiometry: {radiometry}  ({why})")
+
+    df = _index_cubes(zf)
     print("Cubes:", len(df))
     print("Classes:", df.label.nunique())
     print("Scans:", df.scan_id.nunique(), " Sessions:", df.session_id.nunique())
 
     # ========================================================
-    # PASS 1 — COUNT PATCHES
+    # PASS 1 — COUNT PATCHES (and, under `tile`, measure every tile)
     # ========================================================
 
-    print("\nPass 1 — Counting patches...")
+    print("\nPass 1 — Counting patches" + (" and measuring white tiles..." if use_tile else "..."))
     total_patches = 0
+    measurements: list[TileMeasurement] = []
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp = Path(tmp_dir)
 
         for row in tqdm(df.itertuples(), total=len(df)):
             try:
-                files = [m for m in zf.infolist() if row.session in m.filename]
-                resolved = _resolve_cube_members(files, row.member)
-                if resolved is None:
-                    continue
-                data_member, black_hdr, black_data = resolved
-
-                _materialise(zf, [row.member, data_member, black_hdr, black_data], tmp)
-
-                cube = preprocess_raw(tmp / row.member.filename, tmp / black_hdr.filename)
-
-                _, regs = segment(cube, wl)
-                total_patches += len(regs)
+                if use_tile:
+                    m, n_seeds = _measure_tile(zf, row, wl, cfg.tile, tmp)
+                    measurements.append(m)
+                    total_patches += n_seeds
+                else:
+                    files = [m for m in zf.infolist() if row.session in m.filename]
+                    resolved = _resolve_cube_members(files, row.member)
+                    if resolved is None:
+                        continue
+                    data_member, black_hdr, black_data = resolved
+                    _materialise(zf, [row.member, data_member, black_hdr, black_data], tmp)
+                    cube = preprocess_raw(tmp / row.member.filename, tmp / black_hdr.filename)
+                    _, regs = segment(cube, wl)
+                    total_patches += len(regs)
 
                 shutil.rmtree(tmp)
                 tmp.mkdir()
@@ -325,15 +526,43 @@ def build_patch_dataset(cfg: PrepConfig | None = None) -> None:
             except Exception:
                 print("FAIL:", row.member.filename)
                 print(traceback.format_exc())
+                if use_tile and len(measurements) < row.Index + 1:
+                    measurements.append(
+                        TileMeasurement(
+                            found=False,
+                            reason="scene failed to load",
+                            n_bands=len(wl),
+                            spectrum=np.full(len(wl), np.nan),
+                            saturated_frac=np.full(len(wl), np.nan),
+                        )
+                    )
 
     print("Total patches:", total_patches)
+
+    refs: WhiteReferences | None = None
+    if use_tile:
+        refs = resolve_white_references(measurements, df["session_id"].tolist(), len(wl))
+        qc = write_tile_qc(cfg, df, measurements, refs, wl)
+        n_found = sum(m.found for m in measurements)
+        print(f"White tiles: found in {n_found}/{len(df)} scans; values {refs.counts()}  → {qc}")
+        if not refs.ok:
+            bad = ", ".join(
+                f"{df.iloc[i].scan_key} ({len(b)} bands)"
+                for i, b in list(refs.unresolved.items())[:8]
+            )
+            raise RuntimeError(
+                f"{len(refs.unresolved)} scan(s) have bands with no measurable white level — "
+                f"{bad}{' …' if len(refs.unresolved) > 8 else ''}. No patch was written. "
+                f"Inspect {qc} and retune PrepConfig.tile (see --probe-tiles)."
+            )
 
     # ========================================================
     # PASS 2 — ALLOCATE EXACT MEMORY
     # ========================================================
 
     S = cfg.patch_size
-    X = np.zeros((total_patches, cfg.num_bands, S, S), dtype=np.float32)
+    # Streamed to disk: at N × 256 × 64 × 64 float32 this is 36 GB.
+    X = _open_stream(cfg.patches_path, (total_patches, cfg.num_bands, S, S), np.float32)
     y = np.zeros((total_patches,), dtype=np.int64)
     groups = np.full((total_patches,), -1, dtype=np.int64)  # P-1
     masks = np.zeros((total_patches, S, S), dtype=np.float16)  # P-3
@@ -353,32 +582,46 @@ def build_patch_dataset(cfg: PrepConfig | None = None) -> None:
 
         for row in tqdm(df.itertuples(), total=len(df)):
             try:
-                files = [m for m in zf.infolist() if row.session in m.filename]
-                resolved = _resolve_cube_members(files, row.member)
-                if resolved is None:
-                    continue
-                data_member, black_hdr, black_data = resolved
+                if use_tile:
+                    assert refs is not None
+                    scene = _load_scene(zf, row, tmp)
+                    if scene is None:
+                        continue
+                    raw, dark = scene
+                    radiance = dark_correct(raw, dark)[:SEED_ROWS]
+                    del raw
+                    # Segment on radiance, extract from reflectance: see the docstring.
+                    labeled, regs = segment(radiance, wl)
+                    cube = tile_reflectance(
+                        radiance, refs.spectra[row.scan_id], cfg.tile.reference_reflectance
+                    )
+                else:
+                    files = [m for m in zf.infolist() if row.session in m.filename]
+                    resolved = _resolve_cube_members(files, row.member)
+                    if resolved is None:
+                        continue
+                    data_member, black_hdr, black_data = resolved
 
-                to_copy = [row.member, data_member, black_hdr, black_data]
-                white_members: list[zipfile.ZipInfo] = []
-                if radiometry == "white":
-                    white_members = [
-                        m
-                        for m in files
-                        if m.filename == white_ref or m.filename.startswith(str(white_ref)[:-4])
-                    ]
-                    to_copy += white_members
-                _materialise(zf, to_copy, tmp)
+                    to_copy = [row.member, data_member, black_hdr, black_data]
+                    white_members: list[zipfile.ZipInfo] = []
+                    if radiometry == "white":
+                        white_members = [
+                            m
+                            for m in files
+                            if m.filename == white_ref or m.filename.startswith(str(white_ref)[:-4])
+                        ]
+                        to_copy += white_members
+                    _materialise(zf, to_copy, tmp)
 
-                cube = preprocess_raw(tmp / row.member.filename, tmp / black_hdr.filename)
+                    cube = preprocess_raw(tmp / row.member.filename, tmp / black_hdr.filename)
 
-                if radiometry == "white":
-                    # `cube` is already `R - Dbar`, so only the division is left.
-                    white = load_hsi(tmp / str(white_ref))
-                    dark = load_hsi(tmp / black_hdr.filename)
-                    cube = np.clip(cube / white_gain(white, dark), 0.0, None).astype(np.float32)
+                    if radiometry == "white":
+                        # `cube` is already `R - Dbar`, so only the division is left.
+                        white = load_hsi(tmp / str(white_ref))
+                        dark = load_hsi(tmp / black_hdr.filename)
+                        cube = np.clip(cube / white_gain(white, dark), 0.0, None).astype(np.float32)
 
-                labeled, regs = segment(cube, wl)
+                    labeled, regs = segment(cube, wl)
 
                 for r in regs:
                     patch, alpha, gain = extract_patch(cube, labeled, r, S, radiometry)
@@ -406,7 +649,7 @@ def build_patch_dataset(cfg: PrepConfig | None = None) -> None:
     # than shipped.
     if patch_index != total_patches:
         print(f"\nWARNING: wrote {patch_index} of {total_patches} counted patches; truncating.")
-        X, y = X[:patch_index], y[:patch_index]
+        y = y[:patch_index]
         groups, masks = groups[:patch_index], masks[:patch_index]
         gains, morph = gains[:patch_index], morph[:patch_index]
 
@@ -423,19 +666,37 @@ def build_patch_dataset(cfg: PrepConfig | None = None) -> None:
         }
     )
 
-    np.save(cfg.patches_path, X)
+    x_shape = (patch_index, *X.shape[1:])
+    _finalise_stream(X, cfg.patches_path, patch_index)
     np.save(cfg.labels_path, y)
     np.save(cfg.groups_path, groups)
     np.save(cfg.masks_path, masks)
     np.save(cfg.gain_path, gains)
     np.save(cfg.morphology_path, morph)
     scan_table.to_csv(cfg.scan_table_path, index=False)
+    cfg.radiometry_log_path.write_text(
+        json.dumps(
+            {
+                "requested": cfg.radiometry,
+                "applied": radiometry,
+                "reason": why,
+                "tile": cfg.tile.as_dict() if use_tile else None,
+                "white_reference_sources": refs.counts() if refs is not None else None,
+                "tiles_found": (int(sum(m.found for m in measurements)) if use_tile else None),
+                "n_scans": int(len(df)),
+                "n_patches": int(patch_index),
+                "archive": str(cfg.zip_file),
+            },
+            indent=2,
+        )
+    )
 
     print("\nSaved:")
-    print("patches   :", X.shape)
+    print("patches   :", x_shape)
     print("labels    :", y.shape)
     print("groups    :", groups.shape, f"({len(np.unique(groups))} scans)")
     print("masks     :", masks.shape)
     print("gain      :", gains.shape)
     print("morphology:", morph.shape, f"({', '.join(MORPHOMETRIC_NAMES)})")
     print("scan table:", cfg.scan_table_path)
+    print("radiometry:", cfg.radiometry_log_path)

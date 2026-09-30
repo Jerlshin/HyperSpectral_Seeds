@@ -26,6 +26,8 @@ from skimage.measure import label, regionprops
 from skimage.morphology import remove_small_objects
 from skimage.segmentation import clear_border
 
+from spectralquadnet.data.prep.config import SEED_ROWS
+
 # scikit-image ships `py.typed` but leaves most of its public API unannotated, so
 # every call below is an "untyped call in typed context" under `--strict`. The
 # alternative — stub packages that do not exist for skimage — is not available;
@@ -44,8 +46,28 @@ def load_hsi(hdr: str | Path) -> npt.NDArray[np.float32]:
     return cube.astype(np.float32)
 
 
+def dark_frame(dark: npt.NDArray[Any]) -> npt.NDArray[np.float32]:
+    """The per-``(column, band)`` dark level, ``(1, W, C)`` — the dark scan averaged along the scan.
+
+    A push-broom sensor's dark current varies across the detector array, not
+    along the scan, so averaging over rows is the right estimator.
+    """
+    frame: npt.NDArray[np.float32] = (
+        np.asarray(dark, dtype=np.float32).mean(axis=0, keepdims=True).astype(np.float32)
+    )
+    return frame
+
+
+def dark_correct(cube: npt.NDArray[Any], dark: npt.NDArray[Any]) -> npt.NDArray[np.float32]:
+    """``max(R - D̄, 0)`` over the **whole** scene — no crop."""
+    corrected: npt.NDArray[np.float32] = np.clip(
+        np.asarray(cube, dtype=np.float32) - dark_frame(dark), 0.0, None
+    ).astype(np.float32)
+    return corrected
+
+
 def preprocess_raw(hdr: str | Path, dark_hdr: str | Path) -> npt.NDArray[np.float32]:
-    """Subtract the dark-current reference and crop to the first 600 rows.
+    """Subtract the dark-current reference and crop to the first :data:`SEED_ROWS` rows.
 
     Args:
         hdr: Path to the raw scan's ``.hdr`` file.
@@ -53,15 +75,9 @@ def preprocess_raw(hdr: str | Path, dark_hdr: str | Path) -> npt.NDArray[np.floa
 
     Returns:
         Dark-corrected cube, clipped to non-negative and cropped to rows
-        ``[0, 600)`` (the sensor's valid-data band).
+        ``[0, 600)`` — the seed region; the rows below it hold the white tile.
     """
-    cube = load_hsi(hdr)
-    dark = load_hsi(dark_hdr)
-
-    dark_mean = dark.mean(axis=0, keepdims=True)
-    cube = np.clip(cube - dark_mean, 0.0, None)
-
-    return cube[:600]  # type: ignore[no-any-return]  # `np.clip` is typed `-> Any`
+    return dark_correct(load_hsi(hdr), load_hsi(dark_hdr))[:SEED_ROWS]
 
 
 def segment(cube: npt.NDArray[Any], wl: npt.NDArray[Any]) -> tuple[npt.NDArray[Any], list[Any]]:

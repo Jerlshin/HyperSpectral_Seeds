@@ -45,6 +45,7 @@ what the pre-refactor `CONFIG` keys map onto in `config_migration_table.md`.
 | `num_bands` | `256` | **every acquired band.** Checked against the cube and the wavelength CSV by `data/mmap_store.py::band_geometry` before the model is built | `40` |
 | `num_classes` | `90` | rice-seed varieties | — |
 | `groups_path` | `./dataset/groups.npy` | per-patch scan id; required by `grouped`, read under `stratified` only to measure train/eval scan overlap | — |
+| `scan_table_path` | `./dataset/scan_table.csv` | one row per scan naming its acquisition **session**. Read only by the final evaluation's session breakdown (`spectralquadnet.reporting.session`): same- vs cross-session recall, attraction to the kernel's own session, session-prediction entropy. **Never a model input** | `""` (breakdown skipped) |
 | `split_scheme` | `grouped` | `grouped` — scan-disjoint split (§2.8); `stratified` — patch-level, every scan in all three splits | `stratified` |
 | `split_eval_frac` | `0.30` | share held out for val∪test | — |
 | `split_fold` | `0` | which scan(s) are held out under `grouped`; must stay `0` under `stratified`. Sweeping `{0, 1}` is the complete leave-one-bundle-out CV this dataset supports | — |

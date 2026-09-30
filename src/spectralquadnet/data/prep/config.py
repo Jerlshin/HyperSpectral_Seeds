@@ -13,11 +13,73 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
+
+#: Scan rows kept for segmentation. The raw scenes are 931 rows long; the rows
+#: beyond this hold the in-scene Spectralon white tile and the bottom stripes —
+#: the extraction notebook's own crop comment reads "Remove white calibration +
+#: bottom stripes". Seeds are segmented inside ``[0, SEED_ROWS)`` only;
+#: :mod:`~spectralquadnet.data.prep.white_tile` searches the rest.
+SEED_ROWS: int = 600
 
 DATA_URL = (
     "https://zenodo.org/records/3241923/files/"
     "RGB%20and%20VIS-NIR%20HSI%20Data%20for%2090%20Rice%20Seed%20Varieties.zip?download=1"
 )
+
+
+@dataclass(frozen=True)
+class TileConfig:
+    """Thresholds for :mod:`~spectralquadnet.data.prep.white_tile`.
+
+    Informed by the scene geometry (931 × 336 × 256 raw scenes, seeds of
+    300-800 px, a 12-bit sensor) but not yet fitted to real tile pixels:
+    ``scripts/prepare_dataset.py --probe-tiles N`` measures real scans and writes
+    the QC table that should confirm or retune them before any extraction.
+    """
+
+    #: ``(first, last)`` scan rows searched; ``None`` is the end of the scene.
+    #: Default: the rows the seed crop discards.
+    search_rows: tuple[int, int | None] = (SEED_ROWS, None)
+    #: Band window for the brightness image — high SNR, clear of the noisy blue end.
+    brightness_nm: tuple[float, float] = (500.0, 900.0)
+    #: Raw digital number at which the 12-bit sensor clips.
+    saturation_dn: float = 4095.0
+    #: Candidate pixels exceed this fraction of the 99.5th-percentile brightness.
+    candidate_frac: float = 0.6
+    #: Smallest region accepted as the tile, in pixels. The seed gate stops at
+    #: 800 px, so a region this large cannot be a seed.
+    min_area_px: int = 1000
+    #: Smallest accepted region solidity — a tile is a compact convex shape.
+    min_solidity: float = 0.85
+    #: Pixels removed from the region's edge before measuring.
+    erode_px: int = 3
+    #: Smallest core, in pixels, a measurement is taken from.
+    min_core_px: int = 200
+    #: A band is measured only when at most this share of core pixels is saturated.
+    max_saturated_frac: float = 0.01
+    #: Largest accepted robust coefficient of variation (MAD / median) of core brightness.
+    max_core_cv: float = 0.10
+    #: Tile median brightness over the median of the searched rows outside it.
+    min_contrast: float = 1.5
+    #: Certified reflectance of the panel; the Zenodo record states 100 %.
+    reference_reflectance: float = 1.0
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "search_rows": list(self.search_rows),
+            "brightness_nm": list(self.brightness_nm),
+            "saturation_dn": self.saturation_dn,
+            "candidate_frac": self.candidate_frac,
+            "min_area_px": self.min_area_px,
+            "min_solidity": self.min_solidity,
+            "erode_px": self.erode_px,
+            "min_core_px": self.min_core_px,
+            "max_saturated_frac": self.max_saturated_frac,
+            "max_core_cv": self.max_core_cv,
+            "min_contrast": self.min_contrast,
+            "reference_reflectance": self.reference_reflectance,
+        }
 
 
 @dataclass
@@ -42,9 +104,22 @@ class PrepConfig:
     #: channel; it exists so the two can be compared rather than argued about.
     radiometry: str = "auto"
 
+    #: The downloaded archive. ``None`` keeps it at ``<root>/rice_hsi.zip``; set it
+    #: to build a second dataset (e.g. the reflectance cube) into a new ``root``
+    #: from an archive that already exists elsewhere, without re-downloading.
+    archive: Path | None = None
+
+    #: Replace an existing ``patches.npy`` in ``root``. Off by default: the patch
+    #: cube is 36 GB and hours to rebuild, and a changed radiometry is a new
+    #: dataset that belongs in its own ``root`` rather than on top of the old one.
+    overwrite: bool = False
+
+    #: In-scene white-tile detection thresholds, read by the ``tile`` modes.
+    tile: TileConfig = field(default_factory=TileConfig)
+
     @property
     def zip_file(self) -> Path:
-        return self.root / "rice_hsi.zip"
+        return self.archive if self.archive is not None else self.root / "rice_hsi.zip"
 
     @property
     def patches_path(self) -> Path:
@@ -80,6 +155,23 @@ class PrepConfig:
     def morphology_path(self) -> Path:
         """P-4 / T4-4 — ``(N, 8)`` float32 morphometrics, unstandardised."""
         return self.root / "morphology.npy"
+
+    # ── In-scene white-tile QC (``tile`` modes) ──────────────────────
+
+    @property
+    def white_tiles_path(self) -> Path:
+        """One row per scan: was the tile found, where, how uniform, how saturated."""
+        return self.root / "white_tiles.csv"
+
+    @property
+    def white_spectra_path(self) -> Path:
+        """Measured and resolved white spectra per scan, and each value's source."""
+        return self.root / "white_spectra.npz"
+
+    @property
+    def radiometry_log_path(self) -> Path:
+        """How this dataset's radiometry was decided, with the thresholds used."""
+        return self.root / "radiometry.json"
 
     def ensure_root(self) -> Path:
         """Create the dataset root directory (and parents) if it doesn't exist."""

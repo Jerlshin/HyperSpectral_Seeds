@@ -433,6 +433,31 @@ inside a branch naming none of them.
 
 ---
 
+## 7b. The finalist sets — evenly spaced, ≥ 430 nm
+
+The September 2026 study (`outputs/band_research/`) found that, for a spatial-spectral proxy under
+acquisition-disjoint evaluation, evenly spaced bands tie or beat every supervised selector at
+matched budget, and 32–64 of them score above the full cube on held-out bundles. The arms for the
+network are therefore a fixed, label-free rule — `spectralquadnet.bandstudy.finalists`:
+
+* candidates are the bands **≥ 430 nm** (below it: pixel SNR < 10, dark-clipped pixels, and an SNV
+  artifact 85–91 % explained by one whole-spectrum statistic);
+* targets are spaced evenly in wavelength from the first candidate (432.0 nm) to the last
+  (1006.5 nm); each takes the nearest band;
+* no label is read, so each set is the same for both folds and needs no nested selection.
+
+```bash
+python scripts/write_finalist_bands.py        # k = 16 24 32 48 64 → outputs/band_finalists/
+```
+
+Each `uniform430_k{K}.npy` + `_wavelengths.csv` pair is in the band study's own format, and
+`manifest.json` records the exact overrides, including the rescaled augmentation widths — e.g. for
+k = 32: `data.band_indices_path=… data.wavelength_path=… data.num_bands=32 data.cutmix_bands=6
+data.max_cutout_bands=2`. The indices address the instrument's 256-band axis, so the same files
+serve the SNV cube and the reflectance cube the white tile will produce. Every band lies within one
+instrument band (2.4 nm) of the sets the study evaluated, which snapped to the band nearest 430 nm
+(429.6 nm).
+
 ## 8. Limitations, stated up front
 
 1. **The proxies are not the model.** Mean spectra discard all spatial structure. A proxy

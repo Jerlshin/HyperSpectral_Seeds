@@ -153,6 +153,7 @@ def run(ctx: RunContext) -> None:
         trk,
         dist=ctx.dist,
         run_summary=ctx.summary(),
+        sessions=ctx.session_map(),
     )
 
 

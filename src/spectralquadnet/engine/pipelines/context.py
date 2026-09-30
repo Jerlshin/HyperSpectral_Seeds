@@ -44,6 +44,7 @@ from spectralquadnet.data.loaders import (
 from spectralquadnet.data.mmap_store import DataStore, band_geometry
 from spectralquadnet.models.ema import ModelEMA
 from spectralquadnet.models.registry import build_model, count_parameters, parameter_breakdown
+from spectralquadnet.reporting.session import SessionMap
 from spectralquadnet.tracking.base import ExperimentTracker
 from spectralquadnet.tracking.global_step import GlobalStep
 from spectralquadnet.utils.device import (
@@ -109,6 +110,21 @@ class RunContext:
         if requested == "calib" and self.calib_loader is None:
             return "val"
         return requested
+
+    def session_map(self) -> SessionMap | None:
+        """The fold's acquisition-session map for the final evaluation, or ``None``.
+
+        Built from ``data.scan_table_path`` and the split this run trained on
+        (train ∪ calib define where each class was trained). Its absence is
+        logged rather than fatal: the session breakdown is a measurement about
+        the run, not a precondition for it.
+        """
+        smap, reason = SessionMap.from_config(
+            self.cfg.data, self.splits, int(self.cfg.data.num_classes)
+        )
+        if smap is None:
+            self.tracker.log_message(f"Session breakdown: off — {reason}", level="plain")
+        return smap
 
     def summary(self) -> dict[str, Any]:
         """Run facts worth writing into the results JSON."""

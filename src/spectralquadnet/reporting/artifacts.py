@@ -12,6 +12,9 @@ aggregator can read any run without knowing which pipeline produced it::
         per_class_<split>.csv    class, f1, precision, recall, support
         preds_<split>.npy        argmax predictions
         targets_<split>.npy      ground truth
+        rows_<split>.npy         the patch row of every prediction, when known
+        session_<split>.json     same- vs cross-session breakdown, when computed
+        session_<split>.csv      its per-session table
       figures/
         <figure>.png             written by spectralquadnet.reporting.figures
 
@@ -36,6 +39,7 @@ import numpy.typing as npt
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from spectralquadnet.reporting.metrics import ClassificationResult
+    from spectralquadnet.reporting.session import SessionReport
     from spectralquadnet.tracking.base import ExperimentTracker
 
 #: Subdirectory of ``output_dir`` holding machine-readable results.
@@ -72,16 +76,58 @@ class RunArtifacts:
     # ── Writing ───────────────────────────────────────────────────────
 
     def write_predictions(
-        self, split: str, preds: npt.NDArray[Any], targets: npt.NDArray[Any]
+        self,
+        split: str,
+        preds: npt.NDArray[Any],
+        targets: npt.NDArray[Any],
+        rows: npt.NDArray[Any] | None = None,
     ) -> None:
         """Persist the raw arrays, so any later metric can be recomputed offline.
 
         This is what makes the paired bootstrap between two arms possible after
         the fact: it needs both arms' predictions on the *same* patches, and a
         stored macro-F1 cannot supply that.
+
+        ``rows`` — the patch row each prediction belongs to — is what lets a
+        metric that depends on *which* kernel was scored (its acquisition
+        session, its bundle) be recomputed offline too. Written only when the
+        caller could establish it.
         """
         np.save(self.results / f"preds_{split}.npy", np.asarray(preds))
         np.save(self.results / f"targets_{split}.npy", np.asarray(targets))
+        if rows is not None:
+            np.save(self.results / f"rows_{split}.npy", np.asarray(rows, dtype=np.int64))
+
+    def write_session(self, report: SessionReport) -> Path:
+        """Write one split's same- vs cross-session breakdown and per-session table."""
+        split = report.split
+        path = self.results / f"session_{split}.json"
+        path.write_text(json.dumps(report.as_dict(), indent=2))
+        columns = [
+            "session_id",
+            "session",
+            "n_kernels",
+            "n_cross_kernels",
+            "accuracy",
+            "cross_accuracy",
+            "attraction",
+            "attraction_chance",
+            "cross_attraction",
+        ]
+        lines = [",".join(columns)]
+        for row in report.per_session:
+            cells = []
+            for col in columns:
+                value = row.get(col)
+                if value is None:
+                    cells.append("")
+                elif isinstance(value, float):
+                    cells.append(f"{value:.6f}")
+                else:
+                    cells.append(str(value).replace(",", ";"))
+            lines.append(",".join(cells))
+        (self.results / f"session_{split}.csv").write_text("\n".join(lines) + "\n")
+        return path
 
     def write_result(self, result: ClassificationResult) -> Path:
         """Write one scored split's metrics, confusion matrix and per-class table."""

@@ -78,6 +78,16 @@ class DataConfig:
     #: Required by the grouped scheme; under ``stratified`` it is read when
     #: present purely to *measure* how many scans cross the train/eval boundary.
     groups_path: str = MISSING
+    #: ``scan_table.csv``, written by ``scripts/prepare_dataset.py`` beside
+    #: ``groups.npy``: one row per scan naming its acquisition **session**. Read
+    #: only by the final evaluation's session breakdown
+    #: (:mod:`spectralquadnet.reporting.session`) — same- vs cross-session
+    #: recall, attraction to the kernel's own session and session-prediction
+    #: entropy — because 73 of 90 varieties share a session across their two
+    #: bundles and the grouped macro-F1 cannot separate variety from session
+    #: recognition. Never a model input. Empty (the default) skips the
+    #: breakdown, which is what keeps configs and fixtures that predate it valid.
+    scan_table_path: str = ""
     #: ``stratified`` — the pre-Tier-4 patch-level split, which puts every scan
     #: in all three splits (0-H measured 107/107); ``grouped`` — P-1's
     #: scan-disjoint split.

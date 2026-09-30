@@ -49,6 +49,10 @@ class ArmSummary:
     stats: dict[str, float]
     run_dirs: list[str]
     parameters: int = 0
+    #: Mean same-/cross-session macro-recall over the runs that computed the
+    #: session breakdown (``reporting.session``); ``None`` when none did.
+    same_session_recall: float | None = None
+    cross_session_recall: float | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -56,6 +60,8 @@ class ArmSummary:
             "n_runs": self.n_runs,
             "parameters": self.parameters,
             **{f"macro_f1_{k}": v for k, v in self.stats.items()},
+            "same_session_recall": self.same_session_recall,
+            "cross_session_recall": self.cross_session_recall,
             "run_dirs": self.run_dirs,
         }
 
@@ -95,6 +101,7 @@ def arm_of(run_dir: Path) -> tuple[str, int, int]:
 def summarise_arms(run_dirs: list[Path], variant: str = "tta") -> list[ArmSummary]:
     """Aggregate runs into per-arm mean ± range."""
     buckets: dict[str, list[tuple[Path, float, int]]] = {}
+    sessions: dict[str, list[tuple[float | None, float | None]]] = {}
     for run_dir in run_dirs:
         manifest = load_manifest(run_dir)
         result = (manifest.get("results") or {}).get(variant)
@@ -104,9 +111,18 @@ def summarise_arms(run_dirs: list[Path], variant: str = "tta") -> list[ArmSummar
         arm, _, _ = arm_of(run_dir)
         params = int((manifest.get("run") or {}).get("parameters", 0))
         buckets.setdefault(arm, []).append((run_dir, float(result["macro_f1"]), params))
+        breakdown = result.get("session") or {}
+        sessions.setdefault(arm, []).append(
+            (
+                (breakdown.get("same_session") or {}).get("macro_recall"),
+                (breakdown.get("cross_session") or {}).get("macro_recall"),
+            )
+        )
 
     summaries = []
     for arm, entries in sorted(buckets.items()):
+        same = [v for v, _ in sessions.get(arm, []) if v is not None]
+        cross = [v for _, v in sessions.get(arm, []) if v is not None]
         summaries.append(
             ArmSummary(
                 arm=arm,
@@ -114,6 +130,8 @@ def summarise_arms(run_dirs: list[Path], variant: str = "tta") -> list[ArmSummar
                 stats=mean_and_range([score for _, score, _ in entries]),
                 run_dirs=[str(p) for p, _, _ in entries],
                 parameters=entries[0][2],
+                same_session_recall=float(np.mean(same)) if same else None,
+                cross_session_recall=float(np.mean(cross)) if cross else None,
             )
         )
     return summaries
@@ -244,7 +262,19 @@ def _write_arm_table(
     summaries: list[ArmSummary],
     deltas: dict[str, tuple[float, float, float]],
 ) -> None:
-    headers = ["arm", "runs", "params", "macro-F1 mean", "min", "max", "range", "sd", "Δ vs ref (CI95)"]
+    headers = [
+        "arm",
+        "runs",
+        "params",
+        "macro-F1 mean",
+        "min",
+        "max",
+        "range",
+        "sd",
+        "Δ vs ref (CI95)",
+        "same-sess recall",
+        "cross-sess recall",
+    ]
     rows: list[list[Any]] = []
     for s in summaries:
         if s.arm in deltas:
@@ -264,6 +294,8 @@ def _write_arm_table(
                 f"{s.stats['range']:.4f}",
                 f"{s.stats['sd']:.4f}",
                 delta_cell,
+                "—" if s.same_session_recall is None else f"{s.same_session_recall:.4f}",
+                "—" if s.cross_session_recall is None else f"{s.cross_session_recall:.4f}",
             ]
         )
     tables.write_table(

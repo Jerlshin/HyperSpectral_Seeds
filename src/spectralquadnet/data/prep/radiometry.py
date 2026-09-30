@@ -17,11 +17,18 @@ Two remedies, in the plan's order of preference:
     \\frac{R_{h,w,c} - \\bar D_{w,c}}{\\bar W_{w,c} - \\bar D_{w,c} + \\epsilon}
 
 It needs a white panel scanned under the same illumination.
-:func:`find_white_reference` looks for one; **this archive has none** — the
-only reference cube per session is ``black.hdr``, which
-``preprocess_raw`` already consumes — so on this dataset the resolution is
-always (b). The code path is implemented and tested regardless, because the
-absence is a property of one archive, not of the method.
+:func:`find_white_reference` looks for a separate white-panel *file*, and this
+archive has none — its only reference cubes are one ``black.hdr`` per session.
+
+**(a′) In-scene white tile** — the same division, with the white level read
+from the scene itself. The Zenodo record states that every scene contains a
+100 % reflective Spectralon tile, in the rows ``preprocess_raw`` crops away.
+:mod:`~spectralquadnet.data.prep.white_tile` finds and measures it per scan,
+and :func:`tile_reflectance` divides by it. This is what the ``tile`` and
+``tile_snv`` modes select. It is **not** what ``auto`` resolves to: ``auto``
+inspects the archive's file list, never a scene, so it still resolves to (b)
+here, and the in-scene path must be requested by name — a change of radiometric
+domain is a new dataset and should never happen by default.
 
 **(b) Per-pixel Standard Normal Variate** — the chemometric standard, applied
 along :math:`\\lambda` *after* masking:
@@ -58,9 +65,14 @@ RADIOMETRY_EPS: float = 1e-6
 #: Accepted values of ``PrepConfig.radiometry``.
 #:
 #: ``auto`` picks ``white`` when the archive carries a white panel and ``snv``
-#: when it does not, and says which it chose. ``none`` is the pre-Tier-4
-#: behaviour, kept so the leak channel §2.1.1 describes stays reproducible.
-RADIOMETRY_MODES: tuple[str, ...] = ("auto", "white", "snv", "none")
+#: when it does not, and says which it chose. ``tile`` divides each scene by its
+#: own in-scene Spectralon tile and stores reflectance; ``tile_snv`` does the
+#: same and then applies per-pixel SNV. ``none`` is the pre-Tier-4 behaviour,
+#: kept so the leak channel §2.1.1 describes stays reproducible.
+RADIOMETRY_MODES: tuple[str, ...] = ("auto", "white", "tile", "tile_snv", "snv", "none")
+
+#: Modes whose white level comes from the in-scene tile rather than a file.
+TILE_MODES: tuple[str, ...] = ("tile", "tile_snv")
 
 #: Filename fragments that would identify a white-reference scan. Checked
 #: against the archive's ``.hdr`` members; ``black`` is excluded explicitly
@@ -78,7 +90,8 @@ def find_white_reference(member_names: Iterable[str]) -> str | None:
         The first ``.hdr`` member whose name suggests a white reference, or
         ``None``. On the Zenodo rice archive this is ``None``: the 190 ``.hdr``
         members are 180 seed cubes plus 9 ``black.hdr`` dark references and one
-        ``chessboard.hdr`` geometric target.
+        ``chessboard.hdr`` geometric target. The white reference that archive
+        *does* have is inside every scene — see the ``tile`` modes.
     """
     for name in member_names:
         low = name.lower()
@@ -119,6 +132,15 @@ def resolve_radiometry(mode: str, white_reference: str | None) -> tuple[str, str
 
     if mode == "snv":
         return "snv", "per-pixel SNV along lambda, after masking"
+
+    if mode == "tile":
+        return "tile", "per-scan division by the in-scene Spectralon tile — reflectance"
+
+    if mode == "tile_snv":
+        return (
+            "tile_snv",
+            "per-scan division by the in-scene Spectralon tile, then per-pixel SNV",
+        )
 
     return "none", "no radiometric normalisation — radiance domain (pre-Tier-4 behaviour)"
 
@@ -167,6 +189,46 @@ def white_reference_correct(
     rho = (np.asarray(cube, dtype=np.float32) - dbar) / white_gain(white, dark, eps)
     clipped: npt.NDArray[np.float32] = np.clip(rho, 0.0, None).astype(np.float32)
     return clipped
+
+
+def tile_reflectance(
+    corrected: npt.NDArray[Any],
+    white: npt.NDArray[Any],
+    reference_reflectance: float = 1.0,
+    eps: float = RADIOMETRY_EPS,
+) -> npt.NDArray[np.float32]:
+    """Reflectance of a **dark-corrected** cube against an in-scene white spectrum.
+
+    .. math::
+        \\varrho_{h,w,c} = r_\\text{ref}\\,
+            \\frac{R_{h,w,c} - \\bar D_{w,c}}{W_c + \\epsilon}
+
+    where :math:`W_c` is the tile's dark-corrected level in band ``c`` (from
+    :func:`~spectralquadnet.data.prep.white_tile.resolve_white_references`) and
+    :math:`r_\\text{ref}` the panel's certified reflectance. One white value per
+    band, not per column: the tile covers only some sensor columns, so this
+    removes the scene's illumination spectral shape but not the push-broom
+    column gain.
+
+    Args:
+        corrected: ``(..., C)`` dark-corrected radiance, e.g. from
+            :func:`~spectralquadnet.data.prep.segmentation.dark_correct`.
+        white: ``(C,)`` white level per band, strictly positive and finite.
+        reference_reflectance: The panel's reflectance.
+        eps: Denominator floor.
+
+    Raises:
+        ValueError: ``white`` has the wrong length or a non-finite / non-positive value.
+    """
+    w = np.asarray(white, dtype=np.float64).reshape(-1)
+    x = np.asarray(corrected, dtype=np.float32)
+    if w.size != x.shape[-1]:
+        raise ValueError(f"white spectrum has {w.size} bands, cube has {x.shape[-1]}")
+    if not np.all(np.isfinite(w)) or np.any(w <= 0):
+        raise ValueError("white spectrum must be finite and positive in every band")
+    scale = (float(reference_reflectance) / (w + eps)).astype(np.float32)
+    rho: npt.NDArray[np.float32] = np.clip(x * scale, 0.0, None).astype(np.float32)
+    return rho
 
 
 def snv_normalise(
@@ -218,15 +280,15 @@ def apply_radiometry(
 ) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]]:
     """Dispatch the per-patch half of P-2 and return the patch with its gain map.
 
-    ``white`` is a **cube-level** correction — it has to happen before
-    segmentation, so by the time a patch exists it is already applied and this
-    is a no-op that records the patch's own brightness. ``snv`` is the
-    per-patch one.
+    ``white`` and ``tile`` are **cube-level** corrections — by the time a patch
+    exists the division is already applied, so this is a no-op that records the
+    patch's own brightness. ``snv`` is the per-patch one, and ``tile_snv``
+    applies it on top of the tile division.
 
     Args:
         patch: ``(H, W, C)`` masked patch.
         mask: ``(H, W)`` foreground map, or ``None``.
-        mode: One of ``"white"``, ``"snv"``, ``"none"``.
+        mode: One of ``"white"``, ``"tile"``, ``"tile_snv"``, ``"snv"``, ``"none"``.
         eps: Denominator floor.
 
     Returns:
@@ -237,6 +299,6 @@ def apply_radiometry(
     """
     normalised, mean, sd = snv_normalise(patch, mask, eps)
     gain = np.stack([mean, sd], axis=0).astype(np.float32)
-    if mode == "snv":
+    if mode in ("snv", "tile_snv"):
         return normalised, gain
     return np.asarray(patch, dtype=np.float32), gain

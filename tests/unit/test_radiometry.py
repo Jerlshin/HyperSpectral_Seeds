@@ -244,7 +244,7 @@ def test_none_is_available_so_the_leak_stays_reproducible() -> None:
 @pytest.mark.parametrize("mode", RADIOMETRY_MODES)
 def test_every_declared_mode_resolves(mode: str) -> None:
     resolved, _ = resolve_radiometry(mode, "a/white.hdr")
-    assert resolved in ("white", "snv", "none")
+    assert resolved in ("white", "tile", "tile_snv", "snv", "none")
 
 
 def test_an_unknown_mode_is_rejected() -> None:
@@ -277,7 +277,34 @@ def test_the_gain_is_persisted_under_every_mode(reflectance, gains) -> None:
     """
     patch = gains[..., None] * reflectance[None, None, :]
     mask = np.ones((H, W), dtype=bool)
-    for mode in ("snv", "white", "none"):
+    for mode in ("snv", "white", "tile", "tile_snv", "none"):
         _, gain = apply_radiometry(patch, mask, mode)
         assert gain.shape == (2, H, W)
         np.testing.assert_allclose(gain[0], gains * reflectance.mean(), rtol=1e-4)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  The in-scene tile modes
+# ══════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.parametrize("mode", ["tile", "tile_snv"])
+def test_the_tile_modes_need_no_white_panel_file(mode: str) -> None:
+    """The tile is inside every scene; the archive's file list is irrelevant to it."""
+    effective, reason = resolve_radiometry(mode, None)
+    assert effective == mode
+    assert "in-scene" in reason
+
+
+def test_auto_never_switches_to_the_tile_on_its_own() -> None:
+    """A change of radiometric domain is a new dataset, so it is only ever requested by name."""
+    assert resolve_radiometry("auto", None)[0] == "snv"
+
+
+def test_tile_keeps_reflectance_and_tile_snv_normalises_it(reflectance, gains) -> None:
+    patch = gains[..., None] * reflectance[None, None, :]
+    mask = np.ones((H, W), dtype=bool)
+    kept, _ = apply_radiometry(patch, mask, "tile")
+    snv_after, _ = apply_radiometry(patch, mask, "tile_snv")
+    np.testing.assert_array_equal(kept, patch.astype(np.float32))
+    np.testing.assert_allclose(snv_after, apply_radiometry(patch, mask, "snv")[0])

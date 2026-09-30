@@ -97,7 +97,7 @@ exact allocation must be known before any patch is written.
 | Pass | Work |
 |---|---|
 | 1 · count | Walk every cube, segment, accumulate $N = \sum_{\text{cubes}} \lvert\mathcal{R}\rvert$ |
-| 2 · allocate | Allocate $X \in \mathbb{R}^{N \times 256 \times 64 \times 64}$ (`float32`) and $y \in \mathbb{Z}^{N}$ once |
+| 2 · allocate | Allocate $X \in \mathbb{R}^{N \times 256 \times 64 \times 64}$ (`float32`) and $y \in \mathbb{Z}^{N}$ once — the patch array disk-backed (`patches.npy.partial`), not in RAM |
 | 3 · write | Re-walk, re-segment, and write each patch in place |
 
 Per region $r$ with bounding box $(r_0, c_0, r_1, c_1)$ and label image $L$, write the crop
@@ -133,20 +133,23 @@ pixel units — the absolute scale the resize destroys.
 
 ### Radiometry (`data/prep/radiometry.py`)
 
-`PrepConfig.radiometry: str = "auto"` selects one of four modes, resolved once per archive by
+`PrepConfig.radiometry: str = "auto"` selects one of six modes, resolved once per archive by
 `resolve_radiometry`:
 
 | Mode | Behaviour |
 |---|---|
 | `auto` | `white` if `find_white_reference()` locates a panel cube in the archive, else `snv` |
 | `white` | physically-correct reflectance division against a located white panel |
+| `tile` | reflectance division against each scene's **own in-scene Spectralon tile** (below) |
+| `tile_snv` | `tile`, then per-pixel SNV |
 | `snv` | per-pixel Standard Normal Variate along $\lambda$ (the operative path today) |
 | `none` | no radiometric correction — raw dark-corrected radiance |
 
 `find_white_reference()` scans archive members for white-panel filename hints; on the *RGB and
-VIS-NIR HSI Data for 90 Rice Seed Varieties* archive this returns nothing — its only reference
-cubes are `black.hdr` — so `auto` resolves to `snv`, applied by `apply_radiometry()` **after**
-masking:
+VIS-NIR HSI Data for 90 Rice Seed Varieties* archive this returns nothing — its only separate
+reference cubes are `black.hdr` — so `auto` resolves to `snv`, applied by `apply_radiometry()`
+**after** masking. (The archive's white reference is *inside every scene*, which `auto` never
+inspects — see the `tile` modes below.)
 
 $$
 \tilde x_{c,p} = \frac{x_{c,p} - \bar x_{\cdot,p}}{\operatorname{sd}_c(x_{\cdot,p}) + \varepsilon},
@@ -168,6 +171,43 @@ one.
 Failures on any single cube are caught, printed and skipped, so one unreadable scan does not
 abort a multi-hour extraction; a cube counted in pass 1 that fails in pass 2 leaves no
 all-zero rows, since the arrays are truncated to what was written.
+
+### The in-scene white tile (`tile`, `tile_snv` — `data/prep/white_tile.py`)
+
+The Zenodo record states that every scene contains a 100 % reflective Spectralon tile. The raw
+scenes are $931 \times 336 \times 256$; seeds occupy rows $[0, 600)$ (`SEED_ROWS`) and the tile the
+rows below — which `preprocess_raw` crops away (the extraction notebook: *"Remove white
+calibration + bottom stripes"*). SNV removes a scalar gain per pixel but not the illumination's
+spectral *shape*, and on this dataset that shape acts as an acquisition-session fingerprint: 73 of
+90 varieties have both bundles in one session, and mean-spectrum models score ~0 recall on the 17
+that do not (`reporting/session.py`). Dividing each scene by its own tile removes that shape.
+
+* **Detection** (`detect_white_tile`, on the *uncropped raw* scene so saturation is visible): a
+  brightness image over 500–900 nm in the search rows; candidates above 0.6 × its 99.5th
+  percentile; the brightest component that is ≥ 1,000 px (larger than any seed), compact
+  (solidity ≥ 0.85), ≥ 1.5× brighter than its surroundings and uniform once eroded by 3 px.
+* **Measurement:** per band, the median dark-corrected value over core pixels *not* at the 12-bit
+  ceiling (4,095 DN is reached in ≥ 75 % of the 180 raw cubes). A band with > 1 % saturated core
+  pixels is left unmeasured rather than clipped.
+* **Resolution** (`resolve_white_references`): unmeasured bands, and scans with no tile, are
+  filled from their *session* — its median illumination shape, scaled by the scan's own gain (or
+  the session's median gain). Every filled value is marked. A band no scan in the session measured
+  is **unresolved**, and extraction refuses to start.
+* **Extraction:** seeds are still segmented on dark-corrected *radiance*, and patches are cut
+  from the reflectance cube $\varrho = r_\text{ref}(R - \bar D)/W_c$. So the `tile` dataset is
+  **row-aligned** with an `snv` extraction of the same archive — identical labels, groups, masks,
+  morphology and scan table — and the two can be compared kernel for kernel.
+* **QC, before any patch is written:** `white_tiles.csv` (per scan: found, bbox, core size,
+  contrast, uniformity, saturated and session-filled band counts), `white_spectra.npz` (measured
+  and resolved spectra, each value's source) and `radiometry.json`.
+* **Thresholds are provisional** — informed by the scene geometry, not yet fitted to real tile
+  pixels. `python scripts/prepare_dataset.py --radiometry tile --probe-tiles 18` measures real
+  scans and writes `white_tiles_probe.csv` without extracting anything.
+
+A changed radiometry is a new dataset, so it goes to a new root, and `build_patch_dataset` refuses
+to replace an existing `patches.npy` without `--overwrite`. The patch array is streamed to a
+disk-backed `patches.npy.partial` and renamed into place at the end, rather than allocated in RAM
+(it is 36 GB).
 
 **Resulting artifacts**, all row-aligned on the patch index except the last:
 

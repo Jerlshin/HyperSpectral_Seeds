@@ -27,6 +27,16 @@ self-fulfilling. Selection happened on ``calib``. This runs once, after every
 design decision is frozen — that ordering is the claim, and nothing in the code
 can enforce it, so the run records which split selected and which was reported
 and the paper states it.
+
+The session breakdown
+─────────────────────
+Given a :class:`~spectralquadnet.reporting.session.SessionMap`, every scored
+variant is also broken down by acquisition session — same- vs cross-session
+recall, attraction to the kernel's own session, and session-prediction entropy
+(:mod:`spectralquadnet.reporting.session`). On this dataset 73 of 90 varieties
+share a session across their two bundles, so the grouped macro-F1 alone cannot
+say whether a model recognises varieties or sessions. The breakdown is a
+measurement only: it reads the same predictions and changes nothing.
 """
 
 from __future__ import annotations
@@ -36,6 +46,7 @@ from typing import TYPE_CHECKING, Any
 import torch
 from torch.utils.data import DataLoader
 
+from spectralquadnet.data.loaders import eval_row_order
 from spectralquadnet.engine.batch import side_inputs, unpack_batch
 from spectralquadnet.engine.checkpoint import load_ckpt
 from spectralquadnet.engine.diagnostics import hardest_classes_report
@@ -44,6 +55,7 @@ from spectralquadnet.models.ema import ModelEMA
 from spectralquadnet.reporting.artifacts import RunArtifacts, publish
 from spectralquadnet.reporting.figures import render_run_figures
 from spectralquadnet.reporting.metrics import ClassificationResult, score
+from spectralquadnet.reporting.session import SessionMap, SessionReport, session_report
 from spectralquadnet.tracking.base import ExperimentTracker, NullTracker
 from spectralquadnet.utils.distributed import DistContext, gather_concat
 
@@ -72,6 +84,7 @@ def final_evaluation(
     tracker: ExperimentTracker | None = None,
     dist: DistContext | None = None,
     run_summary: dict[str, Any] | None = None,
+    sessions: SessionMap | None = None,
 ) -> dict[str, ClassificationResult]:
     """Load the selected weights and score the reporting split, ±TTA.
 
@@ -81,6 +94,9 @@ def final_evaluation(
         run_summary: Run identity — architecture, protocol, fold, seed,
             parameter count — written into ``results/run.json`` so an
             aggregator can build a table from the results tree alone.
+        sessions: The fold's session map. When given, each variant is also
+            scored by acquisition session and the breakdown is written beside
+            the headline metrics. ``None`` skips it.
 
     Returns:
         ``{"no_tta": …, "tta": …}`` (the second only when
@@ -135,6 +151,13 @@ def final_evaluation(
 
     artifacts = RunArtifacts.for_run(cfg.output_dir) if dist.is_main else None
     results: dict[str, ClassificationResult] = {}
+    session_results: dict[str, SessionReport] = {}
+    rows = eval_row_order(test_ldr) if sessions is not None else None
+    if sessions is not None and rows is None:
+        trk.log_message(
+            "Session breakdown skipped: the report loader's row order cannot be established",
+            level="warn",
+        )
 
     variants: list[tuple[str, bool]] = [("no_tta", False)]
     if want_tta:
@@ -166,9 +189,17 @@ def final_evaluation(
             hardest_classes_report(result.per_class_f1),
             step=epoch,
         )
+        aligned = rows if rows is not None and len(rows) == len(preds) else None
+        breakdown = _session_breakdown(sessions, preds, targets, aligned, split_tag, trk)
+        if breakdown is not None:
+            session_results[key] = breakdown
         if artifacts is not None:
-            artifacts.write_predictions(split_tag, preds, targets)
+            artifacts.write_predictions(split_tag, preds, targets, rows=aligned)
             publish(artifacts, result, trk, step=epoch, prefix=split_tag)
+            if breakdown is not None:
+                artifacts.write_session(breakdown)
+                trk.log_scalars(breakdown.scalars(split_tag), step=epoch)
+                trk.log_table(f"session/{split_tag}", breakdown.per_session, step=epoch)
 
     if artifacts is not None:
         artifacts.write_manifest(
@@ -183,7 +214,9 @@ def final_evaluation(
                     "arch": ckpt.get("arch", "spectral_quadnet"),
                     "schema_version": ckpt.get("schema_version"),
                 },
-                "results": {k: v.as_dict() for k, v in results.items()},
+                "results": {
+                    k: _result_payload(v, session_results.get(k)) for k, v in results.items()
+                },
             }
         )
         if bool(getattr(cfg.evaluation, "save_artifacts", True)):
@@ -192,6 +225,43 @@ def final_evaluation(
         trk.log_message(f"Results → {artifacts.results}", level="plain")
 
     return results
+
+
+def _result_payload(
+    result: ClassificationResult, breakdown: SessionReport | None
+) -> dict[str, Any]:
+    """One variant's manifest entry: the headline metrics, plus the breakdown if any."""
+    payload = result.as_dict()
+    if breakdown is not None:
+        payload["session"] = breakdown.as_dict()
+    return payload
+
+
+def _session_breakdown(
+    sessions: SessionMap | None,
+    preds: Any,
+    targets: Any,
+    rows: Any,
+    split_tag: str,
+    trk: ExperimentTracker,
+) -> SessionReport | None:
+    """Score one variant by acquisition session, or say why it was not.
+
+    Never raises: the breakdown is a measurement about the run, and a failure to
+    compute it — a row order that does not reproduce the targets, say — is
+    reported and skipped rather than allowed to discard the headline numbers
+    the pass has already produced.
+    """
+    if sessions is None or rows is None:
+        return None
+    try:
+        report = session_report(preds, targets, rows, sessions, split=split_tag)
+    except ValueError as exc:
+        trk.log_message(f"Session breakdown skipped for {split_tag}: {exc}", level="warn")
+        return None
+    for line in report.lines():
+        trk.log_message(line, level="plain")
+    return report
 
 
 @torch.inference_mode()

@@ -846,6 +846,51 @@ def build_eval_loader(
     )
 
 
+def eval_row_order(loader: DataLoader[Any]) -> npt.NDArray[np.int64] | None:
+    """The patch row behind each prediction an evaluation pass over ``loader`` returns.
+
+    A metric that depends on *which* kernel was scored — its acquisition
+    session, its bundle — needs the row of every prediction, and the evaluation
+    pass returns predictions only. On a single process the order is simply
+    ``dataset.indices``. Under DDP it is not: :func:`build_eval_loader`'s
+    ``DistributedSampler`` deals positions out round-robin (rank ``r`` gets
+    ``r, r + W, r + 2W, …``) after padding the list with its own first entries
+    so every rank gets an equal shard, and
+    :func:`~spectralquadnet.utils.distributed.gather_concat` joins the shards in
+    rank order. Because the shards are equal, the padding survives the join —
+    those rows are scored twice — so the order is rebuilt here from the sampler
+    rather than assumed.
+
+    Returns:
+        ``(n,)`` int64 patch rows aligned with the gathered predictions, or
+        ``None`` when the order cannot be established: the dataset is not a
+        :class:`~spectralquadnet.data.datasets.RiceSeedDataset` (whose
+        ``indices`` are global patch rows), or the sampler shuffles.
+    """
+    dataset = loader.dataset
+    if not isinstance(dataset, RiceSeedDataset):
+        return None
+    indices = np.asarray(dataset.indices).astype(np.int64)
+    n = len(indices)
+    sampler = loader.sampler
+    if isinstance(sampler, torch.utils.data.DistributedSampler):
+        if sampler.shuffle or n == 0:
+            return None
+        world, total = int(sampler.num_replicas), int(sampler.total_size)
+        positions = list(range(n))
+        if sampler.drop_last:
+            positions = positions[:total]
+        elif total > n:
+            pad = total - n
+            positions += (positions * (pad // n + 1))[:pad]
+        order = np.concatenate([np.asarray(positions[r:total:world]) for r in range(world)])
+        rows: npt.NDArray[np.int64] = indices[order.astype(np.int64)]
+        return rows
+    if isinstance(sampler, torch.utils.data.SequentialSampler):
+        return indices
+    return None
+
+
 def standardised_morphometrics(
     store: DataStore, train_idx: npt.NDArray[Any]
 ) -> npt.NDArray[Any] | None:

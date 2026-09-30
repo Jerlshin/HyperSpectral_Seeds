@@ -22,6 +22,13 @@ labels_path: ./dataset/labels.npy
 wavelength_path: ./dataset/wavelengths.csv
 groups_path: ./dataset/groups.npy
 
+# Session breakdown. `scan_table.csv` names each scan's acquisition session; the
+# final evaluation reads it to report same- vs cross-session recall, attraction
+# to the kernel's own session and session-prediction entropy. 73 of 90 varieties
+# share a session across their two bundles, so the grouped macro-F1 alone cannot
+# say whether a model recognises varieties or sessions. Never a model input.
+scan_table_path: ./dataset/scan_table.csv
+
 masks_path: ./dataset/masks.npy
 morphology_path: ./dataset/morphology.npy
 gain_path: ./dataset/gain.npy

@@ -278,6 +278,7 @@ def test_the_gain_key_is_consumed_by_the_leakage_probe(cfg_default) -> None:
         "labels_path",
         "wavelength_path",
         "groups_path",
+        "scan_table_path",
         "masks_path",
         "morphology_path",
         "gain_path",

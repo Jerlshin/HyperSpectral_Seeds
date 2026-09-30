@@ -24,6 +24,8 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from spectralquadnet.reporting.artifacts import load_manifest
 from spectralquadnet.reporting.metrics import mean_and_range
 
@@ -83,6 +85,8 @@ def collect_runs(run_dirs: Iterable[str | Path], variant: str = "tta") -> list[d
             continue
         run = manifest.get("run") or {}
         ci = result.get("macro_f1_ci") or {}
+        session = result.get("session") or {}
+        attraction = session.get("attraction") or {}
         records.append(
             {
                 "run_dir": str(run_dir),
@@ -99,9 +103,33 @@ def collect_runs(run_dirs: Iterable[str | Path], variant: str = "tta") -> list[d
                 "accuracy": float(result.get("accuracy", 0.0)),
                 "ci_lo": float(ci.get("lo", 0.0)) if ci else None,
                 "ci_hi": float(ci.get("hi", 0.0)) if ci else None,
+                # The session breakdown (reporting.session), when the run computed
+                # it. `None` rather than 0.0 for a run that did not, so a table can
+                # print "—" instead of a number that was never measured.
+                "same_session_recall": _opt(
+                    (session.get("same_session") or {}).get("macro_recall")
+                ),
+                "cross_session_recall": _opt(
+                    (session.get("cross_session") or {}).get("macro_recall")
+                ),
+                "session_attraction": _opt(attraction.get("cross")),
+                "session_attraction_chance": _opt(attraction.get("cross_chance")),
             }
         )
     return records
+
+
+def _opt(value: Any) -> float | None:
+    return None if value is None else float(value)
+
+
+def _cell(value: float | None) -> str:
+    return "—" if value is None else f"{value:.4f}"
+
+
+def _mean_or_none(values: list[float | None]) -> float | None:
+    present = [v for v in values if v is not None]
+    return float(np.mean(present)) if present else None
 
 
 def group_by(records: list[dict[str, Any]], keys: Sequence[str]) -> dict[tuple[Any, ...], list[dict[str, Any]]]:
@@ -135,6 +163,8 @@ def protocol_table(records: list[dict[str, Any]]) -> tuple[list[str], list[list[
         "max",
         "range",
         "sd",
+        "same-sess recall",
+        "cross-sess recall",
     ]
     rows: list[list[Any]] = []
     arms: dict[str, dict[str, float]] = {}
@@ -156,6 +186,8 @@ def protocol_table(records: list[dict[str, Any]]) -> tuple[list[str], list[list[
                 f"{stats['max']:.4f}",
                 f"{stats['range']:.4f}",
                 f"{stats['sd']:.4f}",
+                _cell(_mean_or_none([r.get("same_session_recall") for r in bucket])),
+                _cell(_mean_or_none([r.get("cross_session_recall") for r in bucket])),
             ]
         )
     rows.sort(key=lambda r: (str(r[0]), str(r[2])))
@@ -168,7 +200,20 @@ def per_cell_table(records: list[dict[str, Any]]) -> tuple[list[str], list[list[
     A summary table with no per-cell breakdown behind it is a table a reviewer
     has to trust. This is the one they can check.
     """
-    headers = ["arch", "pipeline", "protocol", "fold", "seed", "macro-F1", "CI95", "bal-acc", "run"]
+    headers = [
+        "arch",
+        "pipeline",
+        "protocol",
+        "fold",
+        "seed",
+        "macro-F1",
+        "CI95",
+        "bal-acc",
+        "run",
+        "same-sess recall",
+        "cross-sess recall",
+        "attraction (chance)",
+    ]
     rows = [
         [
             r["arch"],
@@ -180,6 +225,14 @@ def per_cell_table(records: list[dict[str, Any]]) -> tuple[list[str], list[list[
             f"[{r['ci_lo']:.4f}, {r['ci_hi']:.4f}]" if r["ci_lo"] is not None else "—",
             f"{r['balanced_accuracy']:.4f}",
             Path(r["run_dir"]).name,
+            _cell(r.get("same_session_recall")),
+            _cell(r.get("cross_session_recall")),
+            (
+                f"{r['session_attraction']:.3f} ({r['session_attraction_chance']:.3f})"
+                if r.get("session_attraction") is not None
+                and r.get("session_attraction_chance") is not None
+                else "—"
+            ),
         ]
         for r in sorted(
             records, key=lambda r: (r["arch"], r["split_scheme"], r["fold"], r["seed"])

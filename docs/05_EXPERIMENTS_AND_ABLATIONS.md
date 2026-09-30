@@ -81,6 +81,27 @@ table, and writes three arrays to `cfg.output_dir`:
 Any reported metric is therefore recomputable from disk without re-running inference — which
 is exactly what `test_recorded_test_predictions_match_their_reported_metrics` does.
 
+### Session breakdown (`reporting/session.py`)
+
+When `data.scan_table_path` names `scan_table.csv`, every scored variant is also broken down by
+acquisition session and written beside the headline metrics (`results/session_<split>.json`,
+`session_<split>.csv`, `rows_<split>.npy`, and a `session` entry in `run.json`):
+
+| Quantity | Meaning |
+|---|---|
+| same-/cross-session macro-recall, macro-F1, accuracy | a held-out kernel is *cross-session* when its class was never trained in the kernel's session — under `grouped`, exactly the 17 varieties whose bundles span two sessions |
+| attraction (cross-session kernels) vs chance | share predicted as a class trained in the kernel's **own** session; a correct prediction never is. The collapse signal |
+| $H(\hat S \mid S)$ vs oracle and chance | entropy of the predicted class's training session given the kernel's session — dispersion context for the attraction rate |
+
+73 of 90 varieties share a session across their two bundles, so the grouped macro-F1 alone cannot
+separate variety from session recognition; the band study measured cross-session recall ≈ 0 with
+65–78 % attraction (chance ≈ 15 %) for proxies on SNV spectra. The breakdown reads the same
+predictions and changes nothing. The per-kernel rows follow the evaluation loader's order,
+reconstructed from its sampler under DDP (`data.loaders.eval_row_order`), and a row order that does
+not reproduce the targets is refused. Finished runs are re-scored offline with
+`python -m spectralquadnet.reporting.session RUN_DIR …`; the aggregate tables gain same- and
+cross-session recall columns.
+
 ---
 
 ## 5.2 Diagnostic metrics
