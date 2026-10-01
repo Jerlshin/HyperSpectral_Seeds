@@ -8,6 +8,8 @@ pip install -e ".[tracking,figures]"
 python train.py
 ```
 
+Training on Kaggle's two T4s: [§10 · Kaggle — GPU T4 x2](#kaggle--gpu-t4-x2).
+
 ---
 
 ## 1 · Research objective and study design
@@ -370,7 +372,12 @@ without re-running inference.
 
 Each stage writes `best_stage{n}.pth` plus a JSON sidecar `stage{n}_meta.json`. A stage
 counts as complete only when **both** exist; the pipeline auto-resumes by probing 3 → 2 →
-1. Every bundle records its `arch` and `schema_version`, and `load_ckpt` **refuses** a
+1. The single-stage curriculum also writes its **full training state** — weights, EMA and
+its update count, optimiser, scheduler, loss scaler, early-stopping counters, RNG — to
+`last_stage1.pth` every `runtime.checkpoint_every` epochs (default 1), on a background
+thread, with a `last_stage1.json` sidecar marked `finished: false` from the moment training
+starts. A run cut off mid-stage therefore **resumes at the next epoch** instead of being
+taken for a finished one and reported half-trained (`engine/resume.py`). Every bundle records its `arch` and `schema_version`, and `load_ckpt` **refuses** a
 cross-architecture load rather than matching two-thirds of the tensors by coincidence of
 naming. The checkpoint used for final evaluation is chosen by recorded validation
 macro-F1, *not* by stage order.
@@ -399,18 +406,22 @@ Details: [`docs/04_CURRICULUM_AND_LOSSES.md`](docs/04_CURRICULUM_AND_LOSSES.md),
 ```
 configs/                      Hydra composition
   data/                       refl215_grouped (PRIMARY) | refl215_stratified
-    ablation/                 spa40_{grouped,stratified,audited} — reduced arms only
+    ablation/                 spa40_{grouped,stratified,audited}, u430k32_{grouped,stratified}
+                              (pre-sliced 32-band cube) — reduced arms only
   model/                      seed_net (primary) | quadnet_v4_audited (control)
   single/ stage{1,2,3}/       the collapsed curriculum | the audited three-stage one
   evaluation/                 held_out_once (primary) | audited_replica
+  runtime/                    default (empty) | kaggle_t4x2 — hardware profiles
+  tracking/                   console | console_jsonl | jsonl | wandb | tensorboard | none
   experiment/                 seednet_full256 (DEFAULT) | quadnet_full256 (control)
                               | quadnet_audited (frozen historical replica)
 
 src/spectralquadnet/
   config/       schema.py typed dataclasses; compose.py programmatic composition
-  data/         mmap_store (+ band_geometry), loaders (splits), datasets (augmentation),
-                samplers, morphometrics
+  data/         mmap_store (+ band_geometry, page-cache pre-warm), loaders (splits),
+                datasets (augmentation), samplers, morphometrics
     prep/       offline: download → radiometry → segmentation → patch extraction
+                preslice.py — a band subset as a small, checksummed, uploadable dataset
                 band_selection.py — ABLATION PATHWAY ONLY
   models/       registry (arch → network), spectral_seed_net (primary),
                 spectral_quadnet (control), front_end (λ operators), fusion, heads,
@@ -420,14 +431,14 @@ src/spectralquadnet/
     blocks/     attention (ECA/CBAM), conv_blocks, positional
   engine/       pipelines/ (context + single | three_stage dispatch)
                 stages/ (single_stage, stage1/2/3, final_eval)
-                train_epoch, evaluate, tta, checkpoint, diagnostics, batch
+                train_epoch, evaluate, tta, checkpoint, resume, diagnostics, batch
   losses/       focal, contrastive (SupCon/ProtoNCE), cdws, mixup, auxiliary
   optim/        param_groups, schedulers, sam
   reporting/    metrics + CIs, results tree, figures, tables
   experiments/  registry (the ablation grid), runner, protocol, baselines,
                 leakage, aggregate, analysis, cli
   bandstudy/    ABLATION PATHWAY ONLY — how many bands, which, which method
-  tracking/     console | wandb | tensorboard | multi
+  tracking/     console | jsonl | wandb | tensorboard | multi
   utils/        device (runtime plan), distributed (DDP), seed, warning_filters
 
 scripts/        thin CLI wrappers + validation gates
@@ -463,8 +474,8 @@ config that never mentions them is not under-specified.
 | `single` | the primary curriculum: 14 hyperparameters |
 | `stage1/2/3` | the audited curriculum, retained for A8 |
 | `evaluation` | `select_split`, `report_split`, `tta`, `bootstrap_samples` |
-| `runtime` | throughput only — nothing here may change a reported number |
-| `tracking` | backend selection and diagnostics verbosity |
+| `runtime` | throughput only — nothing here may change a reported number (a profile such as `runtime=kaggle_t4x2` also picks the AMP dtype, and says so) |
+| `tracking` | backend selection and diagnostics verbosity; `jsonl` writes `output_dir/metrics.jsonl` |
 | root | `pipeline`, `seed`, `device`, `weight_decay`, `grad_clip`, `ema_decay`, TTA counts |
 
 Two config keys carry the 256-band design and are worth knowing:
@@ -487,6 +498,8 @@ python train.py --config-name experiment/quadnet_audited     # the frozen replic
 python train.py single.max_lr=1e-4 single.epochs=80
 python train.py -m seed=0,1,2                                # Hydra multirun
 python train.py tracking.backend=wandb
+python train.py tracking=console_jsonl                        # + metrics.jsonl
+torchrun --standalone --nproc_per_node=2 train.py runtime=kaggle_t4x2
 ```
 
 [`docs/config_reference.md`](docs/config_reference.md) documents every group's keys, their
@@ -525,6 +538,9 @@ failures that no component test could have caught.
 | `tests/regression/test_golden_forward_pass.py` | Eval-mode logits, per-tensor SHA-256 of 306 initialised tensors, the Stage-1 epoch-1 loss and post-step weight digests |
 | `tests/regression/test_state_dict_compatibility.py` | Top-level attribute names; the checkpoint bundle schema |
 | `tests/regression/test_resume_and_final_eval.py` | Auto-resume detection, sidecar schema, `val_f1`-based selection |
+| `tests/unit/test_presliced_dataset.py` | The pre-sliced cube equals its source bands within the float16 bound (bit-exact at float32); a corrupted file fails `--verify`; a pre-sliced cube reports itself as reduced; the loader widens float16 to float32 |
+| `tests/unit/test_resume.py` | Training-state snapshot/restore continues exactly; interruption vs completion; the background writer; the DDP sampler reshuffles per epoch; the T4 profile composes |
+| `tests/smoke/test_kaggle_path.py` | Pre-slice → train → `metrics.jsonl` → simulated interruption → resume at the next epoch, and a two-rank `torchrun` run to the final evaluation |
 
 ### Recorded result of this revision's validation
 
@@ -661,7 +677,133 @@ torchrun --standalone --nproc_per_node=2 train.py
 
 DDP with `SyncBatchNorm`, so two GPUs compute the same function as one: the batch is
 split, but the normalisation statistics are all-reduced back to the global batch's and
-the gradient average over equal shards is the global-batch gradient.
+the gradient average over equal shards is the global-batch gradient. The distributed
+sampler is re-seeded every epoch (`set_epoch`), so each epoch draws a new shard order.
+
+### Kaggle — GPU T4 x2
+
+The full 215-band cube is 30.4 GB. What goes to Kaggle is the **pre-sliced 32-band
+finalist** (`uniform430_k32`, 432–1006 nm, float16): **2.33 GB**, with labels, groups, fill
+maps, morphometrics, wavelengths, the session table, the radiometry record, a provenance
+file and a checksummed manifest. Runs on it are the **k = 32 reduced arm**, not the primary
+215-band methodology, and say so: `band_axis.json` makes every run print
+`Spectral: 32 of 215 bands — REDUCED arm via a pre-sliced cube` and record
+`"band_selection": true` in `results/run.json`.
+
+**1 · On your machine — build and upload the dataset (once).** Needs `./dataset/` and
+`outputs/band_finalists/`, and the [Kaggle CLI](https://github.com/Kaggle/kaggle-api) with an
+API token in `~/.kaggle/kaggle.json`.
+
+```bash
+python scripts/build_presliced_dataset.py --kaggle-id <kaggle-username>/rice-hsi-u430k32
+python scripts/build_presliced_dataset.py --verify dataset_u430k32   # re-hashes every file
+kaggle datasets create -p dataset_u430k32                            # private by default
+```
+
+The build takes about a minute. The float16 cast is measured, not assumed, and recorded in
+`dataset_u430k32/band_axis.json`: max relative error 4.88e-4 over normal-range values, and
+16 of 2.9 × 10⁸ non-zero values (all ≤ 4.9e-16) flushed to zero — no pixel changes
+foreground status. `--dtype float32` writes a bit-identical 4.5 GB subset instead;
+`--set all` writes all 215 bands as float16 (15.2 GB) if you want the primary cube on Kaggle.
+
+**2 · Notebook settings.** *Accelerator*: **GPU T4 x2**. *Internet*: **On**.
+*Add Input*: the dataset from step 1.
+
+**3 · Cell 1 — code, dependencies, data link, sanity check.**
+
+```bash
+%%bash
+set -euo pipefail
+cd /kaggle/working
+[ -d HyperSpectral_Seeds ] || git clone --depth 1 https://github.com/Jerlshin/HyperSpectral_Seeds.git
+cd HyperSpectral_Seeds
+pip install -q -e .                     # torch is Kaggle's own; this adds hydra/omegaconf
+ln -sfn /kaggle/input/rice-hsi-u430k32 dataset_u430k32   # <- your dataset's slug
+python scripts/build_presliced_dataset.py --verify dataset_u430k32 --quick
+nvidia-smi --query-gpu=index,name,memory.total --format=csv
+```
+
+**4 · Cell 2 — one short run first** (both GPUs, 2 epochs, ~minutes; catches a path or
+driver problem before the long sweep):
+
+```bash
+!cd /kaggle/working/HyperSpectral_Seeds && torchrun --standalone --nproc_per_node=2 train.py \
+    data=ablation/u430k32_grouped runtime=kaggle_t4x2 tracking=console_jsonl \
+    single.epochs=2 output_dir=outputs/kaggle_smoke
+```
+
+Look for `[DDP]  world_size=2`, `Precis : AMP=fp16 + GradScaler`, the `REDUCED arm` line and
+`[DATA] ✓ Page cache warmed` in the banner.
+
+**5 · Cell 3 — the training matrix.** The primary protocol on the 32-band cube: grouped
+2 folds × 3 seeds + the matched stratified contrast (12 cells), each on both GPUs, then the
+aggregate tables and the leakage gap. `--dry-run` prints every command first.
+
+```bash
+!cd /kaggle/working/HyperSpectral_Seeds && python scripts/run_protocol.py \
+    --data ablation/u430k32 --nproc-per-node 2 \
+    --override runtime=kaggle_t4x2 --override tracking=console_jsonl \
+    --output-root outputs/experiments_u430k32 --baseline --stream
+```
+
+Other grids take the same flags, e.g. a single cell or the four-branch control:
+
+```bash
+!cd /kaggle/working/HyperSpectral_Seeds && torchrun --standalone --nproc_per_node=2 train.py \
+    data=ablation/u430k32_grouped data.split_fold=1 seed=2 runtime=kaggle_t4x2 tracking=console_jsonl
+!cd /kaggle/working/HyperSpectral_Seeds && torchrun --standalone --nproc_per_node=2 train.py \
+    --config-name experiment/quadnet_full256 data=ablation/u430k32_grouped \
+    runtime=kaggle_t4x2 tracking=console_jsonl
+```
+
+**What `runtime=kaggle_t4x2` does** (`configs/runtime/kaggle_t4x2.yaml`):
+
+| | |
+|---|---|
+| Topology | DDP over both T4s with `SyncBatchNorm`; global batch unchanged (128 → 64 per GPU); `multi_gpu: ddp` fails fast if `torchrun` is missing |
+| Precision | **fp16 autocast + GradScaler** — the T4's Tensor Core path. The shipped `bf16` is emulated on Turing and slower than fp32. The dtype is part of what a number means, so it is printed and recorded; non-finite batches are skipped and counted in `train/skipped_batches` — if that climbs, rerun with `runtime.amp_dtype=bf16` |
+| Input | 2 loader workers + 2 eval workers per rank (4 vCPUs), pinned memory, persistent workers; the mmapped cube is **read once into the page cache** at startup (local rank 0), so every random patch read afterwards is a memory hit |
+| Kernels | `torch.compile` (inductor), cuDNN autotune, fused AdamW; TF32 off (Turing has none) |
+| Checkpoints | full training state every epoch, written on a background thread (below) |
+
+**Outputs, per cell** (`outputs/experiments_u430k32/protocol/<arm>__f<fold>_s<seed>/`):
+
+| File | What |
+|---|---|
+| `metrics.jsonl` | every scalar, epoch row, table (per-class F1, session breakdown), banner and notice as one JSON object per line |
+| `training.log` | the console lines |
+| `best_stage1.pth` + `stage1_meta.json` | the checkpoint selected on `calib` |
+| `last_stage1.pth` + `last_stage1.json` | the full training state after the latest epoch |
+| `results/` | `run.json` (metrics + CIs, both no-TTA and TTA), predictions, confusion, per-class and session tables |
+
+```python
+import pandas as pd
+m = pd.read_json("outputs/experiments_u430k32/protocol/grouped__f0_s0/metrics.jsonl", lines=True)
+curves = pd.json_normalize(m[m.event == "scalars"].to_dict("records"))   # metrics.val/f1_best, …
+```
+
+**Sessions end; the sweep does not.** A Kaggle session has a run-time cap (12 h) and GPU
+time is a weekly quota.
+A finished cell is skipped on rerun (its `results/run.json` exists), and a cell that was
+cut off resumes from `last_stage1.pth` at the next epoch — it is never mistaken for a
+finished one. To continue in a new session, run the notebook as *Save Version → Save & Run
+All* so `/kaggle/working` is kept as the version's output, add that output as an input to
+the next version, and restore it before Cell 3:
+
+```bash
+!cp -rn /kaggle/input/<this-notebook-slug>/HyperSpectral_Seeds/outputs /kaggle/working/HyperSpectral_Seeds/
+```
+
+When every cell is done (or to re-tabulate what is there):
+
+```bash
+!cd /kaggle/working/HyperSpectral_Seeds && python scripts/run_protocol.py \
+    --data ablation/u430k32 --output-root outputs/experiments_u430k32 --aggregate-only
+```
+
+If `torch.compile` misbehaves on the image's torch version, add `runtime.compile=off`; if
+the loader cannot keep up (GPU utilisation well under 100 % in `nvidia-smi`), try
+`runtime.num_workers=6`.
 
 ---
 

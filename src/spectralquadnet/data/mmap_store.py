@@ -28,8 +28,11 @@ Non-negotiable invariants
 
 from __future__ import annotations
 
+import json
 import logging
 import mmap
+import os
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -267,6 +270,58 @@ class DataStore:
         return self.wavelengths
 
 
+def _physical_memory_bytes() -> int | None:
+    """Total physical RAM, or ``None`` where ``sysconf`` cannot say."""
+    try:
+        return int(os.sysconf("SC_PAGE_SIZE")) * int(os.sysconf("SC_PHYS_PAGES"))
+    except (AttributeError, ValueError, OSError):
+        return None
+
+
+def should_prewarm(setting: str, paths: list[str], device: torch.device) -> bool:
+    """Resolve ``runtime.prewarm_cache`` for these files on this machine.
+
+    ``auto`` warms on CUDA only, and only when the files fit in half of RAM: a
+    cache that cannot hold the cube would evict what it just read and turn a
+    startup cost into a pure loss.
+    """
+    mode = str(setting).lower()
+    if mode in ("off", "false", "0"):
+        return False
+    if mode in ("on", "true", "1"):
+        return True
+    if device.type != "cuda":
+        return False
+    ram = _physical_memory_bytes()
+    total = sum(Path(p).stat().st_size for p in paths if p and Path(p).exists())
+    return ram is not None and 0 < total <= ram // 2
+
+
+def prewarm_page_cache(paths: list[str], block_bytes: int = 64 << 20) -> tuple[int, float]:
+    """Read ``paths`` sequentially once so later random reads hit the page cache.
+
+    The mmaps are advised ``MADV_RANDOM``, which is right for the training
+    access pattern and wrong for a cold start: every first touch of a patch is
+    then a synchronous small read. One sequential pass at disk bandwidth
+    replaces thousands of those. The bytes are read into one reused buffer and
+    discarded — the page cache keeps them, the process does not.
+
+    Returns:
+        ``(bytes_read, seconds)``.
+    """
+    started = time.perf_counter()
+    total = 0
+    buffer = bytearray(block_bytes)
+    view = memoryview(buffer)
+    for path in paths:
+        if not path or not Path(path).exists():
+            continue
+        with open(path, "rb", buffering=0) as handle:
+            while n := handle.readinto(view):
+                total += n
+    return total, time.perf_counter() - started
+
+
 class BandGeometryError(ValueError):
     """The cube, the wavelength vector and ``data.num_bands`` do not agree."""
 
@@ -291,17 +346,27 @@ def band_geometry(cfg: DataConfig | Any, store: DataStore) -> dict[str, int]:
     there; it earns its place on the retained band-selection arms, where the
     three files genuinely differ and are produced by three separate steps.
 
+    A **pre-sliced** cube (``scripts/build_presliced_dataset.py``) stores only
+    its k bands, so all four counts agree at k and the run would otherwise look
+    like the full acquired cube. Its ``band_axis.json`` names the axis it was cut
+    from, and when that file sits next to ``patches.npy`` the result gains
+    ``"acquired"`` — the source axis's band count — so the run reports itself as
+    the reduced arm it is.
+
     Args:
         cfg: The ``data`` config group.
         store: A store with patches and wavelengths already loaded.
 
     Returns:
-        ``{"stored": …, "selected": …, "wavelengths": …, "configured": …}``.
+        ``{"stored": …, "selected": …, "wavelengths": …, "configured": …}``, plus
+        ``"acquired"`` for a pre-sliced cube.
 
     Raises:
-        BandGeometryError: Any two of the four disagree.
+        BandGeometryError: Any two of the four disagree, or a pre-sliced cube's
+            provenance does not describe the cube it sits beside.
     """
     stored = int(store.require_patches().shape[1])
+    acquired = _presliced_source_bands(cfg, stored)
     n_wl = int(store.require_wavelengths().numel())
     configured = int(cfg.num_bands)
 
@@ -331,12 +396,41 @@ def band_geometry(cfg: DataConfig | Any, store: DataStore) -> dict[str, int]:
             "Branch D's λ windows — is built from that vector, so a mismatch builds a model "
             "that describes different bands from the ones it reads."
         )
-    return {
+    geometry = {
         "stored": stored,
         "selected": selected,
         "wavelengths": n_wl,
         "configured": configured,
     }
+    if acquired is not None:
+        geometry["acquired"] = acquired
+    return geometry
+
+
+def acquired_bands(geometry: dict[str, int]) -> int:
+    """Bands on the acquired axis — the source cube's for a pre-sliced one."""
+    return int(geometry.get("acquired", geometry["stored"]))
+
+
+def _presliced_source_bands(cfg: DataConfig | Any, stored: int) -> int | None:
+    """The source band count a pre-sliced cube's ``band_axis.json`` records, or ``None``."""
+    from spectralquadnet.data.prep.preslice import BAND_AXIS_FILE
+
+    path = Path(str(cfg.patches_data)).parent / BAND_AXIS_FILE
+    if not path.exists():
+        return None
+    try:
+        axis = json.loads(path.read_text())
+        source = int(axis["source_n_bands"])
+        n_kept = len(axis["source_band_indices"])
+    except (ValueError, KeyError, TypeError) as exc:
+        raise BandGeometryError(f"{path} is not a readable band-axis record: {exc}") from exc
+    if n_kept != stored or not 0 < stored <= source:
+        raise BandGeometryError(
+            f"{path} records {n_kept} of {source} source bands but the cube beside it "
+            f"stores {stored}; the provenance does not describe this cube."
+        )
+    return source
 
 
 #: Largest disagreement, in nm, between an index file's claimed wavelengths and

@@ -80,6 +80,25 @@ PROTOCOL_ARMS: tuple[ProtocolArm, ...] = (
 )
 
 
+def arms_for(data_prefix: str = "refl215") -> tuple[ProtocolArm, ...]:
+    """:data:`PROTOCOL_ARMS` on another cube: ``<prefix>_grouped`` / ``<prefix>_stratified``.
+
+    The arms are the protocol; the data prefix only says which cube both of
+    them read, so the two can never be run on different ones. ``refl215`` is
+    the primary 215-band cube; ``ablation/u430k32`` the pre-sliced 32-band one
+    a Kaggle session trains on.
+    """
+    return tuple(
+        ProtocolArm(
+            name=arm.name,
+            data_config=f"{data_prefix}_{arm.name}",
+            folds=arm.folds,
+            note=arm.note,
+        )
+        for arm in PROTOCOL_ARMS
+    )
+
+
 def build_specs(
     output_root: str | Path,
     config: str = DEFAULT_CONFIG,
@@ -122,6 +141,7 @@ def build_baseline_comparison_specs(
     output_root: str | Path,
     seeds: tuple[int, ...] = PROTOCOL_SEEDS,
     experiment: str = "protocol_baseline",
+    data_config: str | None = None,
 ) -> list[RunSpec]:
     """The audited architecture under the *same* protocol as the replacement.
 
@@ -131,6 +151,9 @@ def build_baseline_comparison_specs(
     folds and the same seeds — the only difference being the architecture and
     the curriculum. That is `quadnet_full256` with `pipeline=three_stage`, not
     the frozen audited replica, whose split and band count would vary too.
+
+    ``data_config`` puts the control on the same cube as the swept arms when
+    that is not the control config's default (the pre-sliced Kaggle cube).
     """
     root = Path(output_root) / experiment
     return [
@@ -140,7 +163,11 @@ def build_baseline_comparison_specs(
             fold=fold,
             seed=seed,
             config=CONTROL_CONFIG,
-            overrides=("pipeline=three_stage",),
+            overrides=(
+                ("pipeline=three_stage",)
+                if data_config is None
+                else ("pipeline=three_stage", f"data={data_config}")
+            ),
             output_dir=str(root / f"quadnet_three_stage__f{fold}_s{seed}"),
         )
         for fold in PROTOCOL_FOLDS

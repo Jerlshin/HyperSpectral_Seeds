@@ -1,0 +1,5 @@
+# Empty on purpose: the experiment's own inline `runtime:` block and the
+# RuntimeConfig schema defaults stand. This entry exists so a hardware profile
+# can be selected as a normal group override — `runtime=kaggle_t4x2` — and be
+# merged after the experiment's inline values. Do not add `base_runtime` to a
+# `defaults` list here: re-merging the schema would reset the inline values.

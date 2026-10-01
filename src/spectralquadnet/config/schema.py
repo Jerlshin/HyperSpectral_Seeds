@@ -649,6 +649,13 @@ class RuntimeConfig:
     #: far more often than the training ones. ``-1`` follows ``num_workers``
     #: capped at 4.
     eval_num_workers: int = -1
+    #: Read the patch cube (and fill map) through once at startup so every
+    #: random-access read afterwards is a page-cache hit. ``auto`` does it on
+    #: CUDA when the files take at most half the machine's RAM — a pre-sliced
+    #: cube on a Kaggle T4 box (2.3 GB of ~30 GB), never the 30 GB full cube on
+    #: a laptop. ``on``/``off`` force it. Under DDP only local rank 0 reads;
+    #: the page cache is shared by every process on the host.
+    prewarm_cache: str = "auto"
 
     # ── Kernel and graph selection ────────────────────────────────────
     #: ``auto`` compiles on CUDA and leaves Metal in eager mode — measured on
@@ -726,6 +733,14 @@ class RuntimeConfig:
     sync_batchnorm: bool = True
     #: NCCL/gloo rendezvous timeout, seconds.
     dist_timeout_s: int = 1800
+
+    # ── Checkpointing ─────────────────────────────────────────────────
+    #: Write the full training state (``last_stage1.pth``: weights, EMA,
+    #: optimiser, scheduler, scaler, counters) every N epochs, on a background
+    #: thread, so an interrupted single-stage run resumes where it stopped
+    #: instead of being mistaken for a finished one. ``0`` writes it only when
+    #: the stage ends. See :mod:`spectralquadnet.engine.resume`.
+    checkpoint_every: int = 1
 
     # ── Memory ────────────────────────────────────────────────────────
     #: Release the caching allocator's free blocks every N epochs. 0 disables

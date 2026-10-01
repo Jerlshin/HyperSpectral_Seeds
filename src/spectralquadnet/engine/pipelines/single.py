@@ -4,7 +4,9 @@ Builds the loaders the collapsed curriculum needs, runs it, and hands the best
 checkpoint to the final evaluation. Auto-resume is the same mechanism the
 three-stage pipeline uses — a completed run is detected by its stage-1
 checkpoint and skipped straight to reporting — so pointing ``output_dir`` at a
-finished run re-scores it rather than retraining it.
+finished run re-scores it rather than retraining it. A run that was
+*interrupted* mid-stage has an unfinished ``last_stage1.json`` and continues
+from ``last_stage1.pth`` instead (see :mod:`spectralquadnet.engine.resume`).
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from spectralquadnet.data.datasets import RiceSeedDataset
 from spectralquadnet.data.loaders import build_eval_loader, build_train_loader
 from spectralquadnet.data.samplers import ClassBalancedBatchSampler
 from spectralquadnet.engine.checkpoint import load_ckpt, stage_ckpt_path, stage_exists
+from spectralquadnet.engine.resume import resumable_state_path, stage_interrupted
 from spectralquadnet.engine.stages.final_eval import final_evaluation
 from spectralquadnet.engine.stages.single_stage import run_single_stage
 from spectralquadnet.tracking.global_step import stage_tracker
@@ -33,11 +36,15 @@ def run(ctx: RunContext) -> None:
     trk = ctx.tracker
     ckpt = stage_ckpt_path(cfg, 1)
 
-    if stage_exists(cfg, 1):
+    if stage_exists(cfg, 1) and not stage_interrupted(cfg, 1):
         trk.log_message("[SKIP] Single stage → loading checkpoint", level="plain")
         load_ckpt(ckpt, ctx.model, ctx.ema, ctx.device)
     else:
-        trk.log_message("[RUN] Single stage", level="plain")
+        resume_from = resumable_state_path(cfg, 1)
+        trk.log_message(
+            "[RUN] Single stage" + (f" — resuming from {resume_from}" if resume_from else ""),
+            level="plain",
+        )
         train_ldr = _train_loader(ctx)
         select_ldr = _select_loader(ctx)
         supcon_ldr = _supcon_loader(ctx) if int(cfg.single.supcon_epochs) > 0 else None
@@ -60,6 +67,7 @@ def run(ctx: RunContext) -> None:
             dist=ctx.dist,
             train_module=ctx.train_module,
             supcon_ldr=supcon_ldr,
+            resume_from=resume_from,
         )
         trk.log_message(f"Single stage → best {ctx.select_split} F1={best_select_f1:.4f}")
         trk.log_message("Reloading best checkpoint ...")

@@ -41,7 +41,13 @@ from spectralquadnet.data.loaders import (
     build_split_bundle,
     standardised_morphometrics,
 )
-from spectralquadnet.data.mmap_store import DataStore, band_geometry
+from spectralquadnet.data.mmap_store import (
+    DataStore,
+    acquired_bands,
+    band_geometry,
+    prewarm_page_cache,
+    should_prewarm,
+)
 from spectralquadnet.models.ema import ModelEMA
 from spectralquadnet.models.registry import build_model, count_parameters, parameter_breakdown
 from spectralquadnet.reporting.session import SessionMap
@@ -140,7 +146,7 @@ class RunContext:
             "parameter_breakdown": parameter_breakdown(self.model),
             "split_report": self.splits.report.as_dict(),
             "band_geometry": dict(self.band_geometry),
-            "band_selection": self.band_geometry["selected"] != self.band_geometry["stored"],
+            "band_selection": self.band_geometry["selected"] != acquired_bands(self.band_geometry),
         }
 
 
@@ -153,13 +159,19 @@ def describe_band_geometry(geometry: dict[str, int]) -> str:
     primary path prints that there is none.
     """
     stored, selected = geometry["stored"], geometry["selected"]
-    if selected == stored:
+    acquired = acquired_bands(geometry)
+    if selected == acquired:
         return (
             f"Spectral: {selected} bands — the full acquired cube, no band selection "
             "(primary methodology)"
         )
+    via = (
+        f"a pre-sliced cube (band_axis.json) of {stored}"
+        if acquired != stored
+        else "data.band_indices_path"
+    )
     return (
-        f"Spectral: {selected} of {stored} bands — REDUCED arm via data.band_indices_path. "
+        f"Spectral: {selected} of {acquired} bands — REDUCED arm via {via}. "
         "This is the retained band-selection ablation pathway, not the primary protocol."
     )
 
@@ -190,7 +202,17 @@ def build_run_context(
     backend_notes = configure_backend(device, cfg.runtime)
 
     store = DataStore.from_config(cfg.data, device)
-    gb_on_disk = store.require_patches().size * 4 / 1e9
+    gb_on_disk = store.require_patches().nbytes / 1e9
+    cached = [p for p in (store.patches_path, store.masks_path) if p]
+    if dist.local_rank == 0 and should_prewarm(
+        str(getattr(cfg.runtime, "prewarm_cache", "auto")), cached, device
+    ):
+        n_bytes, seconds = prewarm_page_cache(cached)
+        tracker.log_message(
+            f"[DATA] ✓ Page cache warmed: {n_bytes / 1e9:.2f} GB in {seconds:.1f} s "
+            f"({n_bytes / 1e6 / max(seconds, 1e-6):.0f} MB/s)",
+            level="plain",
+        )
     vram = (
         f" | {torch.cuda.mem_get_info(device)[0] / 1e9:.1f} GB VRAM free"
         if device.type == "cuda"

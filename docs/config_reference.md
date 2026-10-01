@@ -14,7 +14,7 @@ the rest of this suite.
 
 ## `data` — `configs/data/*.yaml`
 
-Five configs ship, in two clearly separated tiers.
+Seven configs ship, in two clearly separated tiers.
 
 **Primary — the 215-band white-tile reflectance cube in `./dataset/`, no band selection:**
 
@@ -35,6 +35,8 @@ this axis by `scripts/write_finalist_bands.py`.
 | `spa40_grouped.yaml` | 40 | `grouped` | A2's reduced arm (SPA subset of the former 256-band SNV cube; its `patches_spa_40b.npy` must be rebuilt by `scripts/select_bands.py`). |
 | `spa40_stratified.yaml` | 40 | `stratified` | Its leaky twin, if A1 is re-run at k = 40. |
 | `spa40_audited.yaml` | 40 | `stratified` | **Frozen.** Reproduces the audited run's input and partition exactly; composed only by `experiment/quadnet_audited` and the golden capture. Do not tidy it. |
+| `u430k32_grouped.yaml` | 32 | `grouped` | The evenly spaced 32-band finalist (`uniform430_k32`) read from the **pre-sliced** float16 cube in `./dataset_u430k32/` (`scripts/build_presliced_dataset.py`, 2.3 GB) — the Kaggle input. Its `band_axis.json` makes the run report "32 of 215 bands", not the full cube. `gain_path` empty (not uploaded). |
+| `u430k32_stratified.yaml` | 32 | `stratified` | Its patch-level contrast twin, identical but for `split_scheme`. |
 
 Values below are `refl215_grouped.yaml`'s; the last column gives the frozen replica's, which is
 what the pre-refactor `CONFIG` keys map onto in `config_migration_table.md`.
@@ -246,7 +248,7 @@ number from `val` (§4.4).
 
 | Key | Default | Meaning |
 |---|---|---|
-| `backend` | `"console"` | `none` / `console` / `wandb` / `tensorboard` / `multi` |
+| `backend` | `"console"` | `none` / `console` / `wandb` / `tensorboard` / `jsonl` / `multi` |
 | `project` | `None` | W&B project name |
 | `entity` | `None` | W&B entity |
 | `log_dir` | `None` | TensorBoard log directory |
@@ -257,6 +259,11 @@ number from `val` (§4.4).
 
 `TrackingConfig` carries real defaults (rather than `MISSING`) because a run with no tracking
 backend configured is a valid, common case.
+
+`jsonl` appends every tracker call — scalars, per-epoch rows, tables (per-class F1, the session
+breakdown), banners, notices — as one strict-JSON object per line to
+`${output_dir}/metrics.jsonl` (`tracking/jsonl_tracker.py`). `tracking=console_jsonl` is
+`multi` over `[console, jsonl]`, the headless-box default the Kaggle commands use.
 
 ## `runtime` — execution knobs (`cfg.runtime`, defaulted, not YAML-required)
 
@@ -272,6 +279,7 @@ a throughput knob that must never change a reported metric — a config that nev
 | `persistent_workers` | `-1` | keep workers alive between epochs; `-1` follows `num_workers > 0` |
 | `prefetch_factor` | `4` | batches each worker runs ahead |
 | `eval_num_workers` | `-1` | evaluation-loader worker count; `-1` follows `num_workers`, capped at 4 |
+| `prewarm_cache` | `"auto"` | read the cube and fill map once at startup so random reads hit the page cache; `auto` → CUDA and the files ≤ ½ RAM; under DDP local rank 0 only |
 | `compile` | `"auto"` | `torch.compile`; `auto` → on for CUDA, off for Metal/CPU |
 | `compile_backend` | `"inductor"` | passed to `torch.compile(backend=...)` |
 | `compile_mode` | `"default"` | passed to `torch.compile(mode=...)` |
@@ -285,9 +293,20 @@ a throughput knob that must never change a reported metric — a config that nev
 | `multi_gpu` | `"auto"` | `auto`/`ddp`/`off` DDP activation |
 | `sync_batchnorm` | `true` | convert BatchNorm → SyncBatchNorm under DDP |
 | `dist_timeout_s` | `1800` | NCCL/gloo rendezvous timeout |
+| `checkpoint_every` | `1` | epochs between full training-state writes (`last_stage1.pth` + `last_stage1.json`, background thread); an interrupted single-stage run resumes from it; `0` → only at the stage's end |
 | `empty_cache_interval` | `0` | periodic allocator sweep, epochs; `0` disables |
 | `progress` | `"auto"` | per-epoch console line; `off` suppresses it |
 | `diagnostics_interval` | `50` | epoch stride for the hardest-class block and branch-influence ablation |
+
+### Runtime profiles — `configs/runtime/*.yaml`
+
+`seednet_full256` and `quadnet_full256` list `/runtime: default` **after** `_self_`, so a
+profile selected as `runtime=<name>` is merged after their inline `runtime:` block and wins.
+`default.yaml` is empty (the inline block stands).
+
+| Profile | For | What it sets |
+|---|---|---|
+| `kaggle_t4x2` | Kaggle "GPU T4 x2", launched by `torchrun --nproc_per_node=2` | `amp_dtype: fp16` (Turing has fp16 Tensor Cores and no bf16 path — see the file for the trade-off), `multi_gpu: ddp`, `sync_batchnorm: true`, `num_workers: 4` (→ 2 per rank) / `eval_num_workers: 2`, `prewarm_cache: on`, `checkpoint_every: 1` |
 
 ## Root — `configs/experiment/*.yaml`
 

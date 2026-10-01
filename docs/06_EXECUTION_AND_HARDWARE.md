@@ -465,6 +465,7 @@ same function.
 |---|---|
 | Batch size | Global batch stays the configured one: `batch // world_size`, refused (`ValueError`) rather than rounded if it does not divide evenly. |
 | Balanced batches | `ClassBalancedBatchSampler` is given an explicit `seed` under DDP so **every rank composes the identical global batch**; `DistributedBatchShardSampler` then gives each rank a contiguous slice of it, preserving $n_{\text{cls}}\times n_{\text{spc}}$ balance across the shards rather than each rank drawing an independent (and therefore larger-effective-batch) sample. `DistributedIndexShardSampler` does the analogous round-robin split for Phase 3's flat weighted stream. |
+| Shuffle | The training `DistributedSampler` is re-seeded every epoch (`set_epoch`, called by both epoch loops), so each epoch draws a new permutation; without it every epoch replays epoch 0's shard order. |
 | Gradients | DDP's mean all-reduce over equal shards is exactly the global-batch gradient. |
 | Evaluation | Sharded via `DistributedSampler(shuffle=False, drop_last=False)` — which pads an unevenly-divisible split by repeating early samples — then re-joined by `gather_concat` (a two-phase all-gather: exchange lengths, pad to the max, gather, trim back to true length), so a split whose size doesn't divide by `world_size` is still scored on its true size. Macro-F1 is computed once, on rank 0, over the whole split — never on a shard. |
 | Checkpoints, console | Rank 0 only. `save_ckpt` is a no-op on every other rank (every rank holds identical weights, so a second writer would only race the first); other ranks get a `NullTracker`. |
@@ -487,6 +488,43 @@ architecture level in §3.8. The execution-facing rules:
   nothing exists on disk.
 - `save_ckpt`/`load_ckpt` both route through `unwrap_model` (§6.3) so a compiled/DDP-wrapped run
   writes and reads the same unprefixed key schema as a plain one.
+
+### Mid-stage resume (`engine/resume.py`, single-stage curriculum)
+
+The best-checkpoint pair is written at the first improvement — usually epoch 1 — so on its own
+it cannot tell a finished stage from an interrupted one: a run killed at epoch 90 of 150 used to
+restart straight into the final evaluation. The single stage now also keeps:
+
+- `last_stage1.json` — `{"epoch", "finished", "best_f1", "no_improve", "saved_at"}`, written with
+  `finished: false` **before** training starts and rewritten after every state bundle.
+- `last_stage1.pth` — weights, EMA shadow and its update count, optimiser, LR scheduler, loss
+  scaler, early-stopping counters and RNG states, every `runtime.checkpoint_every` epochs and at
+  the stage's end (`finished: true`).
+
+`pipelines/single.py` skips to reporting only when the best pair exists **and**
+`last_stage1.json` is absent (a run from before this change) or finished; otherwise it resumes
+from `last_stage1.pth` at the next epoch, or restarts the stage if no bundle was written yet.
+The snapshot is a device→host copy on the training thread (milliseconds at this model size);
+serialisation and the disk write run on a background thread, one in flight at a time, each file
+written to a temporary name and `os.replace`d, the sidecar after the bundle. A failed background
+write is re-raised at the next submit, never dropped. Rank 0 writes; every rank reads on resume.
+The three-stage pipeline keeps the stage-granular resume above.
+
+## 6.5a Kaggle T4 x2 (`runtime=kaggle_t4x2`)
+
+Copy-paste notebook cells are in the README (§10 · Kaggle — GPU T4 x2). The profile's choices:
+
+| Knob | Value | Why |
+|---|---|---|
+| `amp_dtype` | `fp16` | Turing (sm_75) has fp16 Tensor Cores and no bf16 path; bf16 autocast there is emulated and slower than fp32. The fp16 NaN cascade of the audited Stage 1 ran through GradNorm, which the single stage does not use; non-finite batches are skipped and counted (`train/skipped_batches`). Recorded in the banner and config; `runtime.amp_dtype=bf16` reverts it. |
+| `multi_gpu` / `sync_batchnorm` | `ddp` / `true` | Two ranks computing the one-GPU function (§6.4); a missing `torchrun` fails at startup instead of idling a GPU. |
+| `num_workers` / `eval_num_workers` | `4` / `2` | Divided per rank → 2 + 2 workers per T4 on the box's 4 vCPUs. |
+| `prewarm_cache` | `on` | The 2.3 GB pre-sliced cube is read sequentially once (local rank 0) so every later random read is a page-cache hit. |
+| `checkpoint_every` | `1` | Resume survives the session cap. |
+
+The input is the pre-sliced 32-band cube (`scripts/build_presliced_dataset.py`,
+`data=ablation/u430k32_{grouped,stratified}`), whose `band_axis.json` makes `band_geometry`
+report `acquired: 215` — the run is labelled a reduced arm, never the full cube.
 
 ---
 

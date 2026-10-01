@@ -109,6 +109,13 @@ def band_augmentation_widths(num_bands: int) -> dict[str, int]:
     }
 
 
+def _as_float32(array: npt.NDArray[Any]) -> npt.NDArray[np.float32]:
+    """An owned float32 copy of ``array`` — a plain copy when it already is float32."""
+    if array.dtype == np.float32:
+        return np.array(array)
+    return np.asarray(array, dtype=np.float32)
+
+
 def _band_selection(data_cfg: DataConfig | Any) -> npt.NDArray[Any] | None:
     """The band indices ``data.band_indices_path`` names, or ``None``.
 
@@ -383,11 +390,16 @@ class RiceSeedDataset(Dataset):  # type: ignore[type-arg]
         bands' pages. So a 40-of-256 run reads ~16% of the bytes a full read
         would, which is what makes band subsetting off the 36 GB cube practical
         rather than merely possible.
+
+        A float16 cube (``scripts/build_presliced_dataset.py``) is widened to
+        float32 here, as it leaves the mapping, so every augmentation and every
+        model input is float32 whatever the storage precision. A float32 cube
+        takes the original copy, byte for byte.
         """
         view = self.patches[row]
         if self._band_idx is None:
-            return np.array(view)
-        return np.asarray(view[self._band_idx])
+            return _as_float32(view)
+        return _as_float32(view[self._band_idx])
 
     def _load_mask(self, row: int) -> torch.Tensor:
         """The ``(1, H, W)`` fill map for store row ``row``, as float32."""
@@ -595,11 +607,13 @@ class RiceSeedDataset(Dataset):  # type: ignore[type-arg]
         sequence for bit-identical output.
         """
         raw_rows = self.indices[indices]
-        view = self.patches[raw_rows]
         if self._band_idx is None:
-            raw_patches = np.array(view)
+            raw_patches = _as_float32(self.patches[raw_rows])
         else:
-            raw_patches = np.asarray(view)[:, self._band_idx]
+            # One outer-product index, so only the selected bands' pages are
+            # read — `patches[rows][:, bands]` would page in every stored band
+            # of every row first and discard most of them.
+            raw_patches = _as_float32(self.patches[np.ix_(raw_rows, self._band_idx)])
 
         raw_masks = np.array(self.masks[raw_rows]) if self.masks is not None else None
 

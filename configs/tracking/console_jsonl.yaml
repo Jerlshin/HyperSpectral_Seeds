@@ -1,0 +1,9 @@
+# The headless-box default (Kaggle, SSH sweeps): the append-only console lines
+# (mirrored into `output_dir/training.log`) AND the JSON-lines record in
+# `output_dir/metrics.jsonl`, from the same calls.
+defaults:
+  - base_tracking
+  - _self_
+
+backend: multi
+backends: [console, jsonl]

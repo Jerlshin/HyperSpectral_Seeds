@@ -185,6 +185,20 @@ def _resolve_step_scalars(loss: torch.Tensor, accuracy: torch.Tensor) -> tuple[f
     return float(values[0]), float(values[1])
 
 
+def _advance_sampler_epoch(loader: Any, epoch: int) -> None:
+    """Re-seed a ``DistributedSampler``'s shuffle for this epoch.
+
+    ``DistributedSampler`` permutes with ``seed + epoch`` and only learns the
+    epoch through ``set_epoch``; without the call every epoch of a DDP run
+    replays epoch 0's order and each rank sees the same shard of the same
+    batches all run long. A single-process loader has no such sampler and the
+    balanced batch samplers advance their own stream, so both are untouched.
+    """
+    sampler = getattr(loader, "sampler", None)
+    if isinstance(sampler, torch.utils.data.DistributedSampler):
+        sampler.set_epoch(int(epoch))
+
+
 def _batch_accuracy(logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
     """Top-1 accuracy over the batch, left on the device as a 0-dim tensor."""
     with torch.no_grad():
@@ -238,6 +252,7 @@ def train_one_epoch(
         ``(mean_loss, mean_accuracy)`` over the epoch.
     """
     started = time.perf_counter()
+    _advance_sampler_epoch(loader, current_ep)
     model.train()
     # `model` may be a DDP and/or `torch.compile` wrapper; the gradient
     # grouping helpers below match on **unprefixed** parameter names
@@ -488,6 +503,7 @@ def train_one_epoch_sam(
         first (ascent) step's forward pass.
     """
     started = time.perf_counter()
+    _advance_sampler_epoch(loader, current_ep)
     torch.set_default_dtype(torch.float32)
     model.train()
     core = unwrap_model(model)  # see `train_one_epoch` — grouping needs raw names

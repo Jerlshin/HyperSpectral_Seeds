@@ -346,6 +346,8 @@ def test_the_band_widths_are_a_fixed_share_of_the_spectral_axis() -> None:
         ("data=ablation/spa40_grouped", 40),
         ("data=ablation/spa40_stratified", 40),
         ("data=ablation/spa40_audited", 40),
+        ("data=ablation/u430k32_grouped", 32),
+        ("data=ablation/u430k32_stratified", 32),
         ("data=refl215_grouped", 215),
         ("data=refl215_stratified", 215),
     ],

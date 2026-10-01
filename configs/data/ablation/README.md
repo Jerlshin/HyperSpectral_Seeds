@@ -10,6 +10,8 @@ rather than an inherited assumption.
 | `spa40_grouped.yaml` | 40 | `grouped` | A2's reduced arm — the SPA subset of the former 256-band SNV cube under the primary protocol (differs from the reflectance primary in radiometry too; `patches_spa_40b.npy` must be rebuilt). |
 | `spa40_stratified.yaml` | 40 | `stratified` | The reduced arm's leaky twin. Only needed if A1 is re-run at k = 40. |
 | `spa40_audited.yaml` | 40 | `stratified` | Frozen. Reproduces the *audited run's* input and partition exactly, and is what `configs/experiment/quadnet_audited.yaml` and the golden regression gates compose. Do not tidy it. |
+| `u430k32_grouped.yaml` | 32 | `grouped` | The evenly spaced 32-band finalist from a **pre-sliced** float16 cube (`./dataset_u430k32/`, 2.3 GB, `scripts/build_presliced_dataset.py`) — what a Kaggle T4 x2 session trains on. `band_axis.json` records the 215-band axis it was cut from, so the run reports itself as reduced. |
+| `u430k32_stratified.yaml` | 32 | `stratified` | Its patch-level contrast twin. |
 
 Selecting one is explicit at the command line, which is the point:
 

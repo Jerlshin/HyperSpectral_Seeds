@@ -33,6 +33,9 @@ defaults:
   - /evaluation: held_out_once
   - /tracking: console
   - _self_
+  # After `_self_`, so `runtime=<profile>` (e.g. `runtime=kaggle_t4x2`) overrides the
+  # inline `runtime:` block below. `default` is empty: the inline block stands.
+  - /runtime: default
 
 pipeline: single
 

@@ -1,0 +1,63 @@
+# ══════════════════════════════════════════════════════════════════════
+#  Runtime profile — Kaggle "GPU T4 x2" (2 x Tesla T4 16 GB, sm_75; 4 vCPU;
+#  ~29 GB RAM). Select it on top of any experiment:
+#
+#      torchrun --standalone --nproc_per_node=2 train.py runtime=kaggle_t4x2
+#
+#  The experiments list `/runtime: default` after `_self_`, so this file is
+#  merged after their inline `runtime:` block and its values win. It lists no
+#  `base_runtime` default for the same reason `default.yaml` does not: the
+#  typed schema is already in place and re-merging it would reset values.
+#
+#  Launched by torchrun, the run is DDP with SyncBatchNorm: the global batch is
+#  unchanged and split 64/64, and BatchNorm statistics are all-reduced, so two
+#  T4s train the same function one would (utils/distributed.py).
+# ══════════════════════════════════════════════════════════════════════
+# ── Precision — the one numeric choice this profile makes ─────────────
+# Turing has fp16 Tensor Cores and no bf16 path at all: bf16 autocast on a T4 is
+# emulated and slower than fp32, so the shipped `bf16` would buy stability with
+# the whole speed-up. fp16 + an enabled GradScaler is the T4's native AMP. The
+# model carries dtype-aware floors for fp16 (tests/unit/test_amp_precision.py),
+# the ArcFace margin algebra runs in fp32 regardless, GradNorm — the feedback
+# loop that turned an fp16 overflow into a dead run in the audited Stage 1 — is
+# off in the single-stage curriculum, and a non-finite batch is skipped and
+# counted in `train/skipped_batches`. The dtype is printed in the startup banner
+# and recorded in the config, because it is part of what the number means. If
+# `train/skipped_batches` climbs, run `runtime.amp_dtype=bf16` instead.
+amp_dtype: fp16
+
+# ── Host feed: 4 vCPUs shared by two ranks ────────────────────────────
+# Worker counts are per job and divided by the world size: 4 -> 2 per rank,
+# 2 eval workers. More would oversubscribe four cores with two trainer
+# processes already on them.
+num_workers: 4
+eval_num_workers: 2
+pin_memory: 1
+persistent_workers: 1
+prefetch_factor: 4
+# The pre-sliced cube (2.3 GB) fits in the page cache many times over; one
+# sequential read at startup turns every later random read into a cache hit.
+prewarm_cache: "on"
+
+# ── Kernels ───────────────────────────────────────────────────────────
+compile: auto            # inductor on CUDA
+cudnn_benchmark: true
+fused_optimizer: auto    # fused AdamW on CUDA
+allow_tf32: false        # no TF32 on Turing anyway
+channels_last: false
+
+# ── Topology ──────────────────────────────────────────────────────────
+# `ddp` rather than `auto`: under this profile a missing launcher is a mistake
+# (one T4 idle for the whole session), so it fails at startup instead.
+multi_gpu: ddp
+sync_batchnorm: true
+dist_timeout_s: 1800
+
+# ── Checkpoints ───────────────────────────────────────────────────────
+# Full training state every epoch, written off the training thread
+# (engine/resume.py): a session that hits Kaggle's time limit resumes where it
+# stopped instead of being mistaken for a finished run.
+checkpoint_every: 1
+
+progress: auto
+diagnostics_interval: 25

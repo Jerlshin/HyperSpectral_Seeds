@@ -1,0 +1,54 @@
+# ══════════════════════════════════════════════════════════════════════
+#  ABLATION ARM — NOT the primary path. The Kaggle / remote-GPU input.
+#
+#  The evenly spaced 32-band finalist (`outputs/band_finalists/uniform430_k32`,
+#  432–1006 nm, cut from the 215-band reflectance axis) under the primary
+#  protocol (grouped + calib), read from a PRE-SLICED cube: a directory that
+#  holds only those 32 bands, as float16 — 2.3 GB instead of the 30.4 GB
+#  215-band cube. Build it (and its checksummed manifest) with
+#
+#      python scripts/build_presliced_dataset.py          # -> ./dataset_u430k32
+#
+#  Numerically this is `data=refl215_grouped` + `data.band_indices_path=
+#  outputs/band_finalists/uniform430_k32.npy` with the reflectance stored at
+#  float16 (max relative rounding 4.9e-4, measured and recorded in
+#  `dataset_u430k32/band_axis.json`). That file is also what makes the run say
+#  "REDUCED arm — 32 of 215 bands" at startup and record
+#  `"band_selection": true`; a pre-sliced cube read in full would otherwise
+#  pass for the full acquired spectrum.
+#
+#      python train.py data=ablation/u430k32_grouped
+# ══════════════════════════════════════════════════════════════════════
+defaults:
+  - base_data
+  - _self_
+
+# ── Paths (relative to the process CWD) ────────────────────────────────
+# On Kaggle, symlink the attached dataset here:
+#   ln -s /kaggle/input/<dataset-slug> dataset_u430k32
+patches_data: ./dataset_u430k32/patches.npy
+labels_path: ./dataset_u430k32/labels.npy
+wavelength_path: ./dataset_u430k32/wavelengths.csv
+groups_path: ./dataset_u430k32/groups.npy
+scan_table_path: ./dataset_u430k32/scan_table.csv
+masks_path: ./dataset_u430k32/masks.npy
+morphology_path: ./dataset_u430k32/morphology.npy
+
+# The leakage probe's input is left out of the upload by default. Build with
+# `--with-gain` and set `data.gain_path=./dataset_u430k32/gain.npy` to run it.
+gain_path: ""
+
+# ── Geometry — `band_augmentation_widths(32)` ──────────────────────────
+num_bands: 32
+num_classes: 90
+noise_std: 0.02
+max_cutout_bands: 2
+cutmix_bands: 6
+cutmix_spatial: 24
+
+# ── Split protocol — identical to refl215_grouped ─────────────────────
+split_scheme: grouped
+split_eval_frac: 0.30
+split_fold: 0
+single_group_policy: error
+calib_frac: 0.15

@@ -64,6 +64,14 @@ from spectralquadnet.engine.diagnostics import (
     should_render_details,
 )
 from spectralquadnet.engine.evaluate import evaluate
+from spectralquadnet.engine.resume import (
+    AsyncCheckpointWriter,
+    last_ckpt_path,
+    last_meta_path,
+    mark_stage_started,
+    restore_training_state,
+    snapshot_training_state,
+)
 from spectralquadnet.engine.train_epoch import train_one_epoch
 from spectralquadnet.losses.contrastive import SupConLoss
 from spectralquadnet.losses.focal import FocalLoss
@@ -111,6 +119,7 @@ def run_single_stage(
     dist: DistContext | None = None,
     train_module: nn.Module | None = None,
     supcon_ldr: DataLoader[Any] | None = None,
+    resume_from: str | None = None,
 ) -> float:
     """Run the single-stage curriculum and return the best selection macro-F1.
 
@@ -128,6 +137,9 @@ def run_single_stage(
             same module under a DDP and/or ``torch.compile`` wrapper.
         supcon_ldr: Class-balanced loader for the optional Phase B tail.
             Required when ``single.supcon_epochs > 0``.
+        resume_from: A ``last_stage1.pth`` training state to continue from —
+            see :mod:`spectralquadnet.engine.resume`. The full state is written
+            every ``runtime.checkpoint_every`` epochs regardless.
 
     Returns:
         Best ``max(F1_live, F1_ema)`` on ``select_ldr``.
@@ -174,6 +186,49 @@ def run_single_stage(
     no_improve = 0
     select_split = str(getattr(cfg.evaluation, "select_split", "calib"))
 
+    # Mid-stage resume (engine/resume.py). Marked before the first best
+    # checkpoint can exist, so an interruption at any epoch reads as one.
+    start_ep = 1
+    save_every = max(0, int(getattr(getattr(cfg, "runtime", None), "checkpoint_every", 1)))
+    writer = AsyncCheckpointWriter(enabled=dist.is_main)
+    mark_stage_started(cfg, 1, is_main=dist.is_main)
+    if resume_from is not None:
+        state = restore_training_state(
+            resume_from,
+            model=model,
+            ema=ema,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            scaler=scaler,
+        )
+        start_ep = int(state["epoch"]) + 1
+        best_f1 = float(state.get("best_f1", 0.0))
+        no_improve = int(state.get("no_improve", 0))
+        trk.log_message(
+            f"[RESUME] {resume_from}: epoch {state['epoch']} done, best {select_split} "
+            f"F1={best_f1:.4f}, {no_improve} stale — continuing at epoch {start_ep}",
+            level="warn",
+        )
+
+    def _save_state(ep_done: int, finished: bool) -> None:
+        counters = {"best_f1": best_f1, "no_improve": no_improve, "finished": finished}
+        if dist.is_main:
+            bundle = snapshot_training_state(
+                epoch=ep_done,
+                model=model,
+                ema=ema,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                scaler=scaler,
+                **counters,
+            )
+            writer.submit(
+                bundle,
+                last_ckpt_path(cfg, 1),
+                {"stage": 1, "epoch": ep_done, **counters},
+                last_meta_path(cfg, 1),
+            )
+
     trk.banner(
         f"Single stage — {ep_total} epochs max  (CHANGES §17)",
         [
@@ -198,7 +253,8 @@ def run_single_stage(
     )
 
     trk.progress_start("single", ep_total, "Single")
-    for ep in range(1, ep_total + 1):
+    ep = start_ep - 1
+    for ep in range(start_ep, ep_total + 1):
         ep_started = time.perf_counter()
         on_stride = should_render_details(ep, detail_every)
         tag = epoch_tag(ep, ep_total)
@@ -348,6 +404,9 @@ def run_single_stage(
         if plan is not None and plan.empty_cache_interval and ep % plan.empty_cache_interval == 0:
             release_memory(device)
 
+        if save_every and ep % save_every == 0:
+            _save_state(ep, finished=False)
+
         # Phase B is a fixed-length tail and is not early-stopped: it is 30
         # epochs by construction and stopping it early would confound A6's
         # comparison with a variable budget.
@@ -357,5 +416,9 @@ def run_single_stage(
             )
             break
 
+    # The state the stage ended in, marked finished — the pipeline reads the
+    # flag, not the file's existence, to decide that this stage is complete.
+    _save_state(ep, finished=True)
+    writer.wait()
     trk.progress_stop("single")
     return best_f1

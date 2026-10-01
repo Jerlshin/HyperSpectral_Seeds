@@ -43,6 +43,26 @@ _log = logging.getLogger(__name__)
 DEFAULT_OUTPUT_ROOT = "outputs/experiments"
 
 
+def launcher(python: str | None = None, nproc_per_node: int = 1) -> list[str]:
+    """The argv prefix that starts ``train.py``: the interpreter, or torchrun on it.
+
+    ``python -m torch.distributed.run`` is ``torchrun`` without relying on the
+    console script being on ``PATH`` — it is the same interpreter either way.
+    ``--standalone`` gives each cell its own rendezvous on a free port, so
+    consecutive cells never collide.
+    """
+    python = python or sys.executable
+    if int(nproc_per_node) <= 1:
+        return [python]
+    return [
+        python,
+        "-m",
+        "torch.distributed.run",
+        "--standalone",
+        f"--nproc_per_node={int(nproc_per_node)}",
+    ]
+
+
 @dataclass(frozen=True)
 class RunSpec:
     """One training run: its identity, its overrides and where it writes."""
@@ -59,10 +79,19 @@ class RunSpec:
     def run_name(self) -> str:
         return f"{self.arm}__f{self.fold}_s{self.seed}"
 
-    def command(self, python: str | None = None, train_script: str = "train.py") -> list[str]:
-        """The exact argv this cell runs. Printed so it can be re-run by hand."""
+    def command(
+        self,
+        python: str | None = None,
+        train_script: str = "train.py",
+        nproc_per_node: int = 1,
+    ) -> list[str]:
+        """The exact argv this cell runs. Printed so it can be re-run by hand.
+
+        ``nproc_per_node > 1`` launches the cell under ``torchrun`` (DDP, one
+        process per GPU) — the same ``train.py``, the same overrides.
+        """
         return [
-            python or sys.executable,
+            *launcher(python, nproc_per_node),
             train_script,
             f"--config-name={self.config}",
             *self.overrides,
@@ -72,9 +101,9 @@ class RunSpec:
             f"seed={self.seed}",
         ]
 
-    def shell(self) -> str:
+    def shell(self, nproc_per_node: int = 1) -> str:
         """The command as a copy-pasteable shell string."""
-        return " ".join(shlex.quote(part) for part in self.command())
+        return " ".join(shlex.quote(part) for part in self.command(nproc_per_node=nproc_per_node))
 
     @property
     def is_complete(self) -> bool:
@@ -210,6 +239,8 @@ def execute(
     python: str | None = None,
     train_script: str = "train.py",
     extra_overrides: tuple[str, ...] = (),
+    nproc_per_node: int = 1,
+    stream: bool = False,
 ) -> RunOutcome:
     """Run one cell, capturing its output to ``<output_dir>/sweep.log``.
 
@@ -217,11 +248,17 @@ def execute(
     reliable success signal. The log is kept whether or not the run succeeded —
     a failed cell's traceback is the only thing that explains a hole in the
     table.
+
+    ``stream`` also echoes the cell's output to this process's stdout as it is
+    written — what a notebook cell needs to show progress during a multi-hour
+    sweep, where the log file is out of sight.
     """
     if spec.is_complete:
         return RunOutcome(spec=spec, status="skipped")
 
-    command = spec.command(python=python, train_script=train_script)
+    command = spec.command(
+        python=python, train_script=train_script, nproc_per_node=nproc_per_node
+    )
     command.extend(extra_overrides)
     if dry_run:
         _log.info("[dry-run] %s", " ".join(shlex.quote(c) for c in command))
@@ -232,24 +269,47 @@ def execute(
     log_path = out_dir / "sweep.log"
 
     started = time.perf_counter()
-    with log_path.open("w") as log_file:
+    # Appended, not truncated: a cell that resumes after an interruption keeps
+    # the log of the attempt that was interrupted.
+    with log_path.open("a") as log_file:
         log_file.write(" ".join(shlex.quote(c) for c in command) + "\n\n")
         log_file.flush()
-        completed = subprocess.run(
-            command,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            check=False,
-        )
+        if stream:
+            returncode = _run_streaming(command, log_file)
+        else:
+            returncode = subprocess.run(
+                command,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                check=False,
+            ).returncode
     elapsed = time.perf_counter() - started
 
     return RunOutcome(
         spec=spec,
-        status="completed" if completed.returncode == 0 else "failed",
-        returncode=completed.returncode,
+        status="completed" if returncode == 0 else "failed",
+        returncode=returncode,
         seconds=elapsed,
         log_path=str(log_path),
     )
+
+
+def _run_streaming(command: list[str], log_file: Any) -> int:
+    """Run ``command``, copying each output line to ``log_file`` and to stdout."""
+    with subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    ) as proc:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            log_file.write(line)
+            sys.stdout.write(line)
+        log_file.flush()
+        sys.stdout.flush()
+        return proc.wait()
 
 
 def run_all(
@@ -261,6 +321,8 @@ def run_all(
     train_script: str = "train.py",
     extra_overrides: tuple[str, ...] = (),
     stop_on_failure: bool = False,
+    nproc_per_node: int = 1,
+    stream: bool = False,
 ) -> SweepReport:
     """Execute a list of cells sequentially and report what happened.
 
@@ -272,6 +334,9 @@ def run_all(
     other 59 — but the report names every failure and the CLI exits non-zero
     when any cell failed, so a broken grid cannot be mistaken for a finished
     one.
+
+    ``nproc_per_node > 1`` runs each cell under ``torchrun`` — both GPUs on one
+    cell at a time, which is the "sequential" above applied to a multi-GPU box.
     """
     todo, done = plan(specs, force=force)
     report = SweepReport(experiment=experiment)
@@ -285,6 +350,8 @@ def run_all(
             python=python,
             train_script=train_script,
             extra_overrides=extra_overrides,
+            nproc_per_node=nproc_per_node,
+            stream=stream,
         )
         report.outcomes.append(outcome)
         if outcome.status == "failed":

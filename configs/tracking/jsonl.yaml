@@ -1,0 +1,10 @@
+# Machine-readable run record: every tracker call as one JSON object per line in
+# `output_dir/metrics.jsonl` — scalars, per-epoch rows, tables (per-class F1,
+# the session breakdown), banners and notices. No service, no SDK; read it back
+# with `pandas.read_json(path, lines=True)` or `jq`. Silent on the terminal —
+# use `console_jsonl` to keep the per-epoch lines too.
+defaults:
+  - base_tracking
+  - _self_
+
+backend: jsonl

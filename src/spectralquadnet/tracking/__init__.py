@@ -10,6 +10,8 @@
 ``console``      :class:`~.console_tracker.ConsoleTracker` (default)
 ``wandb``        :class:`~.wandb_tracker.WandbTracker`
 ``tensorboard``  :class:`~.tensorboard_tracker.TensorBoardTracker`
+``jsonl``        :class:`~.jsonl_tracker.JsonlTracker` — every call as a
+                 JSON line in ``output_dir/metrics.jsonl``
 ``multi``        :class:`~.multi_tracker.MultiTracker` over
                  ``cfg.tracking.backends``
 ===============  ==================================================
@@ -20,10 +22,12 @@ never requires ``wandb`` or ``tensorboard``.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from spectralquadnet.tracking.base import ExperimentTracker, NullTracker, flatten_hyperparams
 from spectralquadnet.tracking.console_tracker import ConsoleTracker
+from spectralquadnet.tracking.jsonl_tracker import METRICS_FILE, JsonlTracker
 from spectralquadnet.tracking.multi_tracker import MultiTracker
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -32,6 +36,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 __all__ = [
     "ConsoleTracker",
     "ExperimentTracker",
+    "JsonlTracker",
     "MultiTracker",
     "NullTracker",
     "build_tracker",
@@ -47,7 +52,7 @@ def build_tracker(cfg: ExperimentConfig | Any) -> ExperimentTracker:
     ``log_dir`` interpolates ``${output_dir}``.
 
     Raises:
-        ValueError: The backend name is not one of the five known values, or
+        ValueError: The backend name is not one of the six known values, or
             ``backend=multi`` was selected with an empty ``backends`` list.
     """
     return _build_one(str(cfg.tracking.backend).lower(), cfg)
@@ -81,6 +86,9 @@ def _build_one(name: str, cfg: ExperimentConfig | Any) -> ExperimentTracker:
 
         return TensorBoardTracker(log_dir=tracking.log_dir or f"{cfg.output_dir}/tensorboard")
 
+    if name == "jsonl":
+        return JsonlTracker(Path(cfg.output_dir) / METRICS_FILE)
+
     if name == "multi":
         names = [str(b).lower() for b in (tracking.backends or [])]
         if not names:
@@ -94,7 +102,7 @@ def _build_one(name: str, cfg: ExperimentConfig | Any) -> ExperimentTracker:
 
     raise ValueError(
         f"Unknown tracking backend {name!r}. "
-        "Expected one of: none, console, wandb, tensorboard, multi."
+        "Expected one of: none, console, wandb, tensorboard, jsonl, multi."
     )
 
 

@@ -8,6 +8,10 @@
     python scripts/run_protocol.py --baseline      # also the classical baselines
     python scripts/run_protocol.py --aggregate-only
 
+    # Kaggle T4 x2: the pre-sliced 32-band cube, each cell on both GPUs
+    python scripts/run_protocol.py --data ablation/u430k32 --nproc-per-node 2 \
+        --override runtime=kaggle_t4x2 --override tracking=console_jsonl --stream
+
 What it runs
 ────────────
 ``split_fold ∈ {0, 1} × seed ∈ {0, 1, 2}`` under the grouped protocol — the
@@ -39,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import shlex
 import sys
 from pathlib import Path
 
@@ -83,11 +88,41 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "replica, whose split and band count would vary alongside the architecture"
         ),
     )
+    parser.add_argument(
+        "--data",
+        default="refl215",
+        metavar="PREFIX",
+        help=(
+            "data-config prefix both arms read: <PREFIX>_grouped and <PREFIX>_stratified. "
+            "refl215 (default) is the full 215-band cube; ablation/u430k32 the pre-sliced "
+            "32-band cube"
+        ),
+    )
+    parser.add_argument(
+        "--nproc-per-node",
+        type=int,
+        default=1,
+        help="GPUs per cell; > 1 launches every cell under torchrun (DDP)",
+    )
+    parser.add_argument(
+        "--override",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="extra Hydra override for every cell, e.g. runtime=kaggle_t4x2 (repeatable)",
+    )
+    parser.add_argument(
+        "--stream",
+        action="store_true",
+        help="echo each cell's output live as well as writing its sweep.log",
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser.parse_args(argv)
 
 
-def _run_baselines(output_root: str, seeds: list[int]) -> None:
+def _run_baselines(
+    output_root: str, seeds: list[int], arms: tuple[protocol.ProtocolArm, ...]
+) -> None:
     """The honest floor, under both protocols and on the **same input** as the arms.
 
     Costs seconds and needs no GPU, and CHANGES §19.4 calls it *"the paper's
@@ -101,7 +136,7 @@ def _run_baselines(output_root: str, seeds: list[int]) -> None:
     data config or which folds they describe — a restated list is how the
     baseline came to be computed on a different band count from the arms.
     """
-    for arm in protocol.PROTOCOL_ARMS:
+    for arm in arms:
         for fold in arm.folds:
             cfg = load_experiment_config(
                 DEFAULT_CONFIG,
@@ -129,13 +164,21 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s | %(levelname)s | %(message)s",
     )
 
+    arms = protocol.arms_for(args.data)
     specs = protocol.build_specs(
-        args.output_root, config=args.config, seeds=tuple(args.seeds), experiment="protocol"
+        args.output_root,
+        config=args.config,
+        seeds=tuple(args.seeds),
+        arms=arms,
+        experiment="protocol",
     )
     if args.include_audited:
         specs.extend(
             protocol.build_baseline_comparison_specs(
-                args.output_root, seeds=tuple(args.seeds), experiment="protocol"
+                args.output_root,
+                seeds=tuple(args.seeds),
+                experiment="protocol",
+                data_config=None if args.data == "refl215" else f"{args.data}_grouped",
             )
         )
 
@@ -150,15 +193,19 @@ def main(argv: list[str] | None = None) -> int:
         todo, done = plan(specs, force=args.force)
         print(f"{len(done)} already complete, {len(todo)} to run.\n")
         if args.dry_run:
+            extra = "".join(f" {shlex.quote(o)}" for o in args.override)
             for spec in todo:
-                print(spec.shell())
+                print(spec.shell(nproc_per_node=args.nproc_per_node) + extra)
             return 0
         report = run_all(
             specs,
             "protocol",
             force=args.force,
             train_script=str(Path(__file__).resolve().parent.parent / "train.py"),
+            extra_overrides=tuple(args.override),
             stop_on_failure=args.stop_on_failure,
+            nproc_per_node=args.nproc_per_node,
+            stream=args.stream,
         )
         report.write(Path(args.output_root) / "protocol" / "sweep.json")
         failed = len(report.failed)
@@ -166,7 +213,7 @@ def main(argv: list[str] | None = None) -> int:
             _log.error("FAILED %s — %s", failure.spec.run_name, failure.log_path)
 
     if args.baseline and not args.dry_run:
-        _run_baselines(args.output_root, args.seeds)
+        _run_baselines(args.output_root, args.seeds, arms)
 
     root = Path(args.output_root) / "protocol"
     run_dirs = discover_runs(root)
