@@ -42,14 +42,14 @@ Set in `BandStudyConfig` before the run; each could return "no".
 
 ## 3 · Audit hypotheses and the ablation plan (S01 → S02)
 
-Defined in CHANGES.md §20 and registered in `experiments/registry.py`. **None has been executed**
-(`outputs/` holds no experiment run directories as of 2026-10-01). Each row says which decision it
+Defined in CHANGES.md §20 and registered in `experiments/registry.py`. A1 and (partly) A12 were executed
+by the S08 sweep on 2026-10-01 and analysed in S09; the rest have not run. Each row says which decision it
 would confirm or reverse.
 
 | ID | Question | Decision rule | Gates | Status |
 |---|---|---|---|---|
-| A12 | Run-to-run σ (identical config, 5 seeds) | prerequisite for reading every other delta | all | **not run** — FW-02 |
-| A1 | Leakage gap: same model, `stratified` vs `grouped`, 3 seeds each | the gap *is* the Q1 headline | D01 | **not run** — FW-04 |
+| A12 | Run-to-run σ (identical config, 5 seeds) | prerequisite for reading every other delta | all | **measured (S09, F30)** — σ = 0.009 grouped (6 runs, 2 folds), 0.033 stratified (6 seeds) |
+| A1 | Leakage gap: same model, `stratified` vs `grouped`, 3 seeds each | the gap *is* the Q1 headline | D01 | **run (S09)** — +0.182; confounded with +39 % training data (F38 bounds that at ≈ 0.01, linear) |
 | A2 | Band selection on all data vs within-fold, grouped | gap > 2σ ⇒ published numbers on this dataset need the caveat | D04, D08 | **not run** (proxy evidence: S03, S05) |
 | A3 | {A,B,C,D} vs {B,C} vs {C} vs {B}, symmetric branch dropout | 4-branch − {B,C} < 2σ ⇒ removal confirmed | **D05** | **not run** — FW-07 |
 | A4 | Branch A `grid_size_a` ∈ {8, 4, 2} | only if A3 keeps A | D05 | not run |
@@ -57,11 +57,36 @@ would confirm or reverse.
 | A6 | CE vs CE + SupCon, balanced sampler both arms | SupCon earns a Phase B only if > 2σ | D06 | not run |
 | A7 | margin 0 / global 0.30 / + per-class / + Ω penalty | one variable per arm | D07 | not run |
 | A8 | S1 vs S1+S2 vs S1+S2+S3, grouped, 3 seeds | falsification test for the single stage | **D06** | **not run** — FW-07 |
-| A9 | What are classes {41, 49, 51, 52, 70}? (no training: embeddings, overlays, confusion, segmentation audit) | genetic vs segmentation vs acquisition | — | **not run** — FW-06 |
+| A9 | What are classes {41, 49, 51, 52, 70}? (no training: embeddings, overlays, confusion, segmentation audit) | genetic vs segmentation vs acquisition | — | **partly answered (S09, F42)** — 70 is acquisition; {0, 30, 41, 49, 51, 52} a mutual-confusion cluster; segmentation audit not run |
 | A10 | Spatial-path width × {0.5, 0.75, 1, 1.5} | is capacity harmful? | D05 | not run |
 | A11 | mixup on/off × augmentation profile | is mixup the load-bearing regulariser? | D07 | not run |
 
-## 4 · Adding a hypothesis
+## 4 · S08 drafts (never frozen) — what the sweep showed, and the frozen S09 → S10 set
+
+**S08 drafts, observed in S09.** These were written in the S08 page but not frozen before the sweep, so
+their outcomes are *observations*, not confirmations.
+
+| ID | Draft | Observed | Evidence |
+|---|---|---|---|
+| H8 | Reflectance raises held-out cross-session recall above 0.05 for at least one proxy | **borderline** — LDA spectrum-only 0.039 (k32), 0.053 (215); SNV on identical rows not run | `c3_representation.csv` |
+| H9 | uniform430 at some k ∈ {24…64} is non-inferior to the full 215-band cube (network) | **not run** — the sweep had only k32; LDA prefers 215 (+0.04 grouped) | — |
+| H10 | The network's cross-session recall exceeds 0.05 on reflectance | **observed 0.152** — but morphometrics alone give 0.124 (F33), so the spectrum's share is unknown → H14a | `runs.csv` |
+| H11 | `F1_stratified − F1_grouped` > 2σ | **observed +0.182** (≫ 2σ under either σ) — size-confounded (F38) | `summary.json` |
+
+**Frozen for the next study.** `evidence/S09_post_sweep_forensics/preregistration_next.json`,
+SHA-256 `f896d0e569e0c071f85fb1c7e2fbce23cd3266da1ef317204fa329af9bb542e7`, frozen 2026-10-01 before any
+of these arms ran. Reference values: grouped 0.530 (σ 0.009), stratified 0.712 (σ 0.033), TTA.
+
+| ID | Hypothesis (as frozen) | Experiment | Decision it drives | Status |
+|---|---|---|---|---|
+| H12a | Fit-first raises stratified macro-F1 by ≥ +0.05 | X1 (FW-15) | is the regime the limit? | not run |
+| H12b | …and grouped by ≥ +0.02 with Δgrouped / Δstratified ≥ 0.37 | X1 | **route A vs B (D17)** | not run |
+| H13 | Fit-first reaches clean training accuracy ≥ 0.95 | X1 | did the regime cause F35? | not run |
+| H14a | Morphometrics-zeroed cross-session recall ≤ 0.07 | X2 (FW-16) | is cross-session recall shape-driven? (D12, D14) | not run |
+| H14b | full − spectral-only grouped ≤ +0.02 | X2 | is the spatial pathway dead weight? (D05) | not run |
+| H15 | 80/20 − 59 %-stratified (same regime) ≤ +0.03 | X3 (FW-17) | is training share the literature gap? (D16) | not run |
+
+## 5 · Adding a hypothesis
 
 Write it here *before* the run, with: the exact claim, the metric and split, the threshold, what
 outcome supports it, and which decision or finding it would change. If held-out data will be

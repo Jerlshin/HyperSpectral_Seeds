@@ -1,0 +1,5 @@
+protocol,variant,network_f1,best_tabular,tabular_f1,margin,network_cross_recall,tabular_cross_recall
+grouped,tta,0.530033,LDA · k32 spectrum + morphometrics,0.484694,0.0453392,0.152056,0.0571487
+grouped,no_tta,0.519329,LDA · k32 spectrum + morphometrics,0.484694,0.034635,0.145098,0.0571487
+stratified,tta,0.712368,LDA · k32 spectrum + morphometrics,0.658787,0.0535808,0.663274,0.464938
+stratified,no_tta,0.699739,LDA · k32 spectrum + morphometrics,0.658787,0.040952,0.642821,0.464938

@@ -14,7 +14,7 @@ describes *what we have learned and why the code is the way it is*.
 
 ## 1 · Where the research stands today
 
-*Last revised 2026-10-01. Update this section whenever a finding or decision changes status.*
+*Last revised 2026-10-01 (after S09). Update this section whenever a finding or decision changes status.*
 
 **The question.** 90 rice varieties, 8,624 single-kernel hyperspectral patches (Zenodo 3241923).
 Can a model identify the *variety* of a kernel — and how much of what a model scores on this
@@ -37,19 +37,30 @@ dataset is variety recognition rather than recognition of *how and when the kern
    even spacing on held-out data. [F17–F19](FINDINGS.md) · [S05](studies/S05_band_research/README.md)
 5. **The dataset is now white-tile reflectance (215 bands),** not per-pixel SNV (256 bands),
    because the illumination's spectral shape is a session fingerprint that SNV cannot remove.
-   Whether reflectance actually restores cross-session recall is **not yet measured**.
-   [F27](FINDINGS.md) · [S07](studies/S07_reflectance_calibration/README.md)
+   Reflectance moved that fingerprint from the lamp peak to a broad NIR offset rather than removing
+   it. [F27, F40](FINDINGS.md) · [S07](studies/S07_reflectance_calibration/README.md)
+6. **The network's first honest numbers** (SpectralSeedNet, k32 reflectance): grouped **0.530 ± 0.009**,
+   stratified 0.712 ± 0.033 macro-F1; cross-session recall 0.152 — but morphometrics *alone* reach 0.124.
+   [F30, F33](FINDINGS.md) · [S09](studies/S09_post_sweep_forensics/README.md)
+7. **What limits it is split.** The network adds only ≈ 0.05 over LDA on its own 40 scalar inputs. Within
+   the acquisition it scores as well as it fits, and it under-fits; 63 % of the grouped shortfall is
+   already there in-distribution. **Score → model/training. Claim → data/protocol:** nothing measured
+   transfers spectral variety recognition across sessions. [F31–F38](FINDINGS.md) · [D16, D17](DECISIONS.md)
 
-**What we do not know yet** (ordered by how much the answer would change the project):
+**What we do not know yet** (ordered by how much the answer would change the project; frozen in
+`evidence/S09_post_sweep_forensics/preregistration_next.json`):
 
-- Does reflectance calibration lift cross-session recall above zero? → [FW-01](FUTURE_WORK.md)
-- What does the *deployed network* (SpectralSeedNet) score under the grouped protocol, and what is
-  run-to-run σ? No neural run of the revised architecture has been recorded. → [FW-02, FW-03](FUTURE_WORK.md)
-- What is the leakage gap `F1_stratified − F1_grouped` for the network (ablation A1)? → [FW-04](FUTURE_WORK.md)
+- Does a fit-first training regime raise the within-acquisition score, and does the gain carry to grouped?
+  This decides whether to invest in model/training or in data/representation. → [FW-15](FUTURE_WORK.md)
+- What does the network actually use — is its cross-session recall shape, and does the spatial pathway
+  (80 % of parameters) add anything? → [FW-16](FUTURE_WORK.md)
+- What is the within-acquisition (80/20, literature-comparable) tier? → [FW-17](FUTURE_WORK.md)
 
-**The most important single figure in the project so far:**
+**The two most important figures so far** — the session confound, and how little the network adds:
 
 ![same- vs cross-session recall](figures/S06_session_confound/s06_same_vs_cross_recall.png)
+
+![network vs linear](figures/S09_post_sweep_forensics/s09_network_vs_linear.png)
 
 ---
 
@@ -67,7 +78,7 @@ docs/research/
 ├── GLOSSARY.md        the project's vocabulary (bundle, session, grouped, calib, uniform430 …)
 ├── studies/
 │   ├── _TEMPLATE.md   copy this to start a new study
-│   └── S00 … S08/     one folder per study, each with its own README.md
+│   └── S00 … S09/     one folder per study, each with its own README.md
 ├── figures/<study>/   every figure the log shows (generated or copied — never hand-edited)
 ├── evidence/<study>/  snapshot of the raw results each claim rests on (outputs/ is git-ignored)
 └── tools/build_assets.py   regenerates evidence/ and figures/ from outputs/ and dataset/
@@ -90,7 +101,8 @@ study stays *modular* (it can be read, revised or superseded on its own).
 | [S05](studies/S05_band_research/README.md) | Band research with pre-registered held-out confirmation | 2026-09-29 → 09-30 | complete | 430 nm floor, uniform430 finalists, CNN peak at 24–64 bands |
 | [S06](studies/S06_session_confound/README.md) | The acquisition-session confound | 2026-09-29 → 09-30 | complete (diagnosis); remedy open | cross-session recall ≈ 0 for every model |
 | [S07](studies/S07_reflectance_calibration/README.md) | White-tile reflectance calibration | 2026-09-30 | complete (data built); effect unmeasured | 215-band reflectance cube replaces the SNV cube |
-| [S08](studies/S08_neural_confirmation/README.md) | Neural confirmation on the reflectance cube | 2026-10-01 → | **planned** — infrastructure ready | — |
+| [S08](studies/S08_neural_confirmation/README.md) | Neural confirmation on the reflectance cube | 2026-10-01 → | protocol sweep run (u430k32); budget arms open | grouped 0.530 · stratified 0.712 |
+| [S09](studies/S09_post_sweep_forensics/README.md) | Post-sweep forensics: data/protocol or model/training? | 2026-10-01 | complete (analysis); next arms frozen | +0.05 over LDA; fit-limited; 3 reporting tiers |
 
 ## 4 · Conventions
 

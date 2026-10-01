@@ -1,0 +1,51 @@
+arm,true,true_variety,pred,pred_variety,rate,true_cross_session,true_sessions,pred_sessions
+grouped,63,HungDan1,38,MT15-1,0.673611,True,5 8,3 8
+grouped,71,VS1,81,VinhPhuc1,0.538194,True,5 8,7
+grouped,38,MT15-1,18,VietHuong8,0.496528,True,3 8,1
+grouped,59,CNC12,62,HT18,0.447917,True,5 8,5
+grouped,65,MyHuong88,80,TC11-2,0.444444,True,5 8,7
+grouped,7,KhangDan18,88,VietThom8,0.440972,True,1 8,8
+grouped,4,NepThomBacHai,12,NDC1,0.378472,True,0 8,1 8
+grouped,45,DMV58,43,BacThomSo7,0.361404,True,4 8,4
+grouped,69,PC10,81,VinhPhuc1,0.357639,False,5,7
+grouped,12,NDC1,4,NepThomBacHai,0.333333,True,1 8,0 8
+grouped,12,NDC1,68,NepPhatQuy,0.315972,True,1 8,5
+grouped,79,NT16,74,GS55R,0.309028,True,7 8,6
+grouped,38,MT15-1,35,BT6,0.309028,True,3 8,3
+grouped,70,TruongXuan1,66,NBT1,0.295139,True,5 8,5 8
+grouped,71,VS1,69,PC10,0.291667,True,5 8,5
+grouped,73,GiaLoc301,80,TC11-2,0.28125,False,6,7
+grouped,51,NBK,30,NBP,0.270833,False,4,2
+grouped,66,NBT1,70,TruongXuan1,0.270833,True,5 8,5 8
+grouped,61,DT52,71,VS1,0.267361,True,5 8,5 8
+grouped,4,NepThomBacHai,89,NepDacSanLienHoa,0.243056,True,0 8,8
+grouped,32,PD211,21,CL61,0.236111,False,2,2
+grouped,55,TQ14,47,HaNa39,0.229167,False,4,4
+grouped,81,VinhPhuc1,69,PC10,0.219858,False,7,5
+grouped,49,KB16,52,NPT1,0.215278,False,4,4
+grouped,65,MyHuong88,72,DV108,0.208333,True,5 8,6
+stratified,7,KhangDan18,88,VietThom8,0.574713,True,1 8,8
+stratified,80,TC11-2,73,GiaLoc301,0.321839,False,7,6
+stratified,25,HongQuang15,33,VS6,0.261905,False,2,2
+stratified,54,TB14,8,LocTroi183,0.241379,False,4,1
+stratified,52,NPT1,41,TB13,0.229885,False,4,3
+stratified,51,NBK,30,NBP,0.22619,False,4,2
+stratified,21,CL61,32,PD211,0.201149,False,2,2
+stratified,49,KB16,41,TB13,0.189655,False,4,3
+stratified,19,VS5,17,R998KBL,0.183908,False,1,1
+stratified,82,DA1,84,NC2,0.183908,False,8,8
+stratified,38,MT15-1,63,HungDan1,0.178571,True,3 8,5 8
+stratified,73,GiaLoc301,80,TC11-2,0.172414,False,6,7
+stratified,10,NC7,42,ThuanViet2,0.166667,False,1,3
+stratified,55,TQ14,47,HaNa39,0.16092,False,4,4
+stratified,45,DMV58,43,BacThomSo7,0.160714,True,4 8,4
+stratified,14,NM14-2,1,CT286,0.154762,False,1,0
+stratified,73,GiaLoc301,57,9d,0.149425,False,6,5
+stratified,4,NepThomBacHai,89,NepDacSanLienHoa,0.14881,True,0 8,8
+stratified,81,VinhPhuc1,69,PC10,0.14881,False,7,5
+stratified,34,A128,8,LocTroi183,0.143678,False,3,1
+stratified,16,R068,39,SHPT1,0.143678,False,1,3
+stratified,71,VS1,81,VinhPhuc1,0.142857,True,5 8,7
+stratified,39,SHPT1,16,R068,0.132184,False,3,1
+stratified,86,NH92,84,NC2,0.132184,False,8,8
+stratified,81,VinhPhuc1,71,VS1,0.130952,False,7,5 8

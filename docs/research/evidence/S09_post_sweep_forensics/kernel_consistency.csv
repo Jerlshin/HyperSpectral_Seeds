@@ -1,0 +1,4 @@
+arm,fold,n_seeds,mean_single_f1,vote3_f1,oracle3_acc,mean_single_acc,pairwise_agreement,all_seeds_wrong,errors_identical_across_seeds,vote_all_f1,all_wrong_all,same_wrong_all
+grouped,0,3,0.528964,0.543582,0.640223,0.551458,0.766412,0.359777,0.39513,0.543582,0.359777,0.214567
+grouped,1,3,0.531102,0.540119,0.637271,0.557128,0.783631,0.362729,0.422026,0.540119,0.362729,0.222325
+stratified,0,6,0.701184,0.71294,0.789026,0.70814,0.830757,0.210974,0.370031,0.730296,0.148377,0.0660742

@@ -1,0 +1,17 @@
+representation,protocol,n_features,macro_f1,same_recall,cross_recall
+k32 + morphometrics,grouped,40,0.484694,0.611837,0.0571487
+k32 + morphometrics,stratified,40,0.658787,0.709151,0.464938
+k32 SNV,grouped,32,0.246468,0.312378,0.0343954
+k32 SNV,stratified,32,0.394937,0.446399,0.229644
+k32 log-reflectance,grouped,32,0.337459,0.425812,0.0367647
+k32 log-reflectance,stratified,32,0.498092,0.553931,0.293973
+k32 reflectance (shrinkage),grouped,32,0.262491,0.335035,0.0386438
+k32 reflectance (shrinkage),stratified,32,0.330061,0.376639,0.186902
+k32 reflectance (sweep input),grouped,32,0.331332,0.42014,0.0386029
+k32 reflectance (sweep input),stratified,32,0.492566,0.548163,0.296146
+r215 SNV (shrinkage),grouped,215,0.340405,0.423486,0.0674689
+r215 SNV (shrinkage),stratified,215,0.509928,0.566133,0.320342
+r215 reflectance (shrinkage),grouped,215,0.370706,0.465593,0.0526961
+r215 reflectance (shrinkage),stratified,215,0.516396,0.579814,0.306288
+r215 ≥430 nm (shrinkage),grouped,195,0.321052,0.414495,0.0238971
+r215 ≥430 nm (shrinkage),stratified,195,0.431997,0.483782,0.260939

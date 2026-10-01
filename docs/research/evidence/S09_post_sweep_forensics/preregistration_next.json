@@ -1,0 +1,69 @@
+{
+ "frozen_at": "2026-10-01",
+ "study": "S09 → next study (S10)",
+ "parent_commit": "89bb83e (sweep code 2879d1d); D18 instrumentation must land first and its commit be recorded in the S10 page",
+ "reference": {
+  "source": "evidence/S09_post_sweep_forensics/runs.csv (u430k32, shipped single-stage regime)",
+  "grouped_f1_tta_mean": 0.5300333460397801,
+  "grouped_f1_tta_sd": 0.008789797631782077,
+  "stratified_f1_tta_mean": 0.7123676427318898,
+  "stratified_f1_tta_sd": 0.03329501541722576,
+  "grouped_cross_recall_tta_mean": 0.15205610021786492,
+  "lda_spectrum_morph": {
+   "grouped": 0.485,
+   "stratified": 0.659
+  },
+  "morph_only_lda_cross_recall": 0.124,
+  "transfer_slope": 0.726
+ },
+ "metric": "macro-F1 on val ∪ test, TTA, mean over runs; no-TTA reported beside; checkpoint chosen on calib only",
+ "arms": {
+  "X1_fit_first": {
+   "overrides": "single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0 single.epochs=200 single.patience=40",
+   "runs": {
+    "grouped": "folds 0,1 × seeds 0,1,2",
+    "stratified": "fold 0 × seeds 0,1,2"
+   },
+   "commands": [
+    "python train.py --config-name=experiment/seednet_full256 runtime=kaggle_t4x2 tracking=console_jsonl data=ablation/u430k32_grouped data.split_fold=0 seed=0 single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0 single.epochs=200 single.patience=40",
+    "python train.py --config-name=experiment/seednet_full256 runtime=kaggle_t4x2 tracking=console_jsonl data=ablation/u430k32_grouped data.split_fold=0 seed=1 single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0 single.epochs=200 single.patience=40",
+    "python train.py --config-name=experiment/seednet_full256 runtime=kaggle_t4x2 tracking=console_jsonl data=ablation/u430k32_grouped data.split_fold=0 seed=2 single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0 single.epochs=200 single.patience=40",
+    "python train.py --config-name=experiment/seednet_full256 runtime=kaggle_t4x2 tracking=console_jsonl data=ablation/u430k32_grouped data.split_fold=1 seed=0 single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0 single.epochs=200 single.patience=40",
+    "python train.py --config-name=experiment/seednet_full256 runtime=kaggle_t4x2 tracking=console_jsonl data=ablation/u430k32_grouped data.split_fold=1 seed=1 single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0 single.epochs=200 single.patience=40",
+    "python train.py --config-name=experiment/seednet_full256 runtime=kaggle_t4x2 tracking=console_jsonl data=ablation/u430k32_grouped data.split_fold=1 seed=2 single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0 single.epochs=200 single.patience=40",
+    "python train.py --config-name=experiment/seednet_full256 runtime=kaggle_t4x2 tracking=console_jsonl data=ablation/u430k32_stratified seed=0 single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0 single.epochs=200 single.patience=40",
+    "python train.py --config-name=experiment/seednet_full256 runtime=kaggle_t4x2 tracking=console_jsonl data=ablation/u430k32_stratified seed=1 single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0 single.epochs=200 single.patience=40",
+    "python train.py --config-name=experiment/seednet_full256 runtime=kaggle_t4x2 tracking=console_jsonl data=ablation/u430k32_stratified seed=2 single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0 single.epochs=200 single.patience=40"
+   ]
+  },
+  "X2_attribution": {
+   "regime": "shipped regime (run in parallel with X1); the arm that decides H14b is repeated under X1's regime only if H12 routes to B",
+   "arms": {
+    "no_morph": "data.morphology_path=''  (model substitutes zeros; config-only)",
+    "spectral_only": "requires a model.pathways switch (spatial branch masked to 0 in train and eval) — small code change",
+    "spatial_only": "requires the same switch (spectral path and morphometrics masked) — small code change"
+   },
+   "runs": "grouped folds 0,1 × seeds 0,1 per arm"
+  },
+  "X3_within_acquisition_8020": {
+   "overrides": "data=ablation/u430k32_stratified data.split_eval_frac=0.2 (+ the regime chosen by H12)",
+   "runs": "seeds 0,1,2",
+   "role": "tier-1 number for D16; NOT a decision arm except for H15"
+  }
+ },
+ "hypotheses": {
+  "H12a": "X1 raises stratified macro-F1 by ≥ +0.05 over 0.712 (3-seed mean; ≈ 2.1 SE of the difference given sd 0.033)",
+  "H12b": "X1 raises grouped macro-F1 by ≥ +0.02 (≥ 2σ, σ = 0.009) AND Δgrouped / Δstratified ≥ 0.37 (half the S09 transfer slope)",
+  "H13": "X1 reaches clean training accuracy ≥ 0.95 on the D18 fixed training subset (the regime, not capacity, caused F35)",
+  "H14a": "no_morph cross-session recall ≤ 0.07, i.e. at least half of the network's 0.152 is carried by the morphometrics",
+  "H14b": "full − spectral_only grouped macro-F1 ≤ +0.02: the spatial pathway (79.6 % of parameters) adds nothing measurable",
+  "H15": "X3 (80/20) − stratified 59 % (same regime) ≤ +0.03: training share is not what separates this project from the literature"
+ },
+ "decision_rule": {
+  "H12a and H12b supported": "model/training is the bottleneck for the score (D17 route B): next = architecture/training work, measured on all three D16 tiers",
+  "H12a supported, H12b rejected": "in-distribution gains do not transfer: route A — stop capacity work; next = representation/data (FW-03, FW-18, FW-12)",
+  "H12a rejected": "the regime is not the limit; read X2: if H14b supported, redesign the spatial-spectral pathway; else the representation binds (route A)",
+  "H14a supported": "cross-session claims must be stated as shape-driven; reflectance has not been shown to give spectral cross-session transfer for the network"
+ },
+ "heldout_use": "Each arm is scored once on val ∪ test. No arm, epoch, threshold or hyperparameter is chosen by its held-out score. A second round, if any, is a new frozen file naming what motivated it."
+}

@@ -1,0 +1,31 @@
+input,model,protocol,macro_f1,same_recall,cross_recall
+k32 spectrum,LDA,grouped,0.331332,0.42014,0.0386029
+k32 spectrum,LDA,stratified,0.492566,0.548163,0.296146
+k32 spectrum,MLP 256×256,grouped,0.276223,0.354268,0.0324755
+k32 spectrum,MLP 256×256,stratified,0.327122,0.383638,0.201826
+k32 spectrum,RBF-SVM (C=10),grouped,0.214566,0.278082,0.03125
+k32 spectrum,RBF-SVM (C=10),stratified,0.277333,0.329198,0.147711
+k32 spectrum,grad. boosting,grouped,0.170038,0.210372,0.0288807
+k32 spectrum,grad. boosting,stratified,0.219392,0.245536,0.129817
+k32 spectrum,logistic (C=1),grouped,0.234992,0.311881,0.0502859
+k32 spectrum,logistic (C=1),stratified,0.302181,0.352852,0.201608
+k32 spectrum + morphometrics,LDA,grouped,0.484694,0.611837,0.0571487
+k32 spectrum + morphometrics,LDA,stratified,0.658787,0.709151,0.464938
+k32 spectrum + morphometrics,MLP 256×256,grouped,0.40543,0.490523,0.13317
+k32 spectrum + morphometrics,MLP 256×256,stratified,0.518217,0.559528,0.374746
+k32 spectrum + morphometrics,RBF-SVM (C=10),grouped,0.385078,0.454784,0.13223
+k32 spectrum + morphometrics,RBF-SVM (C=10),stratified,0.447866,0.486444,0.314836
+k32 spectrum + morphometrics,grad. boosting,grouped,0.200479,0.2426,0.0803513
+k32 spectrum + morphometrics,grad. boosting,stratified,0.388777,0.417934,0.29477
+k32 spectrum + morphometrics,logistic (C=1),grouped,0.4267,0.509215,0.170466
+k32 spectrum + morphometrics,logistic (C=1),stratified,0.492852,0.534744,0.377354
+morphometrics only,LDA,grouped,0.167046,0.189586,0.12414
+morphometrics only,LDA,stratified,0.173872,0.204504,0.109678
+morphometrics only,MLP 256×256,grouped,0.134823,0.175718,0.0827745
+morphometrics only,MLP 256×256,stratified,0.147293,0.188605,0.0991017
+morphometrics only,RBF-SVM (C=10),grouped,0.152349,0.178973,0.109271
+morphometrics only,RBF-SVM (C=10),stratified,0.1597,0.186292,0.131846
+morphometrics only,grad. boosting,grouped,0.136454,0.144195,0.106508
+morphometrics only,grad. boosting,stratified,0.140169,0.150591,0.105549
+morphometrics only,logistic (C=1),grouped,0.144011,0.169627,0.128101
+morphometrics only,logistic (C=1),stratified,0.149921,0.181104,0.126485

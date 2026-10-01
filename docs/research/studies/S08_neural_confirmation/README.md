@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | **planned** — infrastructure ready, no run yet |
+| **Status** | **protocol sweep run** (2026-10-01, u430k32 only) — analysed in [S09](../S09_post_sweep_forensics/README.md); budget arms (FW-03) not run |
 | **Dates** | 2026-10-01 → |
 | **Commits** | `8d3a7d2` (pre-sliced cube, Kaggle T4 × 2 profile, JSONL logging, mid-stage resume) |
 | **Data** | refl-215 cube; pre-sliced `./dataset_u430k32` (uniform430 k = 32, float16, 2.33 GB) |
@@ -34,7 +34,12 @@ session report (D14) on every run. Arms: full 215 (`data=refl215_grouped`), unif
 pre-sliced cube for k = 32), and the stratified twin of the chosen arm for A1.
 
 ## 5 · Results
-*None yet.*
+The protocol sweep ran on 2026-10-01: grouped folds 0, 1 × seeds 0–2 and stratified × seeds 0–5 on
+`dataset_u430k32`, plus LDA/LinearSVC baselines (`outputs/experiments_u430k32/`). Headline: grouped
+0.530 ± 0.009, stratified 0.712 ± 0.033 macro-F1 (TTA); cross-session recall 0.152. Everything the sweep
+shows — and what it does not — is analysed in **[S09](../S09_post_sweep_forensics/README.md)** rather than
+repeated here. H9 (budget) was not tested: only k = 32 ran. H10 and H11 were drafts, never frozen, so their
+outcomes are recorded as observations (HYPOTHESES §4).
 
 ## 8 · Threats to validity (anticipated)
 - fp16 on T4 vs bf16 elsewhere; the pre-sliced cube's float16 cast error (recorded in

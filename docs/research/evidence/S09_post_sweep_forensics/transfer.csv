@@ -1,0 +1,19 @@
+source,stratified,grouped,fit_grouped,residual
+"SpectralSeedNet (TTA, mean of runs)",0.712368,0.530033,0.522166,0.00786677
+SpectralSeedNet (no TTA),0.699739,0.519329,0.513001,0.00632842
+LDA · k32 + morphometrics,0.658787,0.484694,0.483278,0.00141575
+LDA · k32 SNV,0.394937,0.246468,0.29178,-0.045312
+LDA · k32 log-reflectance,0.498092,0.337459,0.366648,-0.0291893
+LDA · k32 reflectance (shrinkage),0.330061,0.262491,0.244694,0.017797
+LDA · k32 reflectance (sweep input),0.492566,0.331332,0.362638,-0.0313056
+LDA · r215 SNV (shrinkage),0.509928,0.340405,0.375239,-0.0348337
+LDA · r215 reflectance (shrinkage),0.516396,0.370706,0.379933,-0.00922704
+LDA · r215 ≥430 nm (shrinkage),0.431997,0.321052,0.318678,0.00237445
+MLP 256×256 · k32 spectrum,0.327122,0.276223,0.242561,0.0336621
+RBF-SVM (C=10) · k32 spectrum,0.277333,0.214566,0.206425,0.00814121
+grad. boosting · k32 spectrum,0.219392,0.170038,0.164372,0.0056659
+logistic (C=1) · k32 spectrum,0.302181,0.234992,0.224459,0.0105329
+MLP 256×256 · k32 spectrum + morphometrics,0.518217,0.40543,0.381255,0.0241753
+RBF-SVM (C=10) · k32 spectrum + morphometrics,0.447866,0.385078,0.330195,0.054883
+grad. boosting · k32 spectrum + morphometrics,0.388777,0.200479,0.287309,-0.0868301
+logistic (C=1) · k32 spectrum + morphometrics,0.492852,0.4267,0.362845,0.0638548

@@ -521,6 +521,211 @@ def fig_s07() -> None:
     _save(fig, s, "s07_tile_saturation.png", "evidence/S07_reflectance_calibration/tile_saturated_frac.csv")
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# S09 — post-sweep forensics of the u430k32 protocol sweep
+# Evidence is written directly into evidence/S09_post_sweep_forensics/ by the study's
+# code/ scripts (extract_runs → controls → synthesis), so S09 has no SNAPSHOT entry.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def fig_s09() -> None:
+    s = "S09_post_sweep_forensics"
+    ev = EVIDENCE / s
+    if not (ev / "runs.csv").exists():
+        print("  skip    s09 (no runs.csv — run the study's code/ scripts first)")
+        return
+    runs = pd.read_csv(ev / "runs.csv")
+    g, st = runs[runs.arm == "grouped"], runs[runs.arm == "stratified"]
+    PCOL = {"grouped": BLUE, "stratified": ORANGE}
+
+    # 1 · The network against linear models on its own scalar inputs, by population.
+    c5 = pd.read_csv(ev / "c5_tabular.csv")
+    lda = c5[c5.model == "LDA"].set_index(["input", "protocol"])
+    series = [
+        ("SpectralSeedNet (2.85 M params, TTA)", {p: (x.f1_tta.mean(), x.same_recall_tta.mean(), x.cross_recall_tta.mean())
+                                                  for p, x in (("grouped", g), ("stratified", st))}, BLUE),
+        ("LDA · mean spectrum + 8 morphometrics", {p: tuple(lda.loc[("k32 spectrum + morphometrics", p),
+                                                                    ["macro_f1", "same_recall", "cross_recall"]])
+                                                   for p in ("grouped", "stratified")}, ORANGE),
+        ("LDA · mean spectrum only", {p: tuple(lda.loc[("k32 spectrum", p), ["macro_f1", "same_recall", "cross_recall"]])
+                                      for p in ("grouped", "stratified")}, AQUA),
+        ("LDA · 8 morphometrics only", {p: tuple(lda.loc[("morphometrics only", p),
+                                                         ["macro_f1", "same_recall", "cross_recall"]])
+                                        for p in ("grouped", "stratified")}, YELLOW),
+    ]
+    cats = ["macro-F1\n(all 90)", "recall · same-session\nvarieties (73)", "recall · cross-session\nvarieties (17)"]
+    fig, axes = plt.subplots(1, 2, figsize=(10.4, 3.9), sharey=True)
+    w = 0.19
+    for ax, proto in zip(axes, ("grouped", "stratified"), strict=True):
+        x = np.arange(3)
+        for i, (name, vals, col) in enumerate(series):
+            v = vals[proto]
+            ax.bar(x + (i - 1.5) * (w + 0.01), v, w, color=col, label=name)
+            for xi, vi in zip(x, v, strict=True):
+                ax.text(xi + (i - 1.5) * (w + 0.01), vi + 0.012, f"{vi:.2f}", ha="center", fontsize=6.8,
+                        color=INK_2, rotation=90, va="bottom")
+        ax.set_xticks(x, cats, fontsize=8)
+        ax.set_ylim(0, 0.92)
+        ax.grid(axis="x", visible=False)
+        ax.set_title({"grouped": "grouped — held-out acquisition bundle",
+                      "stratified": "stratified — patch-level, both bundles in training"}[proto], fontsize=9.5)
+    axes[0].set_ylabel("score on val + test (held-out)")
+    axes[0].legend(loc="lower left", bbox_to_anchor=(0, 1.1), ncol=2, fontsize=8)
+    fig.suptitle("The network adds ≈ 0.05 over a linear model on its own scalar inputs; "
+                 "shape alone matches its cross-session recall", x=0.01, ha="left", fontsize=11,
+                 fontweight="bold", y=1.13)
+    _save(fig, s, "s09_network_vs_linear.png",
+          "evidence/S09_post_sweep_forensics/{runs.csv, c5_tabular.csv} (network: mean of 6 runs per protocol)")
+
+    # 2 · Fit ↔ held-out, per protocol.
+    link = json.loads((ev / "fit_link.json").read_text())
+    fig, axes = plt.subplots(1, 2, figsize=(9.6, 3.4))
+    for ax, proto in zip(axes, ("stratified", "grouped"), strict=True):
+        x = runs[runs.arm == proto]
+        ax.scatter(x.final_train_loss, x.f1_tta, s=48, color=PCOL[proto], edgecolor=SURFACE, linewidth=1.5, zorder=3)
+        for _, r in x.iterrows():
+            ax.annotate(f"f{r.fold}s{r.seed}", (r.final_train_loss, r.f1_tta), xytext=(5, 3),
+                        textcoords="offset points", fontsize=7.5, color=MUTED)
+        k = link[f"{proto}: final_train_loss vs held-out F1"]
+        ax.set_title(f"{proto}: r = {k['r']:.2f}  (95 % CI {k['ci95'][0]:.2f} … {k['ci95'][1]:.2f}, n = 6)",
+                     fontsize=9.5)
+        ax.set_xlabel("final training loss (margin-penalised CE)")
+        ax.axvline(np.log(90), color=AXIS, lw=1, ls="--")
+        ax.text(np.log(90), ax.get_ylim()[0], " ln 90 (uniform guess)", fontsize=7.5, color=MUTED, va="bottom")
+    axes[0].set_ylabel("held-out macro-F1 (TTA)")
+    fig.suptitle("Within the acquisition, a run scores as well as it fits its training data; across bundles it does not",
+                 x=0.01, ha="left", fontsize=11, fontweight="bold", y=1.04)
+    _save(fig, s, "s09_fit_vs_heldout.png", "evidence/S09_post_sweep_forensics/{runs.csv, fit_link.json}")
+
+    # 3 · Training dynamics.
+    cv = pd.read_csv(ev / "curves.csv")
+    fig, axes = plt.subplots(2, 1, figsize=(8.4, 5.6), sharex=True)
+    for (arm, fold, seed), d in cv.groupby(["arm", "fold", "seed"]):
+        axes[0].plot(d.epoch, d.train_loss, color=PCOL[arm], lw=1, alpha=0.75)
+        axes[1].plot(d.epoch, d.calib_f1_ema, color=PCOL[arm], lw=1, alpha=0.75)
+    for ax in axes:
+        ax.axvspan(0, 110.5, color=GAP_FILL, zorder=0)
+        ax.axvspan(110.5, 130.5, color="#e6eefa", zorder=0)
+    axes[0].axhline(np.log(90), color=INK_2, lw=1, ls="--")
+    axes[0].text(2, np.log(90) + 0.1, "ln 90 — loss of a uniform guess", fontsize=8, color=INK_2)
+    axes[0].text(55, 7.6, "mixup α = 0.35 (epochs 1–110)", ha="center", fontsize=8, color=INK_2)
+    axes[0].text(120.5, 7.6, "margin\n0 to 0.3", ha="center", fontsize=8, color=INK_2)
+    axes[0].set_ylabel("training loss")
+    axes[1].set_ylabel("calib macro-F1 (EMA)")
+    axes[1].set_xlabel("epoch")
+    axes[1].plot([], [], color=BLUE, label="grouped (6 runs)")
+    axes[1].plot([], [], color=ORANGE, label="stratified (6 runs)")
+    axes[1].legend(loc="lower right")
+    axes[0].set_title("Mixup holds the fit down for 110 epochs; the margin then lifts training loss above chance level")
+    _save(fig, s, "s09_training_dynamics.png", "evidence/S09_post_sweep_forensics/curves.csv")
+
+    # 4 · Data quantity vs acquisition: LDA learning curves and acquisition mixing.
+    c1 = pd.read_csv(ev / "c1_learning_curve.csv")
+    c2 = pd.read_csv(ev / "c2_acquisition_mix.csv")
+    fig, axes = plt.subplots(1, 2, figsize=(10.2, 3.7))
+    ax = axes[0]
+    strat = c1[c1.protocol == "stratified (both bundles)"]
+    grp = c1[c1.protocol.str.startswith("grouped")].groupby("n_per_class").macro_f1.mean()
+    ax.plot(strat.n_per_class, strat.macro_f1, "-o", color=ORANGE)
+    ax.plot(grp.index, grp.values, "-o", color=BLUE)
+    ax.plot([strat.n_per_class.iloc[-1]], [strat.macro_f1.iloc[-1]], "o", color=ORANGE, ms=5, mec=SURFACE, mew=1.5)
+    ax.text(4, 0.505, "stratified (both bundles)", fontsize=8.5, color=INK_2, ha="left")
+    _label_end(ax, grp.index[-1], grp.values[-1], "grouped (one bundle)", BLUE)
+    p8020 = c1[c1.protocol == "80/20 patch-level 5-fold"].iloc[0]
+    ax.plot([p8020.n_per_class], [p8020.macro_f1], "D", color=INK_2, ms=6)
+    ax.annotate(f"80/20, 5-fold: {p8020.macro_f1:.3f}", (p8020.n_per_class, p8020.macro_f1), xytext=(0, 9),
+                textcoords="offset points", fontsize=8, color=INK_2, ha="center")
+    ax.set_ylim(0.2, 0.55)
+    ax.set_xlim(0, 100)
+    ax.set_xlabel("training kernels per class")
+    ax.set_ylabel("LDA macro-F1 (mean spectrum, k32)")
+    ax.set_title("More kernels from the same acquisition: small, saturating gain", fontsize=9.5)
+    ax = axes[1]
+    for design, col in (("n-matched", VIOLET), ("additive", AQUA)):
+        d = c2[c2.design == design]
+        ax.plot(d.k, d.macro_f1, "-o", color=col)
+        _label_end(ax, d.k.iloc[-1], d.macro_f1.iloc[-1],
+                   {"n-matched": "swap k kernels (total fixed)", "additive": "add k kernels"}[design], col)
+    ax.set_xlim(-1, 40)
+    ax.set_xlabel("k kernels/class of the test bundle moved into training")
+    ax.set_ylabel("LDA macro-F1 on the rest of that bundle")
+    ax.set_title("Kernels from the test acquisition: a large gain at equal n", fontsize=9.5)
+    fig.suptitle("The grouped–stratified gap is acquisition coverage, not training-set size (linear proxy)",
+                 x=0.01, ha="left", fontsize=11, fontweight="bold", y=1.03)
+    _save(fig, s, "s09_quantity_vs_acquisition.png",
+          "evidence/S09_post_sweep_forensics/{c1_learning_curve.csv, c2_acquisition_mix.csv} (10 repeats × 2 folds)")
+
+    # 5 · Transfer line.
+    t = pd.read_csv(ev / "transfer.csv")
+    tf = json.loads((ev / "transfer_fit.json").read_text())
+    fig, ax = plt.subplots(figsize=(6.2, 4.4))
+    net = t.source.str.startswith("SpectralSeedNet")
+    ax.scatter(t[~net].stratified, t[~net].grouped, s=34, color=MUTED, edgecolor=SURFACE, linewidth=1.2, zorder=3,
+               label="LDA / tabular controls (C3, C5)")
+    ax.scatter(t[net].stratified, t[net].grouped, s=60, color=BLUE, edgecolor=SURFACE, linewidth=1.5, zorder=4,
+               label="SpectralSeedNet (TTA, no-TTA)")
+    xx = np.linspace(0.15, 1.0, 50)
+    ax.plot(xx, tf["intercept"] + tf["slope"] * xx, color=INK_2, lw=1.2)
+    ax.plot(xx, xx, color=AXIS, lw=1, ls="--")
+    ax.text(0.33, 0.355, "grouped = stratified", fontsize=7.5, color=MUTED, ha="center", rotation=38)
+    ax.text(0.40, 0.76, f"fit: grouped ≈ {tf['slope']:.2f} × stratified\n(r = {tf['r']:.2f}, n = {tf['n']} model/input pairs)",
+            fontsize=8, color=INK_2, ha="left", va="top")
+    ax.axhline(0.84, color=RED, lw=1, ls=":")
+    ax.text(0.16, 0.85, "grouped ceiling if same-session were perfect: 0.84", fontsize=7.5, color=INK_2)
+    ax.set_xlim(0.15, 1.0)
+    ax.set_ylim(0.15, 1.0)
+    ax.set_xlabel("stratified macro-F1 (within-acquisition)")
+    ax.set_ylabel("grouped macro-F1 (held-out bundle)")
+    ax.legend(loc="upper left")
+    ax.set_title("Every model keeps ≈ 73 % of its in-distribution score across bundles")
+    _save(fig, s, "s09_transfer_line.png", "evidence/S09_post_sweep_forensics/{transfer.csv, transfer_fit.json}")
+
+    # 6 · Session fingerprint after reflectance.
+    f4 = pd.read_csv(ev / "c4_session_F_reflectance.csv")
+    old = np.asarray(json.loads((EVIDENCE / "S06_session_confound" / "a9_session_F.json").read_text()))[:256]
+    fig, ax = plt.subplots(figsize=(8.0, 3.4))
+    ax.plot(_wl256(), old, color=MUTED, lw=1.4)
+    for col, key in ((BLUE, "F_reflectance"), (ORANGE, "F_snv_of_reflectance")):
+        y = f4[key].to_numpy().copy()
+        gap = np.flatnonzero(np.diff(f4.wavelength_nm) > 5)
+        y = np.insert(y, gap + 1, np.nan)
+        x = np.insert(f4.wavelength_nm.to_numpy(), gap + 1, np.nan)
+        ax.plot(x, y, color=col)
+    ax.text(712, old.max(), " SNV-256 (S06)", fontsize=8, color=INK_2, va="center")
+    ax.text(1004, f4.F_reflectance.iloc[-1], " reflectance-215", fontsize=8, color=INK_2, va="center")
+    ax.text(1004, f4.F_snv_of_reflectance.iloc[-1], " SNV of reflectance", fontsize=8, color=INK_2, va="center")
+    ax.axvspan(608, 706, color=GAP_FILL, zorder=0)
+    ax.text(657, 0.35, "dropped\n(tile clips)", ha="center", fontsize=7.5, color=MUTED)
+    ax.axhline(2.2, color=RED, lw=1, ls="--")
+    ax.axhline(1, color=AXIS, lw=1)
+    ax.set_yscale("log")
+    ax.set_xlim(380, 1080)
+    ax.set_xlabel("wavelength (nm)")
+    ax.set_ylabel("session F-ratio (log)")
+    ax.set_title("Reflectance removed the lamp-peak spike but left a broad NIR session offset (F ≈ 7–9)")
+    _save(fig, s, "s09_session_F_reflectance.png",
+          "evidence/S09_post_sweep_forensics/c4_session_F_reflectance.csv; S06 a9_session_F.json (training rows, 2 folds)")
+
+    # 7 · Per-class: in-distribution vs held-out.
+    pc = pd.read_csv(ev / "per_class.csv")
+    m = pc.groupby(["class", "arm"]).f1.mean().unstack()
+    cross = pc.groupby("class").cross_session.first()
+    fig, ax = plt.subplots(figsize=(6.4, 4.6))
+    ax.plot([0, 1], [0, 1], color=AXIS, lw=1, ls="--")
+    for flag, col, lab in ((False, BLUE, "same-session variety (73)"), (True, ORANGE, "cross-session variety (17)")):
+        mm = m[cross == flag]
+        ax.scatter(mm.stratified, mm.grouped, s=30, color=col, edgecolor=SURFACE, linewidth=1.1, label=lab, zorder=3)
+    for c in (30, 41, 49, 51, 52, 79, 78):
+        ax.annotate(str(c), (m.loc[c, "stratified"], m.loc[c, "grouped"]), xytext=(4, 3),
+                    textcoords="offset points", fontsize=7.5, color=INK_2)
+    ax.set_xlim(0, 1.02)
+    ax.set_ylim(-0.02, 1.02)
+    ax.set_xlabel("per-class F1 · stratified (mean of 6 seeds)")
+    ax.set_ylabel("per-class F1 · grouped (mean of 6 runs)")
+    ax.legend(loc="upper left")
+    ax.set_title("Cross-session varieties are learnable in-distribution and fail only across sessions", fontsize=10)
+    _save(fig, s, "s09_per_class.png", "evidence/S09_post_sweep_forensics/per_class.csv (TTA)")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--figures", action="store_true", help="skip the evidence snapshot")
@@ -528,7 +733,7 @@ def main() -> None:
     if not a.figures:
         snapshot_evidence()
     print("figures:")
-    for f in (fig_s01, fig_s04, fig_s05, fig_s06, fig_s07):
+    for f in (fig_s01, fig_s04, fig_s05, fig_s06, fig_s07, fig_s09):
         f()
 
 

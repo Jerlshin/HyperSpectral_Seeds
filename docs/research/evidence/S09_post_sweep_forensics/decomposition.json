@@ -1,0 +1,33 @@
+{
+ "note": "Macro-recall shortfall of the grouped network (1 \u2212 recall), split by population. 'In-distribution' = 1 \u2212 stratified recall of the same classes (both bundles in training, 59 % train). Stratified has ~1.4\u00d7 the training kernels of grouped; C1 (LDA) puts the size effect at \u22480.01\u20130.02 of macro-F1, so the shift terms are slight over-estimates.",
+ "grouped_macro_recall": 0.5546579259259259,
+ "stratified_recall": {
+  "same": 0.7304928333333334,
+  "cross": 0.6632738333333333
+ },
+ "grouped_recall": {
+  "same": 0.6484145,
+  "cross": 0.15205616666666666
+ },
+ "shortfall_total": 0.4453420740740741,
+ "parts": {
+  "same-session \u00b7 already lost in-distribution": {
+   "value": 0.21860025740740738,
+   "share": 0.4908592071878828
+  },
+  "same-session \u00b7 lost to the bundle shift": {
+   "value": 0.06657464814814817,
+   "share": 0.14949103627041258
+  },
+  "cross-session \u00b7 already lost in-distribution": {
+   "value": 0.06360383148148148,
+   "share": 0.14282017169323688
+  },
+  "cross-session \u00b7 lost to the session shift": {
+   "value": 0.09656333703703704,
+   "share": 0.2168295848484677
+  }
+ },
+ "in_distribution_share": 0.6336793788811197,
+ "ceiling_if_same_session_perfect": 0.8398328314814815
+}

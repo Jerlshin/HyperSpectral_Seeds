@@ -22,8 +22,8 @@ training bundle · `held-out` = the other acquisition bundle (`val ∪ test`), s
 | F05 | Curriculum stages 2–3 used 65 % of wall clock for +0.005 macro-F1 | S01 | strat | E1 | standing |
 | F06 | The 4-branch fusion collapsed onto Branch C (87 % influence); Branch A was 60 % of FLOPs for 5.6 % | S01 | strat | E1 | standing (confounded) |
 | F07 | The Stage-1 loss was dominated 7.8 : 1 by auxiliary heads discarded at evaluation | S01 | — | E1 | standing |
-| F08 | Gradient clipping at 1.0 bound on every step (backbone pre-clip norm 25–50) | S01 | — | E1 | standing |
-| F09 | Hard classes {41, 49, 51, 52, 70} did not move under 8 mechanisms aimed at them | S01 | strat | E1 | standing |
+| F08 | Gradient clipping at 1.0 bound on every step (backbone pre-clip norm 25–50) | S01 | — | E1 | standing — **recurs at clip 5.0 (F36)** |
+| F09 | Hard classes {41, 49, 51, 52, 70} did not move under 8 mechanisms aimed at them | S01 | strat | E1 | standing — refined by F42 (70 is a session failure) |
 | F10 | All Stage-2/3 telemetry was silently dropped by a W&B step collision | S01 | — | E4 | standing (fixed) |
 | F11 | On mean-spectrum proxies, even spacing is the best band-selection method at k ≤ 40 | S03 | calib | E2 | standing; confirmed held-out by F18 |
 | F12 | Mean-spectrum proxy curves plateau at 192–224 bands | S03 | calib | E2 | **challenged** by F17 |
@@ -37,13 +37,27 @@ training bundle · `held-out` = the other acquisition bundle (`val ∪ test`), s
 | F20 | Low-pass DCT features do not beat the best selected band set of equal size (H5 rejected) | S05 | held-out | E4 | standing |
 | F21 | Honest held-out level ≈ 0.42 (LDA, full cube) and 0.44–0.46 (CNN); calib overstates held-out by ≈ 0.15 | S05 | calib vs held-out | E4 | standing |
 | F22 | 73 of 90 varieties had both bundles imaged in one session; 17 span two | S06 | — | E4 | standing |
-| F23 | Every model scores ≈ 0 held-out recall on the 17 cross-session varieties | S06 | held-out | E4 | standing — **the project's central finding** |
+| F23 | Every model scores ≈ 0 held-out recall on the 17 cross-session varieties | S06 | held-out | E4 | standing for SNV proxies — **refined by F33**: the network on reflectance reaches 0.15, about what shape alone gives |
 | F24 | Cross-session kernels are predicted as a class trained in their own session 71–78 % of the time (chance ≈ 15 %) | S06 | held-out | E3 | standing |
 | F25 | Dropping session-informative bands does not restore cross-session recall (H6) and costs ≈ 0.08 macro-F1 (H7) | S06 | held-out | E4 | standing |
 | F26 | The session fingerprint is strongest near the lamp peak (~710 nm, F ≈ 60) and below 450 nm | S06 | train | E2 | standing |
 | F27 | The in-scene white tile is in 180/180 scans but clips at 608–706 nm in sessions 0–7, leaving 215 measurable bands | S07 | — | E4 | standing |
 | F28 | Metal: decomposing Conv3d gives 2.12× per step; Branch-A recompute makes batch 128 fit (15.7×); compile is 2.25× slower | S04 | — | E3 | standing |
 | F29 | The 256-band-native re-architecture reproduces the audited 40-band control model bit-exactly | S02 | — | E4 | standing |
+| F30 | SpectralSeedNet (u430k32): grouped 0.530 ± 0.009, stratified 0.712 ± 0.033 macro-F1; seed σ 4× larger within-acquisition | S09 | held-out / strat | E4 | standing |
+| F31 | 63 % of the grouped macro-recall shortfall is already lost in-distribution; cross-session varieties cap grouped at 0.84 | S09 | held-out vs strat | E3 | standing |
+| F32 | The 2.85 M-param network adds only +0.035–0.054 macro-F1 over LDA on mean spectrum + 8 morphometrics | S09 | held-out / strat | E3 | standing |
+| F33 | Morphometrics are acquisition-invariant (0.167 grouped vs 0.174 strat) and alone reach cross-session recall 0.124 (network 0.152) | S09 | held-out | E3 | standing |
+| F34 | Within-acquisition, run-level F1 tracks training fit (r = −0.98); across bundles no link is detectable (r = −0.32, n = 6) | S09 | strat / held-out | E3 | standing |
+| F35 | The network under-fits: clean training accuracy 0.76–0.87; the margin phase drives training loss above ln 90 in 10/12 runs | S09 | train | E4 | standing |
+| F36 | The backbone gradient is clipped on 100 % of steps at clip 5.0 (pre-clip median 8.9, up to ≈ 44) | S09 | — | E4 | standing |
+| F37 | Grouped ≈ 0.005 + 0.73 × stratified macro-F1 across 18 model/input pairs (r = 0.94); the network sits on the line | S09 | held-out vs strat | E3 | standing |
+| F38 | The grouped–stratified gap is acquisition coverage, not training-set size (LDA: size ≈ 0.01 of 0.15; 24 test-bundle kernels +0.16) | S09 | held-out | E3 | standing (linear proxy) |
+| F39 | Cross-session recall is directional (older → session 8: 0.22–0.25; reverse 0.07–0.08) and carried by 4 varieties | S09 | held-out | E3 | standing |
+| F40 | Reflectance moved the session fingerprint from the lamp peak (F ≈ 60) to a broad NIR offset (F ≈ 7–9, 715–1000 nm) | S09 | train | E2 | standing |
+| F41 | Errors are systematic: 80 % shared by all seeds; 3-seed vote +0.01; TTA +0.011 mean and negative in 1/6 grouped runs | S09 | held-out | E4 | standing |
+| F42 | A hard in-distribution cluster {0, 30, 41, 49, 51, 52} confuses mutually under both protocols (stratified F1 0.17–0.39) | S09 | strat | E3 | standing — refines F09 |
+| F43 | Prior 78–96 % results on this dataset are within-acquisition (random kernel splits) and rely on high-resolution RGB morphology | S09 | — | E1 | standing |
 
 ---
 
@@ -215,3 +229,87 @@ inductor 983 vs eager 437 ms/forward. Host cost 1.86 ms/sample, 1.41 ms of it mm
 `scripts/capture_golden.py --verify`: `v3/logits match (max |Δ| = 0.000e+00)`, 306 init tensor
 digests match. 918 tests pass; the 2 failures are pre-existing environment drift in Stage-1 golden
 loss digests. → [S02](studies/S02_architecture_protocol_revision/README.md)
+
+### F30 · The network's first honest numbers
+SpectralSeedNet on `uniform430_k32` reflectance, single stage, calib-selected, TTA. Grouped (2 folds ×
+3 seeds): **0.530 ± 0.009** macro-F1 (range 0.518–0.539; no TTA 0.519); stratified (6 seeds, fixed
+split): **0.712 ± 0.033** (0.670–0.753). Same-session recall 0.648, cross-session 0.152. Fold means
+0.529 / 0.531. **Caveat:** one band budget (k = 32, D15); stratified trains on 1.39× the kernels of
+grouped. → [S09](studies/S09_post_sweep_forensics/README.md) · `evidence/S09_post_sweep_forensics/runs.csv`
+
+### F31 · Most of the grouped shortfall exists before any shift
+Grouped macro-recall shortfall 0.445 = same-session in-distribution 0.219 + same-session bundle shift
+0.067 + cross-session in-distribution 0.064 + cross-session session shift 0.097. "In-distribution" is
+1 − stratified recall of the same classes. If the 73 same-session varieties were perfect, grouped
+macro-recall would be 0.84. **Caveat:** the stratified arm's extra data makes the shift terms slight
+over-estimates (≈ 0.01, F38). → [S09](studies/S09_post_sweep_forensics/README.md) · `decomposition.json`
+
+### F32 · The network barely beats a linear model on its own scalars
+LDA (svd, untuned) on the 32-band mean spectrum + the 8 morphometrics — inputs the network also
+receives — scores 0.485 grouped / 0.659 stratified against the network's 0.530 / 0.712 (TTA; 0.519 /
+0.700 without). LDA beats logistic, RBF-SVM, boosting and an MLP at fixed hyperparameters. The spatial
+pathway (79.6 % of parameters) plus the deep head buy ≈ 0.04–0.05. **Caveat:** non-linear tabular
+models were not tuned; LDA was not either. → `network_margin.csv`, `c5_tabular.csv`
+
+### F33 · Shape is the acquisition-invariant cue
+Morphometrics-only LDA: 0.167 grouped vs 0.174 stratified (no gap); cross-session recall 0.124; per-feature
+session F 0.8–1.6. Spectrum-only LDA cross-session recall 0.039 (k32) / 0.053 (215). Logistic regression on spectrum + morphometrics: 0.170. The network's
+0.152 cross-session recall therefore cannot be attributed to the spectrum until a morphometrics-zeroed
+arm is run (X2). → `c5_tabular.csv`, `c4_session_F_morphometrics.csv`
+
+### F34 · Fit predicts score within the acquisition
+Stratified, 6 seeds on one fixed split: held-out F1 vs final training loss r = −0.98 (95 % CI
+−1.00 … −0.81), vs clean training accuracy r = 0.96, vs calib F1 r = 0.90. Grouped: r = −0.32 / 0.19 /
+0.37, CIs spanning zero. The 0.08 stratified seed spread is an optimisation outcome. **Caveat:** n = 6;
+"no link across bundles" is weak evidence. → `fit_link.json`
+
+### F35 · Under-fitting under the shipped regime
+At epoch 111 (first epoch without mixup and margin) training accuracy on augmented batches is
+0.76–0.87; calib accuracy 0.66–0.73. Ramping the ArcFace margin to 0.3 (s = 32) raises training loss
+from ≈ 1.6 to 3.7–6.1; 10 of 12 runs end above ln 90 = 4.50. Calib F1 changes by 0 to +0.03 across
+that phase while the LR decays. → `curves.csv`
+
+### F36 · Clipping binds on every step, again
+`grad_norm/clipped_backbone` = 1.0 in every epoch of every run; backbone pre-clip norm median 8.9
+against threshold 5.0, ≈ 26 during the margin ramp and ≈ 44 after it. D07 raised the clip from 1.0 to
+5.0 so that it would clip outliers only; it still clips everything. Effect size unknown (Adam is
+largely invariant to a constant gradient scale). → `curves.csv`
+
+### F37 · The transfer line
+Across 18 (model, input) pairs measured on both protocols — the network ± TTA, 8 LDA representations,
+8 non-linear tabular controls — grouped = 0.005 + 0.726 × stratified, r = 0.94. The network's residual
+is +0.008: no measured model buys acquisition robustness beyond its in-distribution score. Observational,
+not an intervention. → `transfer.csv`, `transfer_fit.json`
+
+### F38 · Coverage, not quantity (linear proxy)
+LDA at a matched 40 kernels/class: 0.484 stratified vs 0.332 grouped (gap 0.152 vs 0.162 at native
+sizes). The grouped curve is flat past 30/class. Swapping 24 training kernels for 24 from the test
+bundle (n fixed) lifts the rest of that bundle from 0.336 to 0.497; 80/20 5-fold scores 0.510 (k32).
+**Caveat:** demonstrated for LDA only. → `c1_learning_curve.csv`, `c2_acquisition_mix.csv`
+
+### F39 · Cross-session recall has a direction
+Trained on the older session, tested on session 8: 0.22–0.25; trained on session 8, tested on the older
+one: 0.07–0.08 (folds 0/1). DT66 (78) 0.91; 60, 64, 22 at 0.4–0.55; 7, 12, 38, 45, 79 at 0 in every run.
+→ `session_direction.csv`
+
+### F40 · Where the fingerprint went
+Per-band session F on 215-band reflectance (S06 method, training rows): median 7–9 across 715–1000 nm,
+≈ 0.7 at 430–500 nm. SNV-256 (F26) peaked at ≈ 60 at the lamp maximum and fell below 1 at 860–930 nm.
+SNV of reflectance: median 1.3–2.6 in the NIR, peak 10.9 at 801 nm. → `c4_session_F_reflectance.csv`
+
+### F41 · Systematic errors, small test-time gains
+Kernels wrong in all 3 seeds: 0.36 of held-out (grouped) against a single-model error of 0.45 — 80 % of
+errors are shared (stratified 72 %). 3-seed vote: +0.015 / +0.009 grouped, +0.012 stratified. TTA:
++0.011 grouped, +0.013 stratified; grouped f1_s2 −0.0095 (paired CI −0.016 … −0.002).
+→ `kernel_consistency.csv`, `tta_delta.csv`
+
+### F42 · The hard cluster is varietal, not session
+NBP (30), TB13 (41), KB16 (49), NBK (51), NPT1 (52) and BC15 (0) are each other's top confusers
+in-distribution (stratified F1 0.17–0.39) and remain hard under grouped. Class 70 (F09) is instead a
+cross-session failure (stratified 0.46, grouped 0.04). → `confusion_pairs.csv`, `per_class.csv`
+
+### F43 · What the literature numbers measure
+Fabiyi et al. 2020 (the dataset authors): random forest on high-resolution RGB shape features + LDA of
+256 bands, random 4:1 kernel split, 90-variety average F1 78.27 % (maximum over LDA component counts).
+Taheri et al. 2024: 92.73–96.17 % precision with 15 bands + RGB, split protocol not stated. **E1:** read
+from the papers, not reproduced. → `literature.csv`

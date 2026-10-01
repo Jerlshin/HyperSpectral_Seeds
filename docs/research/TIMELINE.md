@@ -14,7 +14,8 @@ flowchart TD
     S05["<b>S05</b> Band research, pre-registered<br/>29–30 Sep<br/>430 nm floor; CNN best at 24–64 bands"]
     S06["<b>S06</b> Session confound<br/>29–30 Sep<br/>cross-session recall ≈ 0"]
     S07["<b>S07</b> White-tile reflectance<br/>30 Sep<br/>215-band reflectance cube"]
-    S08["<b>S08</b> Neural confirmation<br/>planned"]
+    S08["<b>S08</b> Neural confirmation<br/>1 Oct · protocol sweep run<br/>grouped 0.530 · strat 0.712"]
+    S09["<b>S09</b> Post-sweep forensics<br/>1 Oct<br/>fit-limited in-distribution;<br/>+0.05 over LDA; shape carries cross-session"]
     S00 -->|"run could not support its claims"| S01
     S01 -->|"14 implementation changes,<br/>ablation plan A1–A12"| S02
     S01 -->|"band selection leaked labels,<br/>elbows vacuous"| S03
@@ -25,6 +26,7 @@ flowchart TD
     S05 -->|"finalist band sets"| S08
     S07 -->|"new cube; effect unmeasured"| S08
     S04 -->|"pre-sliced cube, T4 × 2"| S08
+    S08 -->|"12 runs, 4.7 GPU-h —<br/>what limits the score?"| S09
 ```
 
 ---
@@ -109,9 +111,26 @@ which is exactly what a session fingerprint at the lamp peak would be.
 
 ## Phase 4 · Confirmation (Oct 2026 →)
 
-### S08 · Neural confirmation — planned
-**Triggered by:** everything above is proxy evidence. The network itself has not been trained under
+### S08 · Neural confirmation — 2026-10-01 (protocol sweep run)
+**Triggered by:** everything above is proxy evidence. The network itself had not been trained under
 the revised protocol.
-**Ready:** Kaggle T4 × 2 runtime, pre-sliced `uniform430_k32` cube, mid-stage resume, JSONL metrics.
-**Next:** FW-01 (does reflectance restore cross-session recall — on proxies first), FW-02 (σ),
-FW-03 (budget), FW-04 (leakage gap).
+**Did:** the A1 + A12 protocol sweep on Kaggle T4 × 2 — grouped 2 folds × 3 seeds, stratified 6 seeds, LDA
+and LinearSVC baselines — on the pre-sliced `uniform430_k32` reflectance cube. 4.7 GPU-pair-hours.
+**Found:** grouped 0.530 ± 0.009, stratified 0.712 ± 0.033; cross-session recall 0.152, no longer ≈ 0.
+**Changed:** nothing yet. Interpreting the sweep became its own study.
+
+### S09 · Post-sweep forensics — 2026-10-01
+**Triggered by:** S08's numbers raised the question the project could not answer from proxies: is the
+limit the data and protocol, or the model and its training?
+**Did:** extracted every run's curves, predictions and session reports, then ran five CPU controls on mean
+spectra (matched-size learning curves, acquisition mixing, representation, session F on reflectance,
+tabular models). Checked what the literature's numbers measure.
+**Found:** the network barely beats LDA on its own 40 scalars (+0.05, F32). Within the acquisition, its
+score tracks its training fit (r = −0.98), and it under-fits (F34, F35); the clip binds on every step (F36).
+63 % of the grouped shortfall exists in-distribution (F31), and every model keeps ≈ 0.73 of its
+in-distribution score across bundles (F37). The leakage gap is acquisition coverage, not data volume
+(F38). Shape is the one acquisition-invariant cue and matches most of the cross-session recall (F33).
+Reflectance moved the session fingerprint rather than removing it (F40). Prior 78–96 % results are
+within-acquisition with RGB morphology (F43).
+**Changed:** three reporting tiers with 80/20 as tier 1, never the headline (D16); two frozen diagnostics
+before any architecture work (D17); instrumentation fixes (D18); D06, D07 under review.

@@ -66,3 +66,7 @@ when a result is ambiguous, it is usually because one of these was used loosely.
 | **E0–E4** | Evidence strength; see README §4. |
 | **Pre-registration** | Hypotheses, arms and decision rules frozen to a hashed JSON before held-out data is touched (D09). |
 | **Deviation** | What shipped differs from a frozen rule or plan; always recorded in `DECISIONS.md`. |
+| **Reporting tiers** (D16) | *Within-acquisition* (patch-level 80/20, literature-comparable) · *cross-bundle* (grouped, primary) · *cross-session* (17 varieties, with a shape-only control). A score always names its tier. |
+| **Transfer line** (F37) | Grouped ≈ 0.73 × stratified macro-F1 across all models measured; a model above the line has bought acquisition robustness. |
+| **Clean training accuracy** | Training accuracy without mixup, margin or augmentation — the measure of fit F34/F35 rely on (logged from D18 on). |
+| **Fit-first** (X1) | The diagnostic regime of FW-15: mixup 30 epochs, no angular margin, clip 50, 200 epochs. |
