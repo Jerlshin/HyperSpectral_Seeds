@@ -1,0 +1,394 @@
+[
+  {
+    "severity": "warning",
+    "code": "some_plateaus_not_demonstrable",
+    "message": "28 of 72 curves reach their plateau only at the last budget, so for those the plateau is the endpoint of the curve rather than a feature of it.",
+    "evidence": {
+      "cells": [
+        {
+          "fold": 0,
+          "method": "cluster_ward",
+          "proxy": "lda"
+        },
+        {
+          "fold": 0,
+          "method": "cluster_ward",
+          "proxy": "linsvc"
+        },
+        {
+          "fold": 0,
+          "method": "fdr",
+          "proxy": "lda"
+        },
+        {
+          "fold": 0,
+          "method": "fdr",
+          "proxy": "linsvc"
+        },
+        {
+          "fold": 0,
+          "method": "mi",
+          "proxy": "lda"
+        },
+        {
+          "fold": 0,
+          "method": "mi",
+          "proxy": "linsvc"
+        },
+        {
+          "fold": 0,
+          "method": "pca_loading",
+          "proxy": "lda"
+        },
+        {
+          "fold": 0,
+          "method": "pca_loading",
+          "proxy": "linsvc"
+        },
+        {
+          "fold": 0,
+          "method": "pls_vip",
+          "proxy": "lda"
+        },
+        {
+          "fold": 0,
+          "method": "pls_vip",
+          "proxy": "linsvc"
+        },
+        {
+          "fold": 0,
+          "method": "random",
+          "proxy": "linsvc"
+        },
+        {
+          "fold": 0,
+          "method": "tree_importance",
+          "proxy": "linsvc"
+        },
+        {
+          "fold": 0,
+          "method": "uniform",
+          "proxy": "linsvc"
+        },
+        {
+          "fold": 0,
+          "method": "variance",
+          "proxy": "extratrees"
+        },
+        {
+          "fold": 0,
+          "method": "variance",
+          "proxy": "lda"
+        },
+        {
+          "fold": 0,
+          "method": "variance",
+          "proxy": "linsvc"
+        },
+        {
+          "fold": 1,
+          "method": "cluster_ward",
+          "proxy": "lda"
+        },
+        {
+          "fold": 1,
+          "method": "cluster_ward",
+          "proxy": "linsvc"
+        },
+        {
+          "fold": 1,
+          "method": "fdr",
+          "proxy": "linsvc"
+        },
+        {
+          "fold": 1,
+          "method": "mi",
+          "proxy": "linsvc"
+        }
+      ]
+    }
+  },
+  {
+    "severity": "warning",
+    "code": "more_bands_hurt",
+    "message": "1 curves peak in the interior and fall materially by the largest budget \u2014 extra bands actively cost accuracy for those estimators. With ~40 training patches per class this is the expected small-sample behaviour, and it means 'use everything' is not automatically safe.",
+    "evidence": {
+      "cells": [
+        {
+          "fold": 1,
+          "method": "uniform",
+          "proxy": "lda",
+          "peak_budget": 192,
+          "score_at_max": 0.656234516448654
+        }
+      ]
+    }
+  },
+  {
+    "severity": "warning",
+    "code": "methods_no_better_than_random",
+    "message": "2 method(s) never beat a random subset of the same size by 0.010 macro-F1 at any budget on any proxy: random, variance. On this data, with these estimators, they are not selecting \u2014 they are subsetting.",
+    "evidence": {
+      "methods": [
+        "random",
+        "variance"
+      ],
+      "null_margin": 0.01
+    }
+  },
+  {
+    "severity": "warning",
+    "code": "null_wins",
+    "message": "The best-scoring method at k \u2264 40 is the null `uniform`. Any published claim that a particular selection algorithm is needed for this dataset is not supported by these results.",
+    "evidence": {
+      "method": "uniform",
+      "mean_score_k_le_40": 0.21058033628430314
+    }
+  },
+  {
+    "severity": "warning",
+    "code": "folds_choose_different_bands",
+    "message": "34 (method, budget) pairs select nearly disjoint bands in the two acquisition folds (Jaccard < 0.4 at k \u2264 40). The chosen wavelengths depend on which tray was held out, which is the acquisition-recognition problem this repository exists to measure, appearing one level up in the pipeline.",
+    "evidence": {
+      "pairs": [
+        {
+          "method": "random",
+          "budget": 1,
+          "mean_jaccard": 0.0
+        },
+        {
+          "method": "random",
+          "budget": 2,
+          "mean_jaccard": 0.0
+        },
+        {
+          "method": "random",
+          "budget": 3,
+          "mean_jaccard": 0.0
+        },
+        {
+          "method": "random",
+          "budget": 5,
+          "mean_jaccard": 0.0
+        },
+        {
+          "method": "random",
+          "budget": 8,
+          "mean_jaccard": 0.0
+        },
+        {
+          "method": "random",
+          "budget": 10,
+          "mean_jaccard": 0.0
+        },
+        {
+          "method": "random",
+          "budget": 15,
+          "mean_jaccard": 0.034482758620689655
+        },
+        {
+          "method": "random",
+          "budget": 20,
+          "mean_jaccard": 0.0
+        },
+        {
+          "method": "random",
+          "budget": 25,
+          "mean_jaccard": 0.08695652173913043
+        },
+        {
+          "method": "random",
+          "budget": 30,
+          "mean_jaccard": 0.05263157894736842
+        },
+        {
+          "method": "random",
+          "budget": 40,
+          "mean_jaccard": 0.05263157894736842
+        },
+        {
+          "method": "fdr",
+          "budget": 5,
+          "mean_jaccard": 0.25
+        },
+        {
+          "method": "mi",
+          "budget": 1,
+          "mean_jaccard": 0.0
+        },
+        {
+          "method": "mi",
+          "budget": 2,
+          "mean_jaccard": 0.3333333333333333
+        },
+        {
+          "method": "mrmr",
+          "budget": 1,
+          "mean_jaccard": 0.0
+        },
+        {
+          "method": "mrmr",
+          "budget": 2,
+          "mean_jaccard": 0.0
+        },
+        {
+          "method": "mrmr",
+          "budget": 3,
+          "mean_jaccard": 0.2
+        },
+        {
+          "method": "mrmr",
+          "budget": 5,
+          "mean_jaccard": 0.1111111111111111
+        },
+        {
+          "method": "mrmr",
+          "budget": 8,
+          "mean_jaccard": 0.3333333333333333
+        },
+        {
+          "method": "mrmr",
+          "budget": 15,
+          "mean_jaccard": 0.36363636363636365
+        }
+      ]
+    }
+  },
+  {
+    "severity": "warning",
+    "code": "narrow_spectral_coverage",
+    "message": "13 selections span less than 35% of the 385\u20131006 nm range. A set concentrated in one region is fragile to any acquisition change that affects that region, whatever it scores.",
+    "evidence": {
+      "cells": [
+        {
+          "fold": 0,
+          "method": "variance",
+          "budget": 10,
+          "wavelength_coverage": 0.03922092893827364
+        },
+        {
+          "fold": 0,
+          "method": "variance",
+          "budget": 15,
+          "wavelength_coverage": 0.054909302759872734
+        },
+        {
+          "fold": 0,
+          "method": "variance",
+          "budget": 20,
+          "wavelength_coverage": 0.2823906934899467
+        },
+        {
+          "fold": 0,
+          "method": "variance",
+          "budget": 25,
+          "wavelength_coverage": 0.28631278574197705
+        },
+        {
+          "fold": 0,
+          "method": "variance",
+          "budget": 30,
+          "wavelength_coverage": 0.2941569718505302
+        },
+        {
+          "fold": 0,
+          "method": "variance",
+          "budget": 40,
+          "wavelength_coverage": 0.3137674379241596
+        },
+        {
+          "fold": 0,
+          "method": "pls_vip",
+          "budget": 10,
+          "wavelength_coverage": 0.04706511504682699
+        },
+        {
+          "fold": 1,
+          "method": "variance",
+          "budget": 10,
+          "wavelength_coverage": 0.03922092893827364
+        },
+        {
+          "fold": 1,
+          "method": "variance",
+          "budget": 15,
+          "wavelength_coverage": 0.054909302759872734
+        },
+        {
+          "fold": 1,
+          "method": "variance",
+          "budget": 20,
+          "wavelength_coverage": 0.27062441352487054
+        },
+        {
+          "fold": 1,
+          "method": "variance",
+          "budget": 25,
+          "wavelength_coverage": 0.2823906934899467
+        },
+        {
+          "fold": 1,
+          "method": "variance",
+          "budget": 30,
+          "wavelength_coverage": 0.2902348779940073
+        },
+        {
+          "fold": 1,
+          "method": "pls_vip",
+          "budget": 10,
+          "wavelength_coverage": 0.04706511504682699
+        }
+      ]
+    }
+  },
+  {
+    "severity": "warning",
+    "code": "worse_than_random",
+    "message": "Method(s) averaging WORSE than a random subset of the same size: fdr (-0.086), mi (-0.075), pca_loading (-0.015), pls_vip (-0.040), spa (-0.017), tree_importance (-0.038), variance (-0.120). A selection criterion that anti-correlates with usefulness is a finding about the criterion.",
+    "evidence": {
+      "methods": {
+        "fdr": -0.08615979960768146,
+        "mi": -0.07523994792879912,
+        "pca_loading": -0.015466106518886056,
+        "pls_vip": -0.04008842894828932,
+        "spa": -0.017225090148514803,
+        "tree_importance": -0.03770382528337058,
+        "variance": -0.12001134710098996
+      }
+    }
+  },
+  {
+    "severity": "info",
+    "code": "trend_census",
+    "message": "Curve shapes across (fold \u00d7 method \u00d7 proxy): monotone_increasing \u00d7 28, peaked_declining \u00d7 1, saturating \u00d7 43",
+    "evidence": {
+      "shapes": {
+        "monotone_increasing": 28,
+        "peaked_declining": 1,
+        "saturating": 43
+      },
+      "sigma": 0.008821887929591087
+    }
+  },
+  {
+    "severity": "info",
+    "code": "redundancy_census",
+    "message": "Mean rank efficiency (independent directions per selected band) at 10 \u2264 k \u2264 50, worst first: variance 0.06, mi 0.06, fdr 0.06, random 0.09, spa 0.09",
+    "evidence": {
+      "rank_efficiency": {
+        "variance": 0.05883098978708249,
+        "mi": 0.06324013701281905,
+        "fdr": 0.06356001558550925,
+        "random": 0.09001482997532106,
+        "spa": 0.09254554602435763,
+        "uniform": 0.10816182623772888,
+        "tree_importance": 0.11259757284054764,
+        "cluster_ward": 0.11462377282147239,
+        "pls_vip": 0.11612592941325037,
+        "l1_path": 0.12308925512549049,
+        "mrmr": 0.14327553498928025,
+        "pca_loading": 0.14446078428491735
+      }
+    }
+  }
+]

@@ -1,0 +1,132 @@
+{
+  "fingerprint": "4f1e8ccae3d5bd85",
+  "config": {
+    "patches_path": "./dataset/patches.npy",
+    "labels_path": "./dataset/labels.npy",
+    "groups_path": "./dataset/groups.npy",
+    "wavelength_path": "./dataset/wavelengths.csv",
+    "morphology_path": "./dataset/morphology.npy",
+    "split_scheme": "grouped",
+    "split_eval_frac": 0.3,
+    "calib_frac": 0.15,
+    "single_group_policy": "error",
+    "folds": [
+      0,
+      1
+    ],
+    "budgets": [
+      1,
+      2,
+      3,
+      5,
+      8,
+      10,
+      15,
+      20,
+      25,
+      30,
+      40,
+      50,
+      64,
+      80,
+      100,
+      128,
+      160,
+      192,
+      224,
+      256
+    ],
+    "methods": [
+      "uniform",
+      "random",
+      "variance",
+      "fdr",
+      "mi",
+      "mrmr",
+      "spa",
+      "cluster_ward",
+      "pca_loading",
+      "l1_path",
+      "tree_importance",
+      "pls_vip"
+    ],
+    "proxies": [
+      "lda",
+      "linsvc",
+      "extratrees"
+    ],
+    "replicates": 5,
+    "replicate_frac": 0.8,
+    "random_draws": 10,
+    "features": "mean",
+    "use_morphology": false,
+    "seed": 42,
+    "chunk_size": 512,
+    "n_boot": 2000,
+    "corr_threshold": 0.995,
+    "mi_neighbors": 5,
+    "plateau_tol": 0.01,
+    "stability_floor": 0.5,
+    "null_margin": 0.01,
+    "output_root": "outputs/band_study",
+    "jobs": 1,
+    "verbose": false,
+    "force": false,
+    "dry_run": false,
+    "progress": true,
+    "note": "",
+    "fingerprint": "4f1e8ccae3d5bd85"
+  },
+  "created": "2026-08-13 17:32:24",
+  "stages": {
+    "prepare": {
+      "stage": "prepare",
+      "n_done": 2,
+      "n_skipped": 0,
+      "n_failed": 0,
+      "seconds": 60.12,
+      "notes": [
+        "features cached (mean); splits written to outputs/band_study/cache/splits.json"
+      ],
+      "finished": "2026-08-13 17:33:24"
+    },
+    "select": {
+      "stage": "select",
+      "n_done": 134,
+      "n_skipped": 0,
+      "n_failed": 0,
+      "seconds": 1744.44,
+      "notes": [],
+      "finished": "2026-08-13 18:04:27"
+    },
+    "proxy": {
+      "stage": "proxy",
+      "n_done": 9066,
+      "n_skipped": 0,
+      "n_failed": 0,
+      "seconds": 2881.16,
+      "notes": [
+        "records \u2192 outputs/band_study/proxy/records.jsonl"
+      ],
+      "finished": "2026-08-13 18:54:49"
+    },
+    "analyse": {
+      "stage": "analyse",
+      "n_done": 72,
+      "n_skipped": 0,
+      "n_failed": 0,
+      "seconds": 0.0,
+      "notes": [],
+      "finished": "2026-08-13 18:54:49"
+    },
+    "report": {
+      "stage": "report",
+      "n_done": 1,
+      "n_skipped": 0,
+      "n_failed": 0,
+      "seconds": 0.0,
+      "notes": [],
+      "finished": "2026-08-13 18:54:51"
+    }
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "status": "plateau_found",
+  "recommended_budget": 224,
+  "aggressive_budget": 192,
+  "full_budget": 256,
+  "plateau_by_proxy": {
+    "extratrees": 192,
+    "lda": 224,
+    "linsvc": 224
+  },
+  "recommended_method": "l1_path",
+  "recommended_method_rationale": "highest calib macro-F1 at the recommended budget among methods that both beat the random null and select stably",
+  "fallback_reason": "",
+  "runner_up_methods": [
+    "mrmr",
+    "spa"
+  ],
+  "critical_flags": [],
+  "decision_inputs": {
+    "metric": "macro_f1",
+    "split_decisions_were_made_on": "calib",
+    "plateau_tol": 0.01,
+    "stability_floor": 0.5,
+    "null_margin": 0.01,
+    "sigma_pooled": 0.008821887929591087
+  },
+  "confirm_list": [
+    {
+      "fold": 0,
+      "method": "l1_path",
+      "budget": 224,
+      "why": "recommended budget"
+    },
+    {
+      "fold": 1,
+      "method": "l1_path",
+      "budget": 224,
+      "why": "recommended budget"
+    },
+    {
+      "fold": 0,
+      "method": "l1_path",
+      "budget": 192,
+      "why": "aggressive budget \u2014 the smallest any proxy plateaus at"
+    },
+    {
+      "fold": 1,
+      "method": "l1_path",
+      "budget": 192,
+      "why": "aggressive budget \u2014 the smallest any proxy plateaus at"
+    },
+    {
+      "fold": 0,
+      "method": "mrmr",
+      "budget": 224,
+      "why": "runner-up method"
+    },
+    {
+      "fold": 1,
+      "method": "mrmr",
+      "budget": 224,
+      "why": "runner-up method"
+    },
+    {
+      "fold": 0,
+      "method": "spa",
+      "budget": 224,
+      "why": "runner-up method"
+    },
+    {
+      "fold": 1,
+      "method": "spa",
+      "budget": 224,
+      "why": "runner-up method"
+    }
+  ],
+  "caveat": "Every number behind this recommendation comes from classical models on foreground-masked MEAN SPECTRA. That representation discards all spatial structure, and the project's own bracket puts ~25 macro-F1 points of the deployed model in exactly what it discards. A proxy plateau is therefore a LOWER bound on the budget a spatial-spectral network needs (CHANGES F-3). Run the `neural` stage before treating the budget as settled."
+}

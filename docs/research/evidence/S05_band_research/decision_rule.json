@@ -1,0 +1,10 @@
+{
+ "inputs": "within-training-bundle evidence only: a3_budget_all.json (LDA shrink 1e-3, 2 folds x 5 outer CV, nested selection) and cnn_calib.jsonl (CNN proxy, train->calib, 2 folds x 2 seeds)",
+ "R1_primary_sensor_valid_track": {
+   "constraint": "no band below 430 nm (pixel SNR<10, dark-clip, SNV value 85-91% explained by the global -mu/sd statistic); the global statistic may be supplied explicitly as one scalar feature (gstat1)",
+   "method": "glw430 if its mean paired within-train LDA CV advantage over uniform430 across k in {24,32,48,64} is >= 0.01 macro-F1, else uniform430. [Computed from a3 BEFORE freezing: glw430 - uniform430 = +0.034,+0.027,+0.011,+0.014 -> mean +0.022 -> glw430]",
+   "budget": "k* = smallest k on the uniform430 CNN-proxy calib curve (mean of 2 folds x 2 seeds) whose mean is >= peak - 1 SE (SE = sd over the 4 fold x seed cells / 2); budgets are read from the finest label-free curve because the budget is a property of the reading model, not the selector"
+ },
+ "R2_unconstrained_track": "same rule over the full 383-1006 nm range (glw vs uniform) — reported for comparison, not recommended",
+ "use_of_heldout": "test H1-H5 only and report every arm. The recommendation switches away from R1 only if H1 is falsified on BOTH proxies (artifact-including arms keep >= 0.02 mean held-out advantage over their >=430 nm counterparts); even then the implementation is 'R1 bands + explicit gstat1', which is physically valid. No arm is picked by its held-out score."
+}

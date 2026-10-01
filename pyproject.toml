@@ -75,6 +75,9 @@ target-version = "py310"
 # Notebooks are exploratory output, not shipped code.
 extend-exclude = [
     "notebooks/",
+    # Verbatim archive of one-off analysis scripts a study's numbers came from
+    # (docs/research/WORKFLOW.md §1). A record, not shipped code: never reformat it.
+    "docs/research/evidence/",
     # `ruff format` rewrites Python code fences inside Markdown. REFACTOR_PLAN.md is
     # the governing spec and its snippets are quoted verbatim in commit messages and
     # module docstrings, so it must not be reflowed by a formatter run.

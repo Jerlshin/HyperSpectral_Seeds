@@ -838,6 +838,7 @@ reported number.
 
 | | |
 |---|---|
+| [`docs/research/`](docs/research/README.md) | **The research log**: every study, finding and decision so far, with evidence and figures, why each step was taken, and the backlog. Start here for *what we have learned*. |
 | [`CHANGES.md`](CHANGES.md) | The audit. The authoritative specification this revision implements. |
 | [`docs/01_ABSTRACT_AND_OVERVIEW.md`](docs/01_ABSTRACT_AND_OVERVIEW.md) | Objective, contributions, evaluation framework |
 | [`docs/02_DATASET_AND_PREPROCESSING.md`](docs/02_DATASET_AND_PREPROCESSING.md) | Acquisition → segmentation → patches → store → splits |

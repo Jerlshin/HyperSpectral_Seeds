@@ -1,0 +1,6 @@
+arm,recall_same_session,recall_cross_session
+LDA · full 256,0.5347,0.0
+LDA · uniform430 k64 + gain,0.586,0.0006
+LDA · session-clean k64,0.411,0.0006
+CNN · uniform k64,0.5947,0.0031
+CNN · full 256,0.5692,0.0046
