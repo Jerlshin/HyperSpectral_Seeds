@@ -1,0 +1,48 @@
+{
+ "frozen_at": "2026-10-01",
+ "study": "S10 → S11 (execution)",
+ "parent_commit": "8050ba2 (S09 committed; the S10 analysis was uncommitted when this file was frozen). P0 instrumentation (S10 §6) must land first; its commit is recorded in the S11 page.",
+ "depends_on": {
+  "file": "evidence/S09_post_sweep_forensics/preregistration_next.json",
+  "sha256": "f896d0e569e0c071f85fb1c7e2fbce23cd3266da1ef317204fa329af9bb542e7",
+  "role": "X1's outcome (H12a) selects the regime X5 and X6 run under; X4 uses X1's schedule"
+ },
+ "regime_rule": "If H12a is supported, X5 and X6 run under the X1 overrides and their reference is X1's grouped runs. Otherwise they run under the shipped regime and their reference is the S09 sweep (grouped 0.530, sd 0.009). sigma_ref = max(observed sd of the reference grouped runs, 0.009).",
+ "aux_weight_note": "Until P0.4 lands, the loop applies stage1.aux_loss_weight_{init,final} (0.65 -> 0.25), not model.aux_head_weight (S10 F54). All arms below use the applied 'legacy' schedule unless they say otherwise; X4 switches the aux term off through the keys the loop actually reads.",
+ "metric": "macro-F1 on val ∪ test, TTA, mean over runs; no-TTA reported beside; checkpoint chosen on calib only; same/cross-session recall and cross-session attraction from reporting/session.py",
+ "arms": {
+  "X4_fit_ceiling": {
+   "role": "diagnostic only — never a candidate regime; its held-out score is recorded but decides nothing",
+   "overrides": "single.mixup_epochs=0 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0 single.epochs=200 single.patience=200 single.label_smooth_hi=0.0 single.label_smooth_lo=0.0 stage1.aux_loss_weight_init=0.0 stage1.aux_loss_weight_final=0.0 single.dropout=0.0 single.aug_profile=none",
+   "runs": {
+    "grouped": "fold 0 × seed 0",
+    "stratified": "fold 0 × seed 0"
+   },
+   "measure": "clean training accuracy on the D18 fixed 1,000-kernel training subset (eval mode, no augmentation, margin 0), live weights, final epoch"
+  },
+  "X5_spatial_tail_stride": {
+   "change": "the last ResBlock2D of the spatial tail uses stride 1 instead of 2 (final map 2×2; no structurally zero-gradient parameters; parameter count unchanged). New key model.spatial_tail_strides=[2,2,2,1]; default [2,2,2,2] reproduces the current model bit-for-bit",
+   "runs": "grouped folds 0,1 × seeds 0,1,2, under the regime_rule"
+  },
+  "X6_reflectance_level": {
+   "change": "SpectralPath appends log(masked mean reflectance) (C values, before the ECA gate), standardised per band with statistics fitted on the run's train rows (as the morphometrics are), to its descriptor before the LayerNorm. Nothing else changes. New key model.spectral_level_block=log; default none reproduces the current model bit-for-bit",
+   "runs": "grouped folds 0,1 × seeds 0,1,2, under the regime_rule"
+  }
+ },
+ "hypotheses": {
+  "H16": "X4 (grouped fold 0) reaches clean training accuracy ≥ 0.98 at its final epoch: with every softener removed the architecture can fit its training bundle",
+  "H17": "X5 grouped macro-F1 (TTA) ≥ reference − max(2·sigma_ref, 0.018): removing the dead taps is non-inferior",
+  "H18a": "X6 grouped macro-F1 (TTA) ≥ reference + max(2·sigma_ref, 0.02)",
+  "H18b": "X6 cross-session recall (TTA) ≥ reference − 0.03 AND cross-session attraction ≤ reference + 0.05"
+ },
+ "decision_rule": {
+  "H16 supported": "the architecture can fit; the shipped under-fit is the regime and its softeners (route per S09 H12/H13)",
+  "H16 rejected": "capacity/optimisation-limited: P2.1 (X5) and P3.6 (tail layout) move ahead of further regime work",
+  "H17 supported": "adopt stride [2,2,2,1] as the default (correctness), recorded as a decision; claim an improvement only if Δ ≥ +2·sigma_ref",
+  "H17 rejected": "keep the old tail and record why the 1×1 collapse helps; do not adopt",
+  "H18a and H18b supported": "adopt the level block (D12 annotation: reflectance level is variety information for the network)",
+  "H18a supported, H18b rejected": "do not adopt; record reflectance level as session evidence",
+  "H18a rejected": "level adds nothing measurable to the network; the invariant design stands"
+ },
+ "heldout_use": "Each arm is scored once on val ∪ test. No arm, epoch, threshold or hyperparameter is chosen by its held-out score. A second round, if any, is a new frozen file naming what motivated it."
+}

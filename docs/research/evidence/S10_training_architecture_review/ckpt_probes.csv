@@ -1,0 +1,145 @@
+arm,fold,seed,best_epoch,best_source,probe,representation,calib_acc,calib_macro_f1
+grouped,0,0,121,live,linear (LDA train→calib),network (argmax cos),0.690476,0.678538
+grouped,0,0,121,live,linear (LDA train→calib),fused embedding,0.68254,0.673367
+grouped,0,0,121,live,linear (LDA train→calib),spatial pathway output,0.480952,0.470618
+grouped,0,0,121,live,linear (LDA train→calib),spectral pathway output,0.42381,0.410847
+grouped,0,0,121,live,linear (LDA train→calib),spectral descriptor (MLP input),0.626984,0.622492
+grouped,0,0,121,live,linear (LDA train→calib),spectral descriptor without morph,0.409524,0.39908
+grouped,0,0,121,live,linear (LDA train→calib),raw mean spectrum + morph (40 scalars),0.530159,0.523777
+grouped,0,0,121,live,linear (LDA train→calib),raw mean spectrum (32),0.385714,0.365352
+grouped,0,0,121,live,linear (LDA train→calib),SNV mean spectrum (32),0.312698,0.30117
+grouped,0,0,121,live,eval-time knock-out,knock out spatial,0.260317,0.211413
+grouped,0,0,121,live,eval-time knock-out,knock out spectral,0.379365,0.329991
+grouped,0,0,121,live,eval-time knock-out,morphometrics set to train mean,0.469841,0.42465
+grouped,0,1,147,live,linear (LDA train→calib),network (argmax cos),0.707937,0.697626
+grouped,0,1,147,live,linear (LDA train→calib),fused embedding,0.688889,0.68395
+grouped,0,1,147,live,linear (LDA train→calib),spatial pathway output,0.534921,0.522219
+grouped,0,1,147,live,linear (LDA train→calib),spectral pathway output,0.442857,0.429735
+grouped,0,1,147,live,linear (LDA train→calib),spectral descriptor (MLP input),0.64127,0.634046
+grouped,0,1,147,live,linear (LDA train→calib),spectral descriptor without morph,0.422222,0.409659
+grouped,0,1,147,live,linear (LDA train→calib),raw mean spectrum + morph (40 scalars),0.530159,0.523777
+grouped,0,1,147,live,linear (LDA train→calib),raw mean spectrum (32),0.385714,0.365352
+grouped,0,1,147,live,linear (LDA train→calib),SNV mean spectrum (32),0.338095,0.324371
+grouped,0,1,147,live,eval-time knock-out,knock out spatial,0.239683,0.188722
+grouped,0,1,147,live,eval-time knock-out,knock out spectral,0.446032,0.402895
+grouped,0,1,147,live,eval-time knock-out,morphometrics set to train mean,0.542857,0.499368
+grouped,0,2,144,live,linear (LDA train→calib),network (argmax cos),0.71746,0.706868
+grouped,0,2,144,live,linear (LDA train→calib),fused embedding,0.709524,0.704272
+grouped,0,2,144,live,linear (LDA train→calib),spatial pathway output,0.533333,0.529502
+grouped,0,2,144,live,linear (LDA train→calib),spectral pathway output,0.436508,0.424614
+grouped,0,2,144,live,linear (LDA train→calib),spectral descriptor (MLP input),0.64127,0.632637
+grouped,0,2,144,live,linear (LDA train→calib),spectral descriptor without morph,0.465079,0.452502
+grouped,0,2,144,live,linear (LDA train→calib),raw mean spectrum + morph (40 scalars),0.530159,0.523777
+grouped,0,2,144,live,linear (LDA train→calib),raw mean spectrum (32),0.385714,0.365352
+grouped,0,2,144,live,linear (LDA train→calib),SNV mean spectrum (32),0.387302,0.374019
+grouped,0,2,144,live,eval-time knock-out,knock out spatial,0.247619,0.207579
+grouped,0,2,144,live,eval-time knock-out,knock out spectral,0.498413,0.464129
+grouped,0,2,144,live,eval-time knock-out,morphometrics set to train mean,0.549206,0.516899
+grouped,1,0,146,ema,linear (LDA train→calib),network (argmax cos),0.714286,0.702342
+grouped,1,0,146,ema,linear (LDA train→calib),fused embedding,0.704762,0.697699
+grouped,1,0,146,ema,linear (LDA train→calib),spatial pathway output,0.54127,0.543183
+grouped,1,0,146,ema,linear (LDA train→calib),spectral pathway output,0.420635,0.404667
+grouped,1,0,146,ema,linear (LDA train→calib),spectral descriptor (MLP input),0.601587,0.596422
+grouped,1,0,146,ema,linear (LDA train→calib),spectral descriptor without morph,0.374603,0.364633
+grouped,1,0,146,ema,linear (LDA train→calib),raw mean spectrum + morph (40 scalars),0.526984,0.510076
+grouped,1,0,146,ema,linear (LDA train→calib),raw mean spectrum (32),0.347619,0.339292
+grouped,1,0,146,ema,linear (LDA train→calib),SNV mean spectrum (32),0.265079,0.246246
+grouped,1,0,146,ema,eval-time knock-out,knock out spatial,0.211111,0.174188
+grouped,1,0,146,ema,eval-time knock-out,knock out spectral,0.487302,0.444182
+grouped,1,0,146,ema,eval-time knock-out,morphometrics set to train mean,0.504762,0.457645
+grouped,1,1,144,live,linear (LDA train→calib),network (argmax cos),0.726984,0.715655
+grouped,1,1,144,live,linear (LDA train→calib),fused embedding,0.720635,0.71785
+grouped,1,1,144,live,linear (LDA train→calib),spatial pathway output,0.546032,0.545291
+grouped,1,1,144,live,linear (LDA train→calib),spectral pathway output,0.449206,0.433713
+grouped,1,1,144,live,linear (LDA train→calib),spectral descriptor (MLP input),0.596825,0.595451
+grouped,1,1,144,live,linear (LDA train→calib),spectral descriptor without morph,0.384127,0.380383
+grouped,1,1,144,live,linear (LDA train→calib),raw mean spectrum + morph (40 scalars),0.526984,0.510076
+grouped,1,1,144,live,linear (LDA train→calib),raw mean spectrum (32),0.347619,0.339292
+grouped,1,1,144,live,linear (LDA train→calib),SNV mean spectrum (32),0.301587,0.283758
+grouped,1,1,144,live,eval-time knock-out,knock out spatial,0.231746,0.197749
+grouped,1,1,144,live,eval-time knock-out,knock out spectral,0.469841,0.430004
+grouped,1,1,144,live,eval-time knock-out,morphometrics set to train mean,0.546032,0.506568
+grouped,1,2,123,ema,linear (LDA train→calib),network (argmax cos),0.728571,0.718452
+grouped,1,2,123,ema,linear (LDA train→calib),fused embedding,0.704762,0.698683
+grouped,1,2,123,ema,linear (LDA train→calib),spatial pathway output,0.601587,0.597753
+grouped,1,2,123,ema,linear (LDA train→calib),spectral pathway output,0.401587,0.387537
+grouped,1,2,123,ema,linear (LDA train→calib),spectral descriptor (MLP input),0.622222,0.618493
+grouped,1,2,123,ema,linear (LDA train→calib),spectral descriptor without morph,0.449206,0.444775
+grouped,1,2,123,ema,linear (LDA train→calib),raw mean spectrum + morph (40 scalars),0.526984,0.510076
+grouped,1,2,123,ema,linear (LDA train→calib),raw mean spectrum (32),0.347619,0.339292
+grouped,1,2,123,ema,linear (LDA train→calib),SNV mean spectrum (32),0.338095,0.323136
+grouped,1,2,123,ema,eval-time knock-out,knock out spatial,0.198413,0.165268
+grouped,1,2,123,ema,eval-time knock-out,knock out spectral,0.484127,0.449536
+grouped,1,2,123,ema,eval-time knock-out,morphometrics set to train mean,0.530159,0.487217
+stratified,0,0,145,live,linear (LDA train→calib),network (argmax cos),0.701987,0.695154
+stratified,0,0,145,live,linear (LDA train→calib),fused embedding,0.715232,0.712011
+stratified,0,0,145,live,linear (LDA train→calib),spatial pathway output,0.51766,0.510067
+stratified,0,0,145,live,linear (LDA train→calib),spectral pathway output,0.469095,0.459725
+stratified,0,0,145,live,linear (LDA train→calib),spectral descriptor (MLP input),0.599338,0.591728
+stratified,0,0,145,live,linear (LDA train→calib),spectral descriptor without morph,0.352097,0.337041
+stratified,0,0,145,live,linear (LDA train→calib),raw mean spectrum + morph (40 scalars),0.543046,0.535726
+stratified,0,0,145,live,linear (LDA train→calib),raw mean spectrum (32),0.356512,0.340962
+stratified,0,0,145,live,linear (LDA train→calib),SNV mean spectrum (32),0.286976,0.27445
+stratified,0,0,145,live,eval-time knock-out,knock out spatial,0.270419,0.235136
+stratified,0,0,145,live,eval-time knock-out,knock out spectral,0.476821,0.447834
+stratified,0,0,145,live,eval-time knock-out,morphometrics set to train mean,0.5,0.462555
+stratified,0,1,147,live,linear (LDA train→calib),network (argmax cos),0.721854,0.718844
+stratified,0,1,147,live,linear (LDA train→calib),fused embedding,0.721854,0.719034
+stratified,0,1,147,live,linear (LDA train→calib),spatial pathway output,0.564018,0.559763
+stratified,0,1,147,live,linear (LDA train→calib),spectral pathway output,0.471302,0.462608
+stratified,0,1,147,live,linear (LDA train→calib),spectral descriptor (MLP input),0.602649,0.595223
+stratified,0,1,147,live,linear (LDA train→calib),spectral descriptor without morph,0.36755,0.355196
+stratified,0,1,147,live,linear (LDA train→calib),raw mean spectrum + morph (40 scalars),0.543046,0.535726
+stratified,0,1,147,live,linear (LDA train→calib),raw mean spectrum (32),0.356512,0.340962
+stratified,0,1,147,live,linear (LDA train→calib),SNV mean spectrum (32),0.320088,0.308093
+stratified,0,1,147,live,eval-time knock-out,knock out spatial,0.266004,0.216863
+stratified,0,1,147,live,eval-time knock-out,knock out spectral,0.532009,0.50422
+stratified,0,1,147,live,eval-time knock-out,morphometrics set to train mean,0.545254,0.51377
+stratified,0,2,135,live,linear (LDA train→calib),network (argmax cos),0.706402,0.699977
+stratified,0,2,135,live,linear (LDA train→calib),fused embedding,0.703091,0.700106
+stratified,0,2,135,live,linear (LDA train→calib),spatial pathway output,0.554084,0.549294
+stratified,0,2,135,live,linear (LDA train→calib),spectral pathway output,0.463576,0.453817
+stratified,0,2,135,live,linear (LDA train→calib),spectral descriptor (MLP input),0.618102,0.608712
+stratified,0,2,135,live,linear (LDA train→calib),spectral descriptor without morph,0.401766,0.390921
+stratified,0,2,135,live,linear (LDA train→calib),raw mean spectrum + morph (40 scalars),0.543046,0.535726
+stratified,0,2,135,live,linear (LDA train→calib),raw mean spectrum (32),0.356512,0.340962
+stratified,0,2,135,live,linear (LDA train→calib),SNV mean spectrum (32),0.345475,0.332944
+stratified,0,2,135,live,eval-time knock-out,knock out spatial,0.247241,0.199669
+stratified,0,2,135,live,eval-time knock-out,knock out spectral,0.488962,0.461829
+stratified,0,2,135,live,eval-time knock-out,morphometrics set to train mean,0.524283,0.494899
+stratified,0,3,134,ema,linear (LDA train→calib),network (argmax cos),0.758278,0.75538
+stratified,0,3,134,ema,linear (LDA train→calib),fused embedding,0.745033,0.74624
+stratified,0,3,134,ema,linear (LDA train→calib),spatial pathway output,0.662252,0.658169
+stratified,0,3,134,ema,linear (LDA train→calib),spectral pathway output,0.395143,0.382797
+stratified,0,3,134,ema,linear (LDA train→calib),spectral descriptor (MLP input),0.589404,0.582318
+stratified,0,3,134,ema,linear (LDA train→calib),spectral descriptor without morph,0.374172,0.360889
+stratified,0,3,134,ema,linear (LDA train→calib),raw mean spectrum + morph (40 scalars),0.543046,0.535726
+stratified,0,3,134,ema,linear (LDA train→calib),raw mean spectrum (32),0.356512,0.340962
+stratified,0,3,134,ema,linear (LDA train→calib),SNV mean spectrum (32),0.313466,0.300543
+stratified,0,3,134,ema,eval-time knock-out,knock out spatial,0.190949,0.149235
+stratified,0,3,134,ema,eval-time knock-out,knock out spectral,0.592715,0.571674
+stratified,0,3,134,ema,eval-time knock-out,morphometrics set to train mean,0.581678,0.555463
+stratified,0,4,150,ema,linear (LDA train→calib),network (argmax cos),0.732892,0.727654
+stratified,0,4,150,ema,linear (LDA train→calib),fused embedding,0.741722,0.740362
+stratified,0,4,150,ema,linear (LDA train→calib),spatial pathway output,0.611479,0.607997
+stratified,0,4,150,ema,linear (LDA train→calib),spectral pathway output,0.441501,0.429333
+stratified,0,4,150,ema,linear (LDA train→calib),spectral descriptor (MLP input),0.584989,0.578685
+stratified,0,4,150,ema,linear (LDA train→calib),spectral descriptor without morph,0.346578,0.331682
+stratified,0,4,150,ema,linear (LDA train→calib),raw mean spectrum + morph (40 scalars),0.543046,0.535726
+stratified,0,4,150,ema,linear (LDA train→calib),raw mean spectrum (32),0.356512,0.340962
+stratified,0,4,150,ema,linear (LDA train→calib),SNV mean spectrum (32),0.298013,0.284785
+stratified,0,4,150,ema,eval-time knock-out,knock out spatial,0.240618,0.200161
+stratified,0,4,150,ema,eval-time knock-out,knock out spectral,0.560706,0.530706
+stratified,0,4,150,ema,eval-time knock-out,morphometrics set to train mean,0.548565,0.519359
+stratified,0,5,128,ema,linear (LDA train→calib),network (argmax cos),0.696468,0.69326
+stratified,0,5,128,ema,linear (LDA train→calib),fused embedding,0.695364,0.694055
+stratified,0,5,128,ema,linear (LDA train→calib),spatial pathway output,0.507726,0.498862
+stratified,0,5,128,ema,linear (LDA train→calib),spectral pathway output,0.452539,0.446831
+stratified,0,5,128,ema,linear (LDA train→calib),spectral descriptor (MLP input),0.590508,0.580741
+stratified,0,5,128,ema,linear (LDA train→calib),spectral descriptor without morph,0.368653,0.357477
+stratified,0,5,128,ema,linear (LDA train→calib),raw mean spectrum + morph (40 scalars),0.543046,0.535726
+stratified,0,5,128,ema,linear (LDA train→calib),raw mean spectrum (32),0.356512,0.340962
+stratified,0,5,128,ema,linear (LDA train→calib),SNV mean spectrum (32),0.296909,0.282433
+stratified,0,5,128,ema,eval-time knock-out,knock out spatial,0.277042,0.239582
+stratified,0,5,128,ema,eval-time knock-out,knock out spectral,0.418322,0.378337
+stratified,0,5,128,ema,eval-time knock-out,morphometrics set to train mean,0.486755,0.447703

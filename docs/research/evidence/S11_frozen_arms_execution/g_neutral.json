@@ -1,0 +1,67 @@
+{
+ "regimes": {
+  "shipped": {
+   "n_steps": [
+    30,
+    30
+   ],
+   "max_abs_step_loss_diff": 0.0,
+   "max_abs_epoch_diff": 0.0,
+   "tensors_compared": 222,
+   "tensors_differing": [],
+   "heldout_preds_identical": true,
+   "pass": true,
+   "telemetry_missing": [],
+   "clean_fit_json_written": true
+  },
+  "clip_binds": {
+   "n_steps": [
+    30,
+    30
+   ],
+   "max_abs_step_loss_diff": 0.0,
+   "max_abs_epoch_diff": 0.0,
+   "tensors_compared": 222,
+   "tensors_differing": [],
+   "heldout_preds_identical": true,
+   "pass": true,
+   "telemetry_missing": [],
+   "clean_fit_json_written": true
+  },
+  "x1_like": {
+   "n_steps": [
+    30,
+    30
+   ],
+   "max_abs_step_loss_diff": 0.0,
+   "max_abs_epoch_diff": 0.0,
+   "tensors_compared": 222,
+   "tensors_differing": [],
+   "heldout_preds_identical": true,
+   "pass": true,
+   "telemetry_missing": [],
+   "clean_fit_json_written": true
+  }
+ },
+ "sensitivity": {
+  "clip_partition_model_when_clip_binds": {
+   "overrides": [
+    "clip_partition=model"
+   ],
+   "regime": "clip_binds",
+   "detected": true,
+   "max_abs_step_loss_diff": 1.167694091796875,
+   "tensors_differing": 213
+  },
+  "aux_weight_schedule_fixed": {
+   "overrides": [
+    "single.aux_weight_schedule=fixed"
+   ],
+   "regime": "shipped",
+   "detected": true,
+   "max_abs_step_loss_diff": 1.3524394035339355,
+   "tensors_differing": 210
+  }
+ },
+ "pass": true
+}

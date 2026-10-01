@@ -53,6 +53,12 @@ weight_decay: 2.0e-4
 #
 # `single.max_lr` is deliberately NOT co-tuned with this. Change one thing.
 grad_clip: 5.0
+# S10 P0.5 / S11 D22. `legacy` = SpectralQuadNet's prefixes (on this model `fuse`
+# and the aux head are clipped with the backbone, only `embed_net` as `fusion`) —
+# what every run so far did. `model` = the model's own `clip_groups()`
+# (head / fuse+embed_net / backbone). They differ only when a clip binds, and at
+# 5.0 it binds on ≥ 82 % of steps, so the default stays `legacy`.
+clip_partition: legacy
 
 ema_decay: 0.999
 

@@ -1,0 +1,1489 @@
+arm,fold,seed,objective,term,module,grad_norm
+grouped,0,0,clean,total,se,0.249595
+grouped,0,0,clean,total,spatial.stem.stage1,11.1345
+grouped,0,0,clean,total,spatial.stem.stage2,4.20109
+grouped,0,0,clean,total,spatial.stem.stage3,2.45063
+grouped,0,0,clean,total,spatial.stem.fold,1.43859
+grouped,0,0,clean,total,spatial.tail.0,2.42762
+grouped,0,0,clean,total,spatial.tail.1,2.11057
+grouped,0,0,clean,total,spatial.tail.2,1.7239
+grouped,0,0,clean,total,spatial.tail.3,0.722025
+grouped,0,0,clean,total,spatial.tail.4,1.2377
+grouped,0,0,clean,total,spatial.tail.5,0.636871
+grouped,0,0,clean,total,spatial.tail.6,1.04242
+grouped,0,0,clean,total,spatial.proj,1.01481
+grouped,0,0,clean,total,spectral.index_bank,0.0485209
+grouped,0,0,clean,total,spectral.in_norm,1.83124
+grouped,0,0,clean,total,spectral.mlp,11.5758
+grouped,0,0,clean,total,fuse,2.46857
+grouped,0,0,clean,total,embed_net,1.74094
+grouped,0,0,clean,total,arcface_head,1.40206
+grouped,0,0,clean,total,aux_head_spatial,0.751702
+grouped,0,0,clean,total,[clip group] head,1.40206
+grouped,0,0,clean,total,[clip group] fusion,1.74094
+grouped,0,0,clean,total,[clip group] backbone,18.1737
+grouped,0,0,clean,main only,se,0.212711
+grouped,0,0,clean,main only,spatial.stem.stage1,8.86023
+grouped,0,0,clean,main only,spatial.stem.stage2,3.38017
+grouped,0,0,clean,main only,spatial.stem.stage3,2.02121
+grouped,0,0,clean,main only,spatial.stem.fold,1.18099
+grouped,0,0,clean,main only,spatial.tail.0,2.01581
+grouped,0,0,clean,main only,spatial.tail.1,1.75481
+grouped,0,0,clean,main only,spatial.tail.2,1.48266
+grouped,0,0,clean,main only,spatial.tail.3,0.611086
+grouped,0,0,clean,main only,spatial.tail.4,1.07363
+grouped,0,0,clean,main only,spatial.tail.5,0.553719
+grouped,0,0,clean,main only,spatial.tail.6,0.911864
+grouped,0,0,clean,main only,spatial.proj,0.910643
+grouped,0,0,clean,main only,spectral.index_bank,0.0485209
+grouped,0,0,clean,main only,spectral.in_norm,1.83124
+grouped,0,0,clean,main only,spectral.mlp,11.5758
+grouped,0,0,clean,main only,fuse,2.46857
+grouped,0,0,clean,main only,embed_net,1.74094
+grouped,0,0,clean,main only,arcface_head,1.40206
+grouped,0,0,clean,main only,[clip group] head,1.40206
+grouped,0,0,clean,main only,[clip group] fusion,1.74094
+grouped,0,0,clean,main only,[clip group] backbone,16.2609
+grouped,0,0,clean,aux only,se,0.0515383
+grouped,0,0,clean,aux only,spatial.stem.stage1,2.87343
+grouped,0,0,clean,aux only,spatial.stem.stage2,1.19698
+grouped,0,0,clean,aux only,spatial.stem.stage3,0.657017
+grouped,0,0,clean,aux only,spatial.stem.fold,0.373767
+grouped,0,0,clean,aux only,spatial.tail.0,0.611935
+grouped,0,0,clean,aux only,spatial.tail.1,0.504275
+grouped,0,0,clean,aux only,spatial.tail.2,0.408376
+grouped,0,0,clean,aux only,spatial.tail.3,0.17709
+grouped,0,0,clean,aux only,spatial.tail.4,0.297921
+grouped,0,0,clean,aux only,spatial.tail.5,0.169997
+grouped,0,0,clean,aux only,spatial.tail.6,0.256253
+grouped,0,0,clean,aux only,spatial.proj,0.23335
+grouped,0,0,clean,aux only,aux_head_spatial,0.751702
+grouped,0,0,clean,aux only,[clip group] head,0
+grouped,0,0,clean,aux only,[clip group] fusion,0
+grouped,0,0,clean,aux only,[clip group] backbone,3.47835
+grouped,0,0,margin,total,se,0.790817
+grouped,0,0,margin,total,spatial.stem.stage1,28.6932
+grouped,0,0,margin,total,spatial.stem.stage2,10.8934
+grouped,0,0,margin,total,spatial.stem.stage3,6.35749
+grouped,0,0,margin,total,spatial.stem.fold,3.61622
+grouped,0,0,margin,total,spatial.tail.0,6.03715
+grouped,0,0,margin,total,spatial.tail.1,5.18564
+grouped,0,0,margin,total,spatial.tail.2,4.33223
+grouped,0,0,margin,total,spatial.tail.3,2.00819
+grouped,0,0,margin,total,spatial.tail.4,3.23351
+grouped,0,0,margin,total,spatial.tail.5,1.79957
+grouped,0,0,margin,total,spatial.tail.6,3.19535
+grouped,0,0,margin,total,spatial.proj,2.52526
+grouped,0,0,margin,total,spectral.index_bank,0.107885
+grouped,0,0,margin,total,spectral.in_norm,3.7056
+grouped,0,0,margin,total,spectral.mlp,27.1127
+grouped,0,0,margin,total,fuse,6.75825
+grouped,0,0,margin,total,embed_net,4.64309
+grouped,0,0,margin,total,arcface_head,3.6963
+grouped,0,0,margin,total,aux_head_spatial,0.611641
+grouped,0,0,margin,total,[clip group] head,3.6963
+grouped,0,0,margin,total,[clip group] fusion,4.64309
+grouped,0,0,margin,total,[clip group] backbone,44.7443
+grouped,0,0,margin,main only,se,0.766081
+grouped,0,0,margin,main only,spatial.stem.stage1,26.7052
+grouped,0,0,margin,main only,spatial.stem.stage2,10.1408
+grouped,0,0,margin,main only,spatial.stem.stage3,5.94258
+grouped,0,0,margin,main only,spatial.stem.fold,3.37879
+grouped,0,0,margin,main only,spatial.tail.0,5.66485
+grouped,0,0,margin,main only,spatial.tail.1,4.90612
+grouped,0,0,margin,main only,spatial.tail.2,4.10051
+grouped,0,0,margin,main only,spatial.tail.3,1.89493
+grouped,0,0,margin,main only,spatial.tail.4,3.07665
+grouped,0,0,margin,main only,spatial.tail.5,1.70995
+grouped,0,0,margin,main only,spatial.tail.6,3.07734
+grouped,0,0,margin,main only,spatial.proj,2.43165
+grouped,0,0,margin,main only,spectral.index_bank,0.107885
+grouped,0,0,margin,main only,spectral.in_norm,3.7056
+grouped,0,0,margin,main only,spectral.mlp,27.1127
+grouped,0,0,margin,main only,fuse,6.75825
+grouped,0,0,margin,main only,embed_net,4.64309
+grouped,0,0,margin,main only,arcface_head,3.6963
+grouped,0,0,margin,main only,[clip group] head,3.6963
+grouped,0,0,margin,main only,[clip group] fusion,4.64309
+grouped,0,0,margin,main only,[clip group] backbone,42.9782
+grouped,0,0,margin,aux only,se,0.0420993
+grouped,0,0,margin,aux only,spatial.stem.stage1,2.33944
+grouped,0,0,margin,aux only,spatial.stem.stage2,0.969887
+grouped,0,0,margin,aux only,spatial.stem.stage3,0.532798
+grouped,0,0,margin,aux only,spatial.stem.fold,0.303627
+grouped,0,0,margin,aux only,spatial.tail.0,0.497557
+grouped,0,0,margin,aux only,spatial.tail.1,0.410628
+grouped,0,0,margin,aux only,spatial.tail.2,0.332219
+grouped,0,0,margin,aux only,spatial.tail.3,0.14421
+grouped,0,0,margin,aux only,spatial.tail.4,0.242902
+grouped,0,0,margin,aux only,spatial.tail.5,0.139184
+grouped,0,0,margin,aux only,spatial.tail.6,0.208451
+grouped,0,0,margin,aux only,spatial.proj,0.190691
+grouped,0,0,margin,aux only,aux_head_spatial,0.611641
+grouped,0,0,margin,aux only,[clip group] head,0
+grouped,0,0,margin,aux only,[clip group] fusion,0
+grouped,0,0,margin,aux only,[clip group] backbone,2.82959
+grouped,0,1,clean,total,se,0.123507
+grouped,0,1,clean,total,spatial.stem.stage1,16.1295
+grouped,0,1,clean,total,spatial.stem.stage2,5.74995
+grouped,0,1,clean,total,spatial.stem.stage3,3.22999
+grouped,0,1,clean,total,spatial.stem.fold,1.43623
+grouped,0,1,clean,total,spatial.tail.0,2.44736
+grouped,0,1,clean,total,spatial.tail.1,2.11438
+grouped,0,1,clean,total,spatial.tail.2,2.33615
+grouped,0,1,clean,total,spatial.tail.3,1.1275
+grouped,0,1,clean,total,spatial.tail.4,1.85426
+grouped,0,1,clean,total,spatial.tail.5,0.820222
+grouped,0,1,clean,total,spatial.tail.6,1.38531
+grouped,0,1,clean,total,spatial.proj,1.49366
+grouped,0,1,clean,total,spectral.index_bank,0.0283692
+grouped,0,1,clean,total,spectral.in_norm,1.50637
+grouped,0,1,clean,total,spectral.mlp,12.7494
+grouped,0,1,clean,total,fuse,3.06059
+grouped,0,1,clean,total,embed_net,2.04335
+grouped,0,1,clean,total,arcface_head,1.32812
+grouped,0,1,clean,total,aux_head_spatial,0.68855
+grouped,0,1,clean,total,[clip group] head,1.32812
+grouped,0,1,clean,total,[clip group] fusion,2.04335
+grouped,0,1,clean,total,[clip group] backbone,23.2664
+grouped,0,1,clean,main only,se,0.121068
+grouped,0,1,clean,main only,spatial.stem.stage1,14.4665
+grouped,0,1,clean,main only,spatial.stem.stage2,5.38459
+grouped,0,1,clean,main only,spatial.stem.stage3,2.92105
+grouped,0,1,clean,main only,spatial.stem.fold,1.31167
+grouped,0,1,clean,main only,spatial.tail.0,2.24226
+grouped,0,1,clean,main only,spatial.tail.1,1.91569
+grouped,0,1,clean,main only,spatial.tail.2,2.19639
+grouped,0,1,clean,main only,spatial.tail.3,1.07114
+grouped,0,1,clean,main only,spatial.tail.4,1.72416
+grouped,0,1,clean,main only,spatial.tail.5,0.762005
+grouped,0,1,clean,main only,spatial.tail.6,1.25906
+grouped,0,1,clean,main only,spatial.proj,1.42069
+grouped,0,1,clean,main only,spectral.index_bank,0.0283692
+grouped,0,1,clean,main only,spectral.in_norm,1.50637
+grouped,0,1,clean,main only,spectral.mlp,12.7494
+grouped,0,1,clean,main only,fuse,3.06059
+grouped,0,1,clean,main only,embed_net,2.04335
+grouped,0,1,clean,main only,arcface_head,1.32812
+grouped,0,1,clean,main only,[clip group] head,1.32812
+grouped,0,1,clean,main only,[clip group] fusion,2.04335
+grouped,0,1,clean,main only,[clip group] backbone,21.7752
+grouped,0,1,clean,aux only,se,0.00962466
+grouped,0,1,clean,aux only,spatial.stem.stage1,3.41205
+grouped,0,1,clean,aux only,spatial.stem.stage2,1.03798
+grouped,0,1,clean,aux only,spatial.stem.stage3,0.644415
+grouped,0,1,clean,aux only,spatial.stem.fold,0.277574
+grouped,0,1,clean,aux only,spatial.tail.0,0.461474
+grouped,0,1,clean,aux only,spatial.tail.1,0.367309
+grouped,0,1,clean,aux only,spatial.tail.2,0.420685
+grouped,0,1,clean,aux only,spatial.tail.3,0.219903
+grouped,0,1,clean,aux only,spatial.tail.4,0.333078
+grouped,0,1,clean,aux only,spatial.tail.5,0.162701
+grouped,0,1,clean,aux only,spatial.tail.6,0.294412
+grouped,0,1,clean,aux only,spatial.proj,0.234716
+grouped,0,1,clean,aux only,aux_head_spatial,0.68855
+grouped,0,1,clean,aux only,[clip group] head,0
+grouped,0,1,clean,aux only,[clip group] fusion,0
+grouped,0,1,clean,aux only,[clip group] backbone,3.89876
+grouped,0,1,margin,total,se,0.2498
+grouped,0,1,margin,total,spatial.stem.stage1,51.7811
+grouped,0,1,margin,total,spatial.stem.stage2,16.9622
+grouped,0,1,margin,total,spatial.stem.stage3,9.31784
+grouped,0,1,margin,total,spatial.stem.fold,4.07256
+grouped,0,1,margin,total,spatial.tail.0,6.99403
+grouped,0,1,margin,total,spatial.tail.1,5.65925
+grouped,0,1,margin,total,spatial.tail.2,5.95328
+grouped,0,1,margin,total,spatial.tail.3,3.14934
+grouped,0,1,margin,total,spatial.tail.4,4.61842
+grouped,0,1,margin,total,spatial.tail.5,2.12514
+grouped,0,1,margin,total,spatial.tail.6,3.55694
+grouped,0,1,margin,total,spatial.proj,3.43273
+grouped,0,1,margin,total,spectral.index_bank,0.0802344
+grouped,0,1,margin,total,spectral.in_norm,3.98969
+grouped,0,1,margin,total,spectral.mlp,31.0774
+grouped,0,1,margin,total,fuse,6.95165
+grouped,0,1,margin,total,embed_net,4.71481
+grouped,0,1,margin,total,arcface_head,3.06306
+grouped,0,1,margin,total,aux_head_spatial,0.560732
+grouped,0,1,margin,total,[clip group] head,3.06306
+grouped,0,1,margin,total,[clip group] fusion,4.71481
+grouped,0,1,margin,total,[clip group] backbone,66.6757
+grouped,0,1,margin,main only,se,0.248874
+grouped,0,1,margin,main only,spatial.stem.stage1,49.5863
+grouped,0,1,margin,main only,spatial.stem.stage2,16.574
+grouped,0,1,margin,main only,spatial.stem.stage3,8.99633
+grouped,0,1,margin,main only,spatial.stem.fold,3.94343
+grouped,0,1,margin,main only,spatial.tail.0,6.78067
+grouped,0,1,margin,main only,spatial.tail.1,5.45869
+grouped,0,1,margin,main only,spatial.tail.2,5.76661
+grouped,0,1,margin,main only,spatial.tail.3,3.06146
+grouped,0,1,margin,main only,spatial.tail.4,4.46354
+grouped,0,1,margin,main only,spatial.tail.5,2.05274
+grouped,0,1,margin,main only,spatial.tail.6,3.41544
+grouped,0,1,margin,main only,spatial.proj,3.35501
+grouped,0,1,margin,main only,spectral.index_bank,0.0802344
+grouped,0,1,margin,main only,spectral.in_norm,3.98969
+grouped,0,1,margin,main only,spectral.mlp,31.0774
+grouped,0,1,margin,main only,fuse,6.95165
+grouped,0,1,margin,main only,embed_net,4.71481
+grouped,0,1,margin,main only,arcface_head,3.06306
+grouped,0,1,margin,main only,[clip group] head,3.06306
+grouped,0,1,margin,main only,[clip group] fusion,4.71481
+grouped,0,1,margin,main only,[clip group] backbone,64.7265
+grouped,0,1,margin,aux only,se,0.00790343
+grouped,0,1,margin,aux only,spatial.stem.stage1,2.77677
+grouped,0,1,margin,aux only,spatial.stem.stage2,0.847051
+grouped,0,1,margin,aux only,spatial.stem.stage3,0.524785
+grouped,0,1,margin,aux only,spatial.stem.fold,0.226369
+grouped,0,1,margin,aux only,spatial.tail.0,0.376586
+grouped,0,1,margin,aux only,spatial.tail.1,0.299612
+grouped,0,1,margin,aux only,spatial.tail.2,0.342986
+grouped,0,1,margin,aux only,spatial.tail.3,0.179007
+grouped,0,1,margin,aux only,spatial.tail.4,0.27196
+grouped,0,1,margin,aux only,spatial.tail.5,0.132581
+grouped,0,1,margin,aux only,spatial.tail.6,0.24028
+grouped,0,1,margin,aux only,spatial.proj,0.193588
+grouped,0,1,margin,aux only,aux_head_spatial,0.560732
+grouped,0,1,margin,aux only,[clip group] head,0
+grouped,0,1,margin,aux only,[clip group] fusion,0
+grouped,0,1,margin,aux only,[clip group] backbone,3.17385
+grouped,0,2,clean,total,se,0.322576
+grouped,0,2,clean,total,spatial.stem.stage1,11.4283
+grouped,0,2,clean,total,spatial.stem.stage2,3.85444
+grouped,0,2,clean,total,spatial.stem.stage3,2.52888
+grouped,0,2,clean,total,spatial.stem.fold,1.20086
+grouped,0,2,clean,total,spatial.tail.0,2.14105
+grouped,0,2,clean,total,spatial.tail.1,2.33539
+grouped,0,2,clean,total,spatial.tail.2,1.7594
+grouped,0,2,clean,total,spatial.tail.3,0.698171
+grouped,0,2,clean,total,spatial.tail.4,1.36329
+grouped,0,2,clean,total,spatial.tail.5,0.696184
+grouped,0,2,clean,total,spatial.tail.6,1.12638
+grouped,0,2,clean,total,spatial.proj,1.2625
+grouped,0,2,clean,total,spectral.index_bank,0.0256576
+grouped,0,2,clean,total,spectral.in_norm,1.03404
+grouped,0,2,clean,total,spectral.mlp,8.8685
+grouped,0,2,clean,total,fuse,2.46981
+grouped,0,2,clean,total,embed_net,1.62661
+grouped,0,2,clean,total,arcface_head,1.0612
+grouped,0,2,clean,total,aux_head_spatial,0.663808
+grouped,0,2,clean,total,[clip group] head,1.0612
+grouped,0,2,clean,total,[clip group] fusion,1.62661
+grouped,0,2,clean,total,[clip group] backbone,16.1994
+grouped,0,2,clean,main only,se,0.31782
+grouped,0,2,clean,main only,spatial.stem.stage1,10.7477
+grouped,0,2,clean,main only,spatial.stem.stage2,3.49966
+grouped,0,2,clean,main only,spatial.stem.stage3,2.30822
+grouped,0,2,clean,main only,spatial.stem.fold,1.10861
+grouped,0,2,clean,main only,spatial.tail.0,1.95727
+grouped,0,2,clean,main only,spatial.tail.1,2.14626
+grouped,0,2,clean,main only,spatial.tail.2,1.61204
+grouped,0,2,clean,main only,spatial.tail.3,0.636943
+grouped,0,2,clean,main only,spatial.tail.4,1.24554
+grouped,0,2,clean,main only,spatial.tail.5,0.62776
+grouped,0,2,clean,main only,spatial.tail.6,1.03727
+grouped,0,2,clean,main only,spatial.proj,1.20498
+grouped,0,2,clean,main only,spectral.index_bank,0.0256576
+grouped,0,2,clean,main only,spectral.in_norm,1.03404
+grouped,0,2,clean,main only,spectral.mlp,8.8685
+grouped,0,2,clean,main only,fuse,2.46981
+grouped,0,2,clean,main only,embed_net,1.62661
+grouped,0,2,clean,main only,arcface_head,1.0612
+grouped,0,2,clean,main only,[clip group] head,1.0612
+grouped,0,2,clean,main only,[clip group] fusion,1.62661
+grouped,0,2,clean,main only,[clip group] backbone,15.5149
+grouped,0,2,clean,aux only,se,0.018464
+grouped,0,2,clean,aux only,spatial.stem.stage1,2.91153
+grouped,0,2,clean,aux only,spatial.stem.stage2,1.03788
+grouped,0,2,clean,aux only,spatial.stem.stage3,0.577439
+grouped,0,2,clean,aux only,spatial.stem.fold,0.274144
+grouped,0,2,clean,aux only,spatial.tail.0,0.493304
+grouped,0,2,clean,aux only,spatial.tail.1,0.469713
+grouped,0,2,clean,aux only,spatial.tail.2,0.400665
+grouped,0,2,clean,aux only,spatial.tail.3,0.190158
+grouped,0,2,clean,aux only,spatial.tail.4,0.308782
+grouped,0,2,clean,aux only,spatial.tail.5,0.173557
+grouped,0,2,clean,aux only,spatial.tail.6,0.256651
+grouped,0,2,clean,aux only,spatial.proj,0.240497
+grouped,0,2,clean,aux only,aux_head_spatial,0.663808
+grouped,0,2,clean,aux only,[clip group] head,0
+grouped,0,2,clean,aux only,[clip group] fusion,0
+grouped,0,2,clean,aux only,[clip group] backbone,3.40192
+grouped,0,2,margin,total,se,1.35692
+grouped,0,2,margin,total,spatial.stem.stage1,45.481
+grouped,0,2,margin,total,spatial.stem.stage2,15.3665
+grouped,0,2,margin,total,spatial.stem.stage3,8.44102
+grouped,0,2,margin,total,spatial.stem.fold,4.10604
+grouped,0,2,margin,total,spatial.tail.0,7.41282
+grouped,0,2,margin,total,spatial.tail.1,9.39366
+grouped,0,2,margin,total,spatial.tail.2,6.47907
+grouped,0,2,margin,total,spatial.tail.3,2.70204
+grouped,0,2,margin,total,spatial.tail.4,4.80272
+grouped,0,2,margin,total,spatial.tail.5,2.34704
+grouped,0,2,margin,total,spatial.tail.6,3.62693
+grouped,0,2,margin,total,spatial.proj,3.79947
+grouped,0,2,margin,total,spectral.index_bank,0.129649
+grouped,0,2,margin,total,spectral.in_norm,5.28733
+grouped,0,2,margin,total,spectral.mlp,34.1196
+grouped,0,2,margin,total,fuse,7.30223
+grouped,0,2,margin,total,embed_net,4.63796
+grouped,0,2,margin,total,arcface_head,3.04266
+grouped,0,2,margin,total,aux_head_spatial,0.541008
+grouped,0,2,margin,total,[clip group] head,3.04266
+grouped,0,2,margin,total,[clip group] fusion,4.63796
+grouped,0,2,margin,total,[clip group] backbone,62.7983
+grouped,0,2,margin,main only,se,1.3532
+grouped,0,2,margin,main only,spatial.stem.stage1,43.8137
+grouped,0,2,margin,main only,spatial.stem.stage2,14.8748
+grouped,0,2,margin,main only,spatial.stem.stage3,8.20232
+grouped,0,2,margin,main only,spatial.stem.fold,3.99855
+grouped,0,2,margin,main only,spatial.tail.0,7.20865
+grouped,0,2,margin,main only,spatial.tail.1,9.18191
+grouped,0,2,margin,main only,spatial.tail.2,6.31438
+grouped,0,2,margin,main only,spatial.tail.3,2.6037
+grouped,0,2,margin,main only,spatial.tail.4,4.67549
+grouped,0,2,margin,main only,spatial.tail.5,2.27326
+grouped,0,2,margin,main only,spatial.tail.6,3.53184
+grouped,0,2,margin,main only,spatial.proj,3.72751
+grouped,0,2,margin,main only,spectral.index_bank,0.129649
+grouped,0,2,margin,main only,spectral.in_norm,5.28733
+grouped,0,2,margin,main only,spectral.mlp,34.1196
+grouped,0,2,margin,main only,fuse,7.30223
+grouped,0,2,margin,main only,embed_net,4.63796
+grouped,0,2,margin,main only,arcface_head,3.04266
+grouped,0,2,margin,main only,[clip group] head,3.04266
+grouped,0,2,margin,main only,[clip group] fusion,4.63796
+grouped,0,2,margin,main only,[clip group] backbone,61.3086
+grouped,0,2,margin,aux only,se,0.014936
+grouped,0,2,margin,aux only,spatial.stem.stage1,2.37688
+grouped,0,2,margin,aux only,spatial.stem.stage2,0.843239
+grouped,0,2,margin,aux only,spatial.stem.stage3,0.470417
+grouped,0,2,margin,aux only,spatial.stem.fold,0.223689
+grouped,0,2,margin,aux only,spatial.tail.0,0.401967
+grouped,0,2,margin,aux only,spatial.tail.1,0.380814
+grouped,0,2,margin,aux only,spatial.tail.2,0.327292
+grouped,0,2,margin,aux only,spatial.tail.3,0.15472
+grouped,0,2,margin,aux only,spatial.tail.4,0.252574
+grouped,0,2,margin,aux only,spatial.tail.5,0.142307
+grouped,0,2,margin,aux only,spatial.tail.6,0.210692
+grouped,0,2,margin,aux only,spatial.proj,0.198367
+grouped,0,2,margin,aux only,aux_head_spatial,0.541008
+grouped,0,2,margin,aux only,[clip group] head,0
+grouped,0,2,margin,aux only,[clip group] fusion,0
+grouped,0,2,margin,aux only,[clip group] backbone,2.77556
+grouped,1,0,clean,total,se,0.201311
+grouped,1,0,clean,total,spatial.stem.stage1,11.1189
+grouped,1,0,clean,total,spatial.stem.stage2,4.10611
+grouped,1,0,clean,total,spatial.stem.stage3,2.62953
+grouped,1,0,clean,total,spatial.stem.fold,1.44323
+grouped,1,0,clean,total,spatial.tail.0,2.40595
+grouped,1,0,clean,total,spatial.tail.1,1.77448
+grouped,1,0,clean,total,spatial.tail.2,1.82518
+grouped,1,0,clean,total,spatial.tail.3,0.722754
+grouped,1,0,clean,total,spatial.tail.4,1.33694
+grouped,1,0,clean,total,spatial.tail.5,0.740375
+grouped,1,0,clean,total,spatial.tail.6,1.16384
+grouped,1,0,clean,total,spatial.proj,1.17491
+grouped,1,0,clean,total,spectral.index_bank,0.0159085
+grouped,1,0,clean,total,spectral.in_norm,0.983372
+grouped,1,0,clean,total,spectral.mlp,8.27768
+grouped,1,0,clean,total,fuse,2.47859
+grouped,1,0,clean,total,embed_net,1.7449
+grouped,1,0,clean,total,arcface_head,1.25239
+grouped,1,0,clean,total,aux_head_spatial,0.750935
+grouped,1,0,clean,total,[clip group] head,1.25239
+grouped,1,0,clean,total,[clip group] fusion,1.7449
+grouped,1,0,clean,total,[clip group] backbone,15.7334
+grouped,1,0,clean,main only,se,0.196729
+grouped,1,0,clean,main only,spatial.stem.stage1,9.73561
+grouped,1,0,clean,main only,spatial.stem.stage2,3.77496
+grouped,1,0,clean,main only,spatial.stem.stage3,2.37925
+grouped,1,0,clean,main only,spatial.stem.fold,1.31737
+grouped,1,0,clean,main only,spatial.tail.0,2.19787
+grouped,1,0,clean,main only,spatial.tail.1,1.63806
+grouped,1,0,clean,main only,spatial.tail.2,1.68717
+grouped,1,0,clean,main only,spatial.tail.3,0.667579
+grouped,1,0,clean,main only,spatial.tail.4,1.2469
+grouped,1,0,clean,main only,spatial.tail.5,0.693257
+grouped,1,0,clean,main only,spatial.tail.6,1.09994
+grouped,1,0,clean,main only,spatial.proj,1.10319
+grouped,1,0,clean,main only,spectral.index_bank,0.0159085
+grouped,1,0,clean,main only,spectral.in_norm,0.983372
+grouped,1,0,clean,main only,spectral.mlp,8.27768
+grouped,1,0,clean,main only,fuse,2.47859
+grouped,1,0,clean,main only,embed_net,1.7449
+grouped,1,0,clean,main only,arcface_head,1.25239
+grouped,1,0,clean,main only,[clip group] head,1.25239
+grouped,1,0,clean,main only,[clip group] fusion,1.7449
+grouped,1,0,clean,main only,[clip group] backbone,14.5102
+grouped,1,0,clean,aux only,se,0.0153608
+grouped,1,0,clean,aux only,spatial.stem.stage1,2.18429
+grouped,1,0,clean,aux only,spatial.stem.stage2,0.748515
+grouped,1,0,clean,aux only,spatial.stem.stage3,0.51143
+grouped,1,0,clean,aux only,spatial.stem.fold,0.276148
+grouped,1,0,clean,aux only,spatial.tail.0,0.473752
+grouped,1,0,clean,aux only,spatial.tail.1,0.403465
+grouped,1,0,clean,aux only,spatial.tail.2,0.379571
+grouped,1,0,clean,aux only,spatial.tail.3,0.122315
+grouped,1,0,clean,aux only,spatial.tail.4,0.297155
+grouped,1,0,clean,aux only,spatial.tail.5,0.169839
+grouped,1,0,clean,aux only,spatial.tail.6,0.270739
+grouped,1,0,clean,aux only,spatial.proj,0.223722
+grouped,1,0,clean,aux only,aux_head_spatial,0.750935
+grouped,1,0,clean,aux only,[clip group] head,0
+grouped,1,0,clean,aux only,[clip group] fusion,0
+grouped,1,0,clean,aux only,[clip group] backbone,2.68909
+grouped,1,0,margin,total,se,0.67538
+grouped,1,0,margin,total,spatial.stem.stage1,35.644
+grouped,1,0,margin,total,spatial.stem.stage2,12.741
+grouped,1,0,margin,total,spatial.stem.stage3,7.67856
+grouped,1,0,margin,total,spatial.stem.fold,4.24632
+grouped,1,0,margin,total,spatial.tail.0,7.00956
+grouped,1,0,margin,total,spatial.tail.1,5.73879
+grouped,1,0,margin,total,spatial.tail.2,4.73452
+grouped,1,0,margin,total,spatial.tail.3,1.72772
+grouped,1,0,margin,total,spatial.tail.4,3.70683
+grouped,1,0,margin,total,spatial.tail.5,2.06156
+grouped,1,0,margin,total,spatial.tail.6,3.28407
+grouped,1,0,margin,total,spatial.proj,3.15114
+grouped,1,0,margin,total,spectral.index_bank,0.105823
+grouped,1,0,margin,total,spectral.in_norm,3.50438
+grouped,1,0,margin,total,spectral.mlp,27.8262
+grouped,1,0,margin,total,fuse,6.92648
+grouped,1,0,margin,total,embed_net,4.73543
+grouped,1,0,margin,total,arcface_head,3.30828
+grouped,1,0,margin,total,aux_head_spatial,0.611521
+grouped,1,0,margin,total,[clip group] head,3.30828
+grouped,1,0,margin,total,[clip group] fusion,4.73543
+grouped,1,0,margin,total,[clip group] backbone,51.5257
+grouped,1,0,margin,main only,se,0.669925
+grouped,1,0,margin,main only,spatial.stem.stage1,34.3009
+grouped,1,0,margin,main only,spatial.stem.stage2,12.3331
+grouped,1,0,margin,main only,spatial.stem.stage3,7.39203
+grouped,1,0,margin,main only,spatial.stem.fold,4.09853
+grouped,1,0,margin,main only,spatial.tail.0,6.76042
+grouped,1,0,margin,main only,spatial.tail.1,5.52905
+grouped,1,0,margin,main only,spatial.tail.2,4.56073
+grouped,1,0,margin,main only,spatial.tail.3,1.66534
+grouped,1,0,margin,main only,spatial.tail.4,3.57194
+grouped,1,0,margin,main only,spatial.tail.5,1.98624
+grouped,1,0,margin,main only,spatial.tail.6,3.17166
+grouped,1,0,margin,main only,spatial.proj,3.07026
+grouped,1,0,margin,main only,spectral.index_bank,0.105823
+grouped,1,0,margin,main only,spectral.in_norm,3.50438
+grouped,1,0,margin,main only,spectral.mlp,27.8262
+grouped,1,0,margin,main only,fuse,6.92648
+grouped,1,0,margin,main only,embed_net,4.73543
+grouped,1,0,margin,main only,arcface_head,3.30828
+grouped,1,0,margin,main only,[clip group] head,3.30828
+grouped,1,0,margin,main only,[clip group] fusion,4.73543
+grouped,1,0,margin,main only,[clip group] backbone,50.2453
+grouped,1,0,margin,aux only,se,0.0127535
+grouped,1,0,margin,aux only,spatial.stem.stage1,1.77512
+grouped,1,0,margin,aux only,spatial.stem.stage2,0.604806
+grouped,1,0,margin,aux only,spatial.stem.stage3,0.41456
+grouped,1,0,margin,aux only,spatial.stem.fold,0.224006
+grouped,1,0,margin,aux only,spatial.tail.0,0.384212
+grouped,1,0,margin,aux only,spatial.tail.1,0.324678
+grouped,1,0,margin,aux only,spatial.tail.2,0.307798
+grouped,1,0,margin,aux only,spatial.tail.3,0.0990071
+grouped,1,0,margin,aux only,spatial.tail.4,0.241274
+grouped,1,0,margin,aux only,spatial.tail.5,0.138257
+grouped,1,0,margin,aux only,spatial.tail.6,0.219948
+grouped,1,0,margin,aux only,spatial.proj,0.183815
+grouped,1,0,margin,aux only,aux_head_spatial,0.611521
+grouped,1,0,margin,aux only,[clip group] head,0
+grouped,1,0,margin,aux only,[clip group] fusion,0
+grouped,1,0,margin,aux only,[clip group] backbone,2.1844
+grouped,1,1,clean,total,se,0.11382
+grouped,1,1,clean,total,spatial.stem.stage1,10.5726
+grouped,1,1,clean,total,spatial.stem.stage2,3.48487
+grouped,1,1,clean,total,spatial.stem.stage3,2.72108
+grouped,1,1,clean,total,spatial.stem.fold,1.30586
+grouped,1,1,clean,total,spatial.tail.0,2.29166
+grouped,1,1,clean,total,spatial.tail.1,1.98588
+grouped,1,1,clean,total,spatial.tail.2,2.19581
+grouped,1,1,clean,total,spatial.tail.3,1.12574
+grouped,1,1,clean,total,spatial.tail.4,1.56951
+grouped,1,1,clean,total,spatial.tail.5,0.941766
+grouped,1,1,clean,total,spatial.tail.6,1.29266
+grouped,1,1,clean,total,spatial.proj,1.21782
+grouped,1,1,clean,total,spectral.index_bank,0.0529022
+grouped,1,1,clean,total,spectral.in_norm,1.51099
+grouped,1,1,clean,total,spectral.mlp,10.515
+grouped,1,1,clean,total,fuse,2.49639
+grouped,1,1,clean,total,embed_net,1.78086
+grouped,1,1,clean,total,arcface_head,1.21039
+grouped,1,1,clean,total,aux_head_spatial,0.694733
+grouped,1,1,clean,total,[clip group] head,1.21039
+grouped,1,1,clean,total,[clip group] fusion,1.78086
+grouped,1,1,clean,total,[clip group] backbone,16.8467
+grouped,1,1,clean,main only,se,0.106759
+grouped,1,1,clean,main only,spatial.stem.stage1,9.499
+grouped,1,1,clean,main only,spatial.stem.stage2,3.13577
+grouped,1,1,clean,main only,spatial.stem.stage3,2.48877
+grouped,1,1,clean,main only,spatial.stem.fold,1.20246
+grouped,1,1,clean,main only,spatial.tail.0,2.11394
+grouped,1,1,clean,main only,spatial.tail.1,1.75543
+grouped,1,1,clean,main only,spatial.tail.2,2.00293
+grouped,1,1,clean,main only,spatial.tail.3,1.03609
+grouped,1,1,clean,main only,spatial.tail.4,1.43506
+grouped,1,1,clean,main only,spatial.tail.5,0.883124
+grouped,1,1,clean,main only,spatial.tail.6,1.16265
+grouped,1,1,clean,main only,spatial.proj,1.13568
+grouped,1,1,clean,main only,spectral.index_bank,0.0529022
+grouped,1,1,clean,main only,spectral.in_norm,1.51099
+grouped,1,1,clean,main only,spectral.mlp,10.515
+grouped,1,1,clean,main only,fuse,2.49639
+grouped,1,1,clean,main only,embed_net,1.78086
+grouped,1,1,clean,main only,arcface_head,1.21039
+grouped,1,1,clean,main only,[clip group] head,1.21039
+grouped,1,1,clean,main only,[clip group] fusion,1.78086
+grouped,1,1,clean,main only,[clip group] backbone,15.9279
+grouped,1,1,clean,aux only,se,0.00859182
+grouped,1,1,clean,aux only,spatial.stem.stage1,1.88192
+grouped,1,1,clean,aux only,spatial.stem.stage2,0.872675
+grouped,1,1,clean,aux only,spatial.stem.stage3,0.588634
+grouped,1,1,clean,aux only,spatial.stem.fold,0.284562
+grouped,1,1,clean,aux only,spatial.tail.0,0.480038
+grouped,1,1,clean,aux only,spatial.tail.1,0.36559
+grouped,1,1,clean,aux only,spatial.tail.2,0.451535
+grouped,1,1,clean,aux only,spatial.tail.3,0.249675
+grouped,1,1,clean,aux only,spatial.tail.4,0.335112
+grouped,1,1,clean,aux only,spatial.tail.5,0.179197
+grouped,1,1,clean,aux only,spatial.tail.6,0.310594
+grouped,1,1,clean,aux only,spatial.proj,0.218143
+grouped,1,1,clean,aux only,aux_head_spatial,0.694733
+grouped,1,1,clean,aux only,[clip group] head,0
+grouped,1,1,clean,aux only,[clip group] fusion,0
+grouped,1,1,clean,aux only,[clip group] backbone,2.48859
+grouped,1,1,margin,total,se,0.253802
+grouped,1,1,margin,total,spatial.stem.stage1,20.0543
+grouped,1,1,margin,total,spatial.stem.stage2,9.48577
+grouped,1,1,margin,total,spatial.stem.stage3,6.98753
+grouped,1,1,margin,total,spatial.stem.fold,3.3848
+grouped,1,1,margin,total,spatial.tail.0,5.9251
+grouped,1,1,margin,total,spatial.tail.1,4.35416
+grouped,1,1,margin,total,spatial.tail.2,5.91866
+grouped,1,1,margin,total,spatial.tail.3,3.34932
+grouped,1,1,margin,total,spatial.tail.4,4.57856
+grouped,1,1,margin,total,spatial.tail.5,2.63509
+grouped,1,1,margin,total,spatial.tail.6,4.0128
+grouped,1,1,margin,total,spatial.proj,3.23078
+grouped,1,1,margin,total,spectral.index_bank,0.185451
+grouped,1,1,margin,total,spectral.in_norm,4.164
+grouped,1,1,margin,total,spectral.mlp,28.7078
+grouped,1,1,margin,total,fuse,6.68168
+grouped,1,1,margin,total,embed_net,4.81552
+grouped,1,1,margin,total,arcface_head,3.04773
+grouped,1,1,margin,total,aux_head_spatial,0.565226
+grouped,1,1,margin,total,[clip group] head,3.04773
+grouped,1,1,margin,total,[clip group] fusion,4.81552
+grouped,1,1,margin,total,[clip group] backbone,40.1065
+grouped,1,1,margin,main only,se,0.249037
+grouped,1,1,margin,main only,spatial.stem.stage1,19.0683
+grouped,1,1,margin,main only,spatial.stem.stage2,8.94256
+grouped,1,1,margin,main only,spatial.stem.stage3,6.64926
+grouped,1,1,margin,main only,spatial.stem.fold,3.21921
+grouped,1,1,margin,main only,spatial.tail.0,5.64921
+grouped,1,1,margin,main only,spatial.tail.1,4.11871
+grouped,1,1,margin,main only,spatial.tail.2,5.67689
+grouped,1,1,margin,main only,spatial.tail.3,3.21329
+grouped,1,1,margin,main only,spatial.tail.4,4.4066
+grouped,1,1,margin,main only,spatial.tail.5,2.54032
+grouped,1,1,margin,main only,spatial.tail.6,3.85835
+grouped,1,1,margin,main only,spatial.proj,3.14738
+grouped,1,1,margin,main only,spectral.index_bank,0.185451
+grouped,1,1,margin,main only,spectral.in_norm,4.164
+grouped,1,1,margin,main only,spectral.mlp,28.7078
+grouped,1,1,margin,main only,fuse,6.68168
+grouped,1,1,margin,main only,embed_net,4.81552
+grouped,1,1,margin,main only,arcface_head,3.04773
+grouped,1,1,margin,main only,[clip group] head,3.04773
+grouped,1,1,margin,main only,[clip group] fusion,4.81552
+grouped,1,1,margin,main only,[clip group] backbone,39.2613
+grouped,1,1,margin,aux only,se,0.00704858
+grouped,1,1,margin,aux only,spatial.stem.stage1,1.53275
+grouped,1,1,margin,aux only,spatial.stem.stage2,0.714589
+grouped,1,1,margin,aux only,spatial.stem.stage3,0.480366
+grouped,1,1,margin,aux only,spatial.stem.fold,0.232175
+grouped,1,1,margin,aux only,spatial.tail.0,0.391159
+grouped,1,1,margin,aux only,spatial.tail.1,0.296304
+grouped,1,1,margin,aux only,spatial.tail.2,0.36759
+grouped,1,1,margin,aux only,spatial.tail.3,0.202821
+grouped,1,1,margin,aux only,spatial.tail.4,0.273459
+grouped,1,1,margin,aux only,spatial.tail.5,0.145867
+grouped,1,1,margin,aux only,spatial.tail.6,0.253177
+grouped,1,1,margin,aux only,spatial.proj,0.178953
+grouped,1,1,margin,aux only,aux_head_spatial,0.565226
+grouped,1,1,margin,aux only,[clip group] head,0
+grouped,1,1,margin,aux only,[clip group] fusion,0
+grouped,1,1,margin,aux only,[clip group] backbone,2.02755
+grouped,1,2,clean,total,se,0.116393
+grouped,1,2,clean,total,spatial.stem.stage1,8.62878
+grouped,1,2,clean,total,spatial.stem.stage2,3.10399
+grouped,1,2,clean,total,spatial.stem.stage3,1.63941
+grouped,1,2,clean,total,spatial.stem.fold,0.906516
+grouped,1,2,clean,total,spatial.tail.0,1.52606
+grouped,1,2,clean,total,spatial.tail.1,0.939024
+grouped,1,2,clean,total,spatial.tail.2,1.28505
+grouped,1,2,clean,total,spatial.tail.3,0.457153
+grouped,1,2,clean,total,spatial.tail.4,0.875524
+grouped,1,2,clean,total,spatial.tail.5,0.620681
+grouped,1,2,clean,total,spatial.tail.6,0.929288
+grouped,1,2,clean,total,spatial.proj,0.733589
+grouped,1,2,clean,total,spectral.index_bank,0.0120444
+grouped,1,2,clean,total,spectral.in_norm,0.57445
+grouped,1,2,clean,total,spectral.mlp,4.70669
+grouped,1,2,clean,total,fuse,1.57195
+grouped,1,2,clean,total,embed_net,0.929544
+grouped,1,2,clean,total,arcface_head,1.15239
+grouped,1,2,clean,total,aux_head_spatial,0.719199
+grouped,1,2,clean,total,[clip group] head,1.15239
+grouped,1,2,clean,total,[clip group] fusion,0.929544
+grouped,1,2,clean,total,[clip group] backbone,11.0869
+grouped,1,2,clean,main only,se,0.104476
+grouped,1,2,clean,main only,spatial.stem.stage1,6.22574
+grouped,1,2,clean,main only,spatial.stem.stage2,2.25036
+grouped,1,2,clean,main only,spatial.stem.stage3,1.23321
+grouped,1,2,clean,main only,spatial.stem.fold,0.680278
+grouped,1,2,clean,main only,spatial.tail.0,1.13862
+grouped,1,2,clean,main only,spatial.tail.1,0.707993
+grouped,1,2,clean,main only,spatial.tail.2,0.945606
+grouped,1,2,clean,main only,spatial.tail.3,0.342815
+grouped,1,2,clean,main only,spatial.tail.4,0.65107
+grouped,1,2,clean,main only,spatial.tail.5,0.477898
+grouped,1,2,clean,main only,spatial.tail.6,0.67904
+grouped,1,2,clean,main only,spatial.proj,0.611513
+grouped,1,2,clean,main only,spectral.index_bank,0.0120444
+grouped,1,2,clean,main only,spectral.in_norm,0.57445
+grouped,1,2,clean,main only,spectral.mlp,4.70669
+grouped,1,2,clean,main only,fuse,1.57195
+grouped,1,2,clean,main only,embed_net,0.929544
+grouped,1,2,clean,main only,arcface_head,1.15239
+grouped,1,2,clean,main only,[clip group] head,1.15239
+grouped,1,2,clean,main only,[clip group] fusion,0.929544
+grouped,1,2,clean,main only,[clip group] backbone,8.72166
+grouped,1,2,clean,aux only,se,0.0187219
+grouped,1,2,clean,aux only,spatial.stem.stage1,3.60817
+grouped,1,2,clean,aux only,spatial.stem.stage2,1.13508
+grouped,1,2,clean,aux only,spatial.stem.stage3,0.545476
+grouped,1,2,clean,aux only,spatial.stem.fold,0.295372
+grouped,1,2,clean,aux only,spatial.tail.0,0.503192
+grouped,1,2,clean,aux only,spatial.tail.1,0.30408
+grouped,1,2,clean,aux only,spatial.tail.2,0.439498
+grouped,1,2,clean,aux only,spatial.tail.3,0.157506
+grouped,1,2,clean,aux only,spatial.tail.4,0.296706
+grouped,1,2,clean,aux only,spatial.tail.5,0.194659
+grouped,1,2,clean,aux only,spatial.tail.6,0.314165
+grouped,1,2,clean,aux only,spatial.proj,0.219854
+grouped,1,2,clean,aux only,aux_head_spatial,0.719199
+grouped,1,2,clean,aux only,[clip group] head,0
+grouped,1,2,clean,aux only,[clip group] fusion,0
+grouped,1,2,clean,aux only,[clip group] backbone,4.03186
+grouped,1,2,margin,total,se,0.614182
+grouped,1,2,margin,total,spatial.stem.stage1,21.1219
+grouped,1,2,margin,total,spatial.stem.stage2,7.8157
+grouped,1,2,margin,total,spatial.stem.stage3,4.00504
+grouped,1,2,margin,total,spatial.stem.fold,2.1955
+grouped,1,2,margin,total,spatial.tail.0,3.66112
+grouped,1,2,margin,total,spatial.tail.1,2.29423
+grouped,1,2,margin,total,spatial.tail.2,3.17524
+grouped,1,2,margin,total,spatial.tail.3,1.2801
+grouped,1,2,margin,total,spatial.tail.4,2.31858
+grouped,1,2,margin,total,spatial.tail.5,1.52034
+grouped,1,2,margin,total,spatial.tail.6,2.79258
+grouped,1,2,margin,total,spatial.proj,1.91892
+grouped,1,2,margin,total,spectral.index_bank,0.0315091
+grouped,1,2,margin,total,spectral.in_norm,1.66564
+grouped,1,2,margin,total,spectral.mlp,15.2349
+grouped,1,2,margin,total,fuse,5.14157
+grouped,1,2,margin,total,embed_net,3.03374
+grouped,1,2,margin,total,arcface_head,3.66623
+grouped,1,2,margin,total,aux_head_spatial,0.585148
+grouped,1,2,margin,total,[clip group] head,3.66623
+grouped,1,2,margin,total,[clip group] fusion,3.03374
+grouped,1,2,margin,total,[clip group] backbone,29.3846
+grouped,1,2,margin,main only,se,0.61301
+grouped,1,2,margin,main only,spatial.stem.stage1,18.7446
+grouped,1,2,margin,main only,spatial.stem.stage2,7.03236
+grouped,1,2,margin,main only,spatial.stem.stage3,3.64163
+grouped,1,2,margin,main only,spatial.stem.fold,1.99445
+grouped,1,2,margin,main only,spatial.tail.0,3.32293
+grouped,1,2,margin,main only,spatial.tail.1,2.10238
+grouped,1,2,margin,main only,spatial.tail.2,2.8909
+grouped,1,2,margin,main only,spatial.tail.3,1.17733
+grouped,1,2,margin,main only,spatial.tail.4,2.1342
+grouped,1,2,margin,main only,spatial.tail.5,1.40153
+grouped,1,2,margin,main only,spatial.tail.6,2.59587
+grouped,1,2,margin,main only,spatial.proj,1.82146
+grouped,1,2,margin,main only,spectral.index_bank,0.0315091
+grouped,1,2,margin,main only,spectral.in_norm,1.66564
+grouped,1,2,margin,main only,spectral.mlp,15.2349
+grouped,1,2,margin,main only,fuse,5.14157
+grouped,1,2,margin,main only,embed_net,3.03374
+grouped,1,2,margin,main only,arcface_head,3.66623
+grouped,1,2,margin,main only,[clip group] head,3.66623
+grouped,1,2,margin,main only,[clip group] fusion,3.03374
+grouped,1,2,margin,main only,[clip group] backbone,27.2584
+grouped,1,2,margin,aux only,se,0.0151651
+grouped,1,2,margin,aux only,spatial.stem.stage1,2.91245
+grouped,1,2,margin,aux only,spatial.stem.stage2,0.919766
+grouped,1,2,margin,aux only,spatial.stem.stage3,0.442316
+grouped,1,2,margin,aux only,spatial.stem.fold,0.239487
+grouped,1,2,margin,aux only,spatial.tail.0,0.408095
+grouped,1,2,margin,aux only,spatial.tail.1,0.246404
+grouped,1,2,margin,aux only,spatial.tail.2,0.355893
+grouped,1,2,margin,aux only,spatial.tail.3,0.127296
+grouped,1,2,margin,aux only,spatial.tail.4,0.239829
+grouped,1,2,margin,aux only,spatial.tail.5,0.157164
+grouped,1,2,margin,aux only,spatial.tail.6,0.251753
+grouped,1,2,margin,aux only,spatial.proj,0.178879
+grouped,1,2,margin,aux only,aux_head_spatial,0.585148
+grouped,1,2,margin,aux only,[clip group] head,0
+grouped,1,2,margin,aux only,[clip group] fusion,0
+grouped,1,2,margin,aux only,[clip group] backbone,3.25749
+stratified,0,0,clean,total,se,0.193403
+stratified,0,0,clean,total,spatial.stem.stage1,11.0588
+stratified,0,0,clean,total,spatial.stem.stage2,5.25342
+stratified,0,0,clean,total,spatial.stem.stage3,3.24103
+stratified,0,0,clean,total,spatial.stem.fold,1.84438
+stratified,0,0,clean,total,spatial.tail.0,3.02993
+stratified,0,0,clean,total,spatial.tail.1,2.33023
+stratified,0,0,clean,total,spatial.tail.2,2.57948
+stratified,0,0,clean,total,spatial.tail.3,0.853391
+stratified,0,0,clean,total,spatial.tail.4,1.71005
+stratified,0,0,clean,total,spatial.tail.5,1.16364
+stratified,0,0,clean,total,spatial.tail.6,1.38102
+stratified,0,0,clean,total,spatial.proj,1.38767
+stratified,0,0,clean,total,spectral.index_bank,0.042211
+stratified,0,0,clean,total,spectral.in_norm,2.07099
+stratified,0,0,clean,total,spectral.mlp,13.4676
+stratified,0,0,clean,total,fuse,2.89545
+stratified,0,0,clean,total,embed_net,2.25644
+stratified,0,0,clean,total,arcface_head,1.42149
+stratified,0,0,clean,total,aux_head_spatial,0.689387
+stratified,0,0,clean,total,[clip group] head,1.42149
+stratified,0,0,clean,total,[clip group] fusion,2.25644
+stratified,0,0,clean,total,[clip group] backbone,19.8533
+stratified,0,0,clean,main only,se,0.192499
+stratified,0,0,clean,main only,spatial.stem.stage1,9.96407
+stratified,0,0,clean,main only,spatial.stem.stage2,4.93353
+stratified,0,0,clean,main only,spatial.stem.stage3,3.03622
+stratified,0,0,clean,main only,spatial.stem.fold,1.73768
+stratified,0,0,clean,main only,spatial.tail.0,2.83154
+stratified,0,0,clean,main only,spatial.tail.1,2.30275
+stratified,0,0,clean,main only,spatial.tail.2,2.36863
+stratified,0,0,clean,main only,spatial.tail.3,0.76529
+stratified,0,0,clean,main only,spatial.tail.4,1.57808
+stratified,0,0,clean,main only,spatial.tail.5,1.05534
+stratified,0,0,clean,main only,spatial.tail.6,1.29267
+stratified,0,0,clean,main only,spatial.proj,1.32157
+stratified,0,0,clean,main only,spectral.index_bank,0.042211
+stratified,0,0,clean,main only,spectral.in_norm,2.07099
+stratified,0,0,clean,main only,spectral.mlp,13.4676
+stratified,0,0,clean,main only,fuse,2.89545
+stratified,0,0,clean,main only,embed_net,2.25644
+stratified,0,0,clean,main only,arcface_head,1.42149
+stratified,0,0,clean,main only,[clip group] head,1.42149
+stratified,0,0,clean,main only,[clip group] fusion,2.25644
+stratified,0,0,clean,main only,[clip group] backbone,18.9698
+stratified,0,0,clean,aux only,se,0.0118884
+stratified,0,0,clean,aux only,spatial.stem.stage1,2.34931
+stratified,0,0,clean,aux only,spatial.stem.stage2,0.863052
+stratified,0,0,clean,aux only,spatial.stem.stage3,0.533041
+stratified,0,0,clean,aux only,spatial.stem.fold,0.308946
+stratified,0,0,clean,aux only,spatial.tail.0,0.524413
+stratified,0,0,clean,aux only,spatial.tail.1,0.382272
+stratified,0,0,clean,aux only,spatial.tail.2,0.490028
+stratified,0,0,clean,aux only,spatial.tail.3,0.170009
+stratified,0,0,clean,aux only,spatial.tail.4,0.324617
+stratified,0,0,clean,aux only,spatial.tail.5,0.20837
+stratified,0,0,clean,aux only,spatial.tail.6,0.268313
+stratified,0,0,clean,aux only,spatial.proj,0.231145
+stratified,0,0,clean,aux only,aux_head_spatial,0.689387
+stratified,0,0,clean,aux only,[clip group] head,0
+stratified,0,0,clean,aux only,[clip group] fusion,0
+stratified,0,0,clean,aux only,[clip group] backbone,2.87814
+stratified,0,0,margin,total,se,0.682419
+stratified,0,0,margin,total,spatial.stem.stage1,34.711
+stratified,0,0,margin,total,spatial.stem.stage2,16.729
+stratified,0,0,margin,total,spatial.stem.stage3,8.89547
+stratified,0,0,margin,total,spatial.stem.fold,5.39172
+stratified,0,0,margin,total,spatial.tail.0,8.68515
+stratified,0,0,margin,total,spatial.tail.1,6.83245
+stratified,0,0,margin,total,spatial.tail.2,7.54307
+stratified,0,0,margin,total,spatial.tail.3,2.79592
+stratified,0,0,margin,total,spatial.tail.4,5.13253
+stratified,0,0,margin,total,spatial.tail.5,3.32373
+stratified,0,0,margin,total,spatial.tail.6,4.1918
+stratified,0,0,margin,total,spatial.proj,3.49376
+stratified,0,0,margin,total,spectral.index_bank,0.0784659
+stratified,0,0,margin,total,spectral.in_norm,4.1579
+stratified,0,0,margin,total,spectral.mlp,31.0941
+stratified,0,0,margin,total,fuse,6.67013
+stratified,0,0,margin,total,embed_net,5.18829
+stratified,0,0,margin,total,arcface_head,3.09883
+stratified,0,0,margin,total,aux_head_spatial,0.560936
+stratified,0,0,margin,total,[clip group] head,3.09883
+stratified,0,0,margin,total,[clip group] fusion,5.18829
+stratified,0,0,margin,total,[clip group] backbone,55.1129
+stratified,0,0,margin,main only,se,0.682048
+stratified,0,0,margin,main only,spatial.stem.stage1,33.9151
+stratified,0,0,margin,main only,spatial.stem.stage2,16.2568
+stratified,0,0,margin,main only,spatial.stem.stage3,8.61518
+stratified,0,0,margin,main only,spatial.stem.fold,5.23079
+stratified,0,0,margin,main only,spatial.tail.0,8.40995
+stratified,0,0,margin,main only,spatial.tail.1,6.66119
+stratified,0,0,margin,main only,spatial.tail.2,7.25562
+stratified,0,0,margin,main only,spatial.tail.3,2.6878
+stratified,0,0,margin,main only,spatial.tail.4,4.94338
+stratified,0,0,margin,main only,spatial.tail.5,3.19781
+stratified,0,0,margin,main only,spatial.tail.6,4.05517
+stratified,0,0,margin,main only,spatial.proj,3.40547
+stratified,0,0,margin,main only,spectral.index_bank,0.0784659
+stratified,0,0,margin,main only,spectral.in_norm,4.1579
+stratified,0,0,margin,main only,spectral.mlp,31.0941
+stratified,0,0,margin,main only,fuse,6.67013
+stratified,0,0,margin,main only,embed_net,5.18829
+stratified,0,0,margin,main only,arcface_head,3.09883
+stratified,0,0,margin,main only,[clip group] head,3.09883
+stratified,0,0,margin,main only,[clip group] fusion,5.18829
+stratified,0,0,margin,main only,[clip group] backbone,54.1078
+stratified,0,0,margin,aux only,se,0.00954601
+stratified,0,0,margin,aux only,spatial.stem.stage1,1.90152
+stratified,0,0,margin,aux only,spatial.stem.stage2,0.696996
+stratified,0,0,margin,aux only,spatial.stem.stage3,0.430958
+stratified,0,0,margin,aux only,spatial.stem.fold,0.249585
+stratified,0,0,margin,aux only,spatial.tail.0,0.424439
+stratified,0,0,margin,aux only,spatial.tail.1,0.309655
+stratified,0,0,margin,aux only,spatial.tail.2,0.397019
+stratified,0,0,margin,aux only,spatial.tail.3,0.13808
+stratified,0,0,margin,aux only,spatial.tail.4,0.263206
+stratified,0,0,margin,aux only,spatial.tail.5,0.1688
+stratified,0,0,margin,aux only,spatial.tail.6,0.217832
+stratified,0,0,margin,aux only,spatial.proj,0.189647
+stratified,0,0,margin,aux only,aux_head_spatial,0.560936
+stratified,0,0,margin,aux only,[clip group] head,0
+stratified,0,0,margin,aux only,[clip group] fusion,0
+stratified,0,0,margin,aux only,[clip group] backbone,2.33006
+stratified,0,1,clean,total,se,0.151027
+stratified,0,1,clean,total,spatial.stem.stage1,8.5481
+stratified,0,1,clean,total,spatial.stem.stage2,5.62769
+stratified,0,1,clean,total,spatial.stem.stage3,3.04437
+stratified,0,1,clean,total,spatial.stem.fold,1.46802
+stratified,0,1,clean,total,spatial.tail.0,2.49288
+stratified,0,1,clean,total,spatial.tail.1,1.57558
+stratified,0,1,clean,total,spatial.tail.2,2.56134
+stratified,0,1,clean,total,spatial.tail.3,1.38652
+stratified,0,1,clean,total,spatial.tail.4,2.07886
+stratified,0,1,clean,total,spatial.tail.5,1.24164
+stratified,0,1,clean,total,spatial.tail.6,2.04507
+stratified,0,1,clean,total,spatial.proj,1.01007
+stratified,0,1,clean,total,spectral.index_bank,0.0582555
+stratified,0,1,clean,total,spectral.in_norm,1.8981
+stratified,0,1,clean,total,spectral.mlp,10.5698
+stratified,0,1,clean,total,fuse,2.02796
+stratified,0,1,clean,total,embed_net,1.61683
+stratified,0,1,clean,total,arcface_head,0.97576
+stratified,0,1,clean,total,aux_head_spatial,0.656384
+stratified,0,1,clean,total,[clip group] head,0.97576
+stratified,0,1,clean,total,[clip group] fusion,1.61683
+stratified,0,1,clean,total,[clip group] backbone,16.849
+stratified,0,1,clean,main only,se,0.146348
+stratified,0,1,clean,main only,spatial.stem.stage1,7.57526
+stratified,0,1,clean,main only,spatial.stem.stage2,5.20161
+stratified,0,1,clean,main only,spatial.stem.stage3,2.771
+stratified,0,1,clean,main only,spatial.stem.fold,1.33138
+stratified,0,1,clean,main only,spatial.tail.0,2.26129
+stratified,0,1,clean,main only,spatial.tail.1,1.39219
+stratified,0,1,clean,main only,spatial.tail.2,2.28664
+stratified,0,1,clean,main only,spatial.tail.3,1.28144
+stratified,0,1,clean,main only,spatial.tail.4,1.86646
+stratified,0,1,clean,main only,spatial.tail.5,1.12047
+stratified,0,1,clean,main only,spatial.tail.6,1.81803
+stratified,0,1,clean,main only,spatial.proj,0.948456
+stratified,0,1,clean,main only,spectral.index_bank,0.0582555
+stratified,0,1,clean,main only,spectral.in_norm,1.8981
+stratified,0,1,clean,main only,spectral.mlp,10.5698
+stratified,0,1,clean,main only,fuse,2.02796
+stratified,0,1,clean,main only,embed_net,1.61683
+stratified,0,1,clean,main only,arcface_head,0.97576
+stratified,0,1,clean,main only,[clip group] head,0.97576
+stratified,0,1,clean,main only,[clip group] fusion,1.61683
+stratified,0,1,clean,main only,[clip group] backbone,15.9063
+stratified,0,1,clean,aux only,se,0.0138305
+stratified,0,1,clean,aux only,spatial.stem.stage1,2.74314
+stratified,0,1,clean,aux only,spatial.stem.stage2,1.09951
+stratified,0,1,clean,aux only,spatial.stem.stage3,0.690899
+stratified,0,1,clean,aux only,spatial.stem.fold,0.343713
+stratified,0,1,clean,aux only,spatial.tail.0,0.586007
+stratified,0,1,clean,aux only,spatial.tail.1,0.406198
+stratified,0,1,clean,aux only,spatial.tail.2,0.60886
+stratified,0,1,clean,aux only,spatial.tail.3,0.299408
+stratified,0,1,clean,aux only,spatial.tail.4,0.468429
+stratified,0,1,clean,aux only,spatial.tail.5,0.253638
+stratified,0,1,clean,aux only,spatial.tail.6,0.44342
+stratified,0,1,clean,aux only,spatial.proj,0.214847
+stratified,0,1,clean,aux only,aux_head_spatial,0.656384
+stratified,0,1,clean,aux only,[clip group] head,0
+stratified,0,1,clean,aux only,[clip group] fusion,0
+stratified,0,1,clean,aux only,[clip group] backbone,3.41366
+stratified,0,1,margin,total,se,0.442744
+stratified,0,1,margin,total,spatial.stem.stage1,45.3338
+stratified,0,1,margin,total,spatial.stem.stage2,19.8244
+stratified,0,1,margin,total,spatial.stem.stage3,10.1646
+stratified,0,1,margin,total,spatial.stem.fold,5.20197
+stratified,0,1,margin,total,spatial.tail.0,8.77979
+stratified,0,1,margin,total,spatial.tail.1,5.97251
+stratified,0,1,margin,total,spatial.tail.2,8.71124
+stratified,0,1,margin,total,spatial.tail.3,4.63726
+stratified,0,1,margin,total,spatial.tail.4,6.39568
+stratified,0,1,margin,total,spatial.tail.5,3.36982
+stratified,0,1,margin,total,spatial.tail.6,5.39298
+stratified,0,1,margin,total,spatial.proj,3.41232
+stratified,0,1,margin,total,spectral.index_bank,0.197033
+stratified,0,1,margin,total,spectral.in_norm,5.378
+stratified,0,1,margin,total,spectral.mlp,31.846
+stratified,0,1,margin,total,fuse,6.57334
+stratified,0,1,margin,total,embed_net,4.96884
+stratified,0,1,margin,total,arcface_head,2.88801
+stratified,0,1,margin,total,aux_head_spatial,0.535084
+stratified,0,1,margin,total,[clip group] head,2.88801
+stratified,0,1,margin,total,[clip group] fusion,4.96884
+stratified,0,1,margin,total,[clip group] backbone,63.2183
+stratified,0,1,margin,main only,se,0.437762
+stratified,0,1,margin,main only,spatial.stem.stage1,43.7711
+stratified,0,1,margin,main only,spatial.stem.stage2,19.1748
+stratified,0,1,margin,main only,spatial.stem.stage3,9.75693
+stratified,0,1,margin,main only,spatial.stem.fold,5.00317
+stratified,0,1,margin,main only,spatial.tail.0,8.45759
+stratified,0,1,margin,main only,spatial.tail.1,5.75067
+stratified,0,1,margin,main only,spatial.tail.2,8.37887
+stratified,0,1,margin,main only,spatial.tail.3,4.4869
+stratified,0,1,margin,main only,spatial.tail.4,6.14149
+stratified,0,1,margin,main only,spatial.tail.5,3.23905
+stratified,0,1,margin,main only,spatial.tail.6,5.13799
+stratified,0,1,margin,main only,spatial.proj,3.32395
+stratified,0,1,margin,main only,spectral.index_bank,0.197033
+stratified,0,1,margin,main only,spectral.in_norm,5.378
+stratified,0,1,margin,main only,spectral.mlp,31.846
+stratified,0,1,margin,main only,fuse,6.57334
+stratified,0,1,margin,main only,embed_net,4.96884
+stratified,0,1,margin,main only,arcface_head,2.88801
+stratified,0,1,margin,main only,[clip group] head,2.88801
+stratified,0,1,margin,main only,[clip group] fusion,4.96884
+stratified,0,1,margin,main only,[clip group] backbone,61.6127
+stratified,0,1,margin,aux only,se,0.0111605
+stratified,0,1,margin,aux only,spatial.stem.stage1,2.23725
+stratified,0,1,margin,aux only,spatial.stem.stage2,0.891897
+stratified,0,1,margin,aux only,spatial.stem.stage3,0.561906
+stratified,0,1,margin,aux only,spatial.stem.fold,0.279409
+stratified,0,1,margin,aux only,spatial.tail.0,0.476794
+stratified,0,1,margin,aux only,spatial.tail.1,0.331119
+stratified,0,1,margin,aux only,spatial.tail.2,0.495536
+stratified,0,1,margin,aux only,spatial.tail.3,0.24373
+stratified,0,1,margin,aux only,spatial.tail.4,0.381342
+stratified,0,1,margin,aux only,spatial.tail.5,0.206695
+stratified,0,1,margin,aux only,spatial.tail.6,0.362003
+stratified,0,1,margin,aux only,spatial.proj,0.175937
+stratified,0,1,margin,aux only,aux_head_spatial,0.535084
+stratified,0,1,margin,aux only,[clip group] head,0
+stratified,0,1,margin,aux only,[clip group] fusion,0
+stratified,0,1,margin,aux only,[clip group] backbone,2.78231
+stratified,0,2,clean,total,se,0.424453
+stratified,0,2,clean,total,spatial.stem.stage1,17.2534
+stratified,0,2,clean,total,spatial.stem.stage2,6.24857
+stratified,0,2,clean,total,spatial.stem.stage3,4.01317
+stratified,0,2,clean,total,spatial.stem.fold,2.17538
+stratified,0,2,clean,total,spatial.tail.0,3.42635
+stratified,0,2,clean,total,spatial.tail.1,2.50843
+stratified,0,2,clean,total,spatial.tail.2,2.5418
+stratified,0,2,clean,total,spatial.tail.3,0.901043
+stratified,0,2,clean,total,spatial.tail.4,1.58909
+stratified,0,2,clean,total,spatial.tail.5,0.772311
+stratified,0,2,clean,total,spatial.tail.6,1.41175
+stratified,0,2,clean,total,spatial.proj,1.27796
+stratified,0,2,clean,total,spectral.index_bank,0.0362398
+stratified,0,2,clean,total,spectral.in_norm,1.40135
+stratified,0,2,clean,total,spectral.mlp,10.4337
+stratified,0,2,clean,total,fuse,2.54927
+stratified,0,2,clean,total,embed_net,2.12383
+stratified,0,2,clean,total,arcface_head,1.35191
+stratified,0,2,clean,total,aux_head_spatial,0.65258
+stratified,0,2,clean,total,[clip group] head,1.35191
+stratified,0,2,clean,total,[clip group] fusion,2.12383
+stratified,0,2,clean,total,[clip group] backbone,22.6433
+stratified,0,2,clean,main only,se,0.415337
+stratified,0,2,clean,main only,spatial.stem.stage1,15.9439
+stratified,0,2,clean,main only,spatial.stem.stage2,5.69632
+stratified,0,2,clean,main only,spatial.stem.stage3,3.66699
+stratified,0,2,clean,main only,spatial.stem.fold,1.98
+stratified,0,2,clean,main only,spatial.tail.0,3.11871
+stratified,0,2,clean,main only,spatial.tail.1,2.28812
+stratified,0,2,clean,main only,spatial.tail.2,2.29754
+stratified,0,2,clean,main only,spatial.tail.3,0.821246
+stratified,0,2,clean,main only,spatial.tail.4,1.44266
+stratified,0,2,clean,main only,spatial.tail.5,0.692625
+stratified,0,2,clean,main only,spatial.tail.6,1.28088
+stratified,0,2,clean,main only,spatial.proj,1.19945
+stratified,0,2,clean,main only,spectral.index_bank,0.0362398
+stratified,0,2,clean,main only,spectral.in_norm,1.40135
+stratified,0,2,clean,main only,spectral.mlp,10.4337
+stratified,0,2,clean,main only,fuse,2.54927
+stratified,0,2,clean,main only,embed_net,2.12383
+stratified,0,2,clean,main only,arcface_head,1.35191
+stratified,0,2,clean,main only,[clip group] head,1.35191
+stratified,0,2,clean,main only,[clip group] fusion,2.12383
+stratified,0,2,clean,main only,[clip group] backbone,21.2649
+stratified,0,2,clean,aux only,se,0.0270406
+stratified,0,2,clean,aux only,spatial.stem.stage1,2.57867
+stratified,0,2,clean,aux only,spatial.stem.stage2,1.07906
+stratified,0,2,clean,aux only,spatial.stem.stage3,0.664074
+stratified,0,2,clean,aux only,spatial.stem.fold,0.36389
+stratified,0,2,clean,aux only,spatial.tail.0,0.584371
+stratified,0,2,clean,aux only,spatial.tail.1,0.4501
+stratified,0,2,clean,aux only,spatial.tail.2,0.478554
+stratified,0,2,clean,aux only,spatial.tail.3,0.164068
+stratified,0,2,clean,aux only,spatial.tail.4,0.301892
+stratified,0,2,clean,aux only,spatial.tail.5,0.150347
+stratified,0,2,clean,aux only,spatial.tail.6,0.277019
+stratified,0,2,clean,aux only,spatial.proj,0.227173
+stratified,0,2,clean,aux only,aux_head_spatial,0.65258
+stratified,0,2,clean,aux only,[clip group] head,0
+stratified,0,2,clean,aux only,[clip group] fusion,0
+stratified,0,2,clean,aux only,[clip group] backbone,3.16093
+stratified,0,2,margin,total,se,0.772301
+stratified,0,2,margin,total,spatial.stem.stage1,41.5836
+stratified,0,2,margin,total,spatial.stem.stage2,16.4151
+stratified,0,2,margin,total,spatial.stem.stage3,9.96515
+stratified,0,2,margin,total,spatial.stem.fold,5.65505
+stratified,0,2,margin,total,spatial.tail.0,8.89879
+stratified,0,2,margin,total,spatial.tail.1,7.38612
+stratified,0,2,margin,total,spatial.tail.2,6.81684
+stratified,0,2,margin,total,spatial.tail.3,2.38709
+stratified,0,2,margin,total,spatial.tail.4,4.38979
+stratified,0,2,margin,total,spatial.tail.5,1.9646
+stratified,0,2,margin,total,spatial.tail.6,4.91098
+stratified,0,2,margin,total,spatial.proj,3.25097
+stratified,0,2,margin,total,spectral.index_bank,0.0868292
+stratified,0,2,margin,total,spectral.in_norm,3.5945
+stratified,0,2,margin,total,spectral.mlp,25.7388
+stratified,0,2,margin,total,fuse,6.29154
+stratified,0,2,margin,total,embed_net,4.96847
+stratified,0,2,margin,total,arcface_head,3.02153
+stratified,0,2,margin,total,aux_head_spatial,0.530736
+stratified,0,2,margin,total,[clip group] head,3.02153
+stratified,0,2,margin,total,[clip group] fusion,4.96847
+stratified,0,2,margin,total,[clip group] backbone,56.0532
+stratified,0,2,margin,main only,se,0.763118
+stratified,0,2,margin,main only,spatial.stem.stage1,39.9534
+stratified,0,2,margin,main only,spatial.stem.stage2,15.7817
+stratified,0,2,margin,main only,spatial.stem.stage3,9.5636
+stratified,0,2,margin,main only,spatial.stem.fold,5.43325
+stratified,0,2,margin,main only,spatial.tail.0,8.54349
+stratified,0,2,margin,main only,spatial.tail.1,7.10237
+stratified,0,2,margin,main only,spatial.tail.2,6.53889
+stratified,0,2,margin,main only,spatial.tail.3,2.29379
+stratified,0,2,margin,main only,spatial.tail.4,4.2188
+stratified,0,2,margin,main only,spatial.tail.5,1.88115
+stratified,0,2,margin,main only,spatial.tail.6,4.7581
+stratified,0,2,margin,main only,spatial.proj,3.15756
+stratified,0,2,margin,main only,spectral.index_bank,0.0868292
+stratified,0,2,margin,main only,spectral.in_norm,3.5945
+stratified,0,2,margin,main only,spectral.mlp,25.7388
+stratified,0,2,margin,main only,fuse,6.29154
+stratified,0,2,margin,main only,embed_net,4.96847
+stratified,0,2,margin,main only,arcface_head,3.02153
+stratified,0,2,margin,main only,[clip group] head,3.02153
+stratified,0,2,margin,main only,[clip group] fusion,4.96847
+stratified,0,2,margin,main only,[clip group] backbone,54.4085
+stratified,0,2,margin,aux only,se,0.0217667
+stratified,0,2,margin,aux only,spatial.stem.stage1,2.08289
+stratified,0,2,margin,aux only,spatial.stem.stage2,0.872366
+stratified,0,2,margin,aux only,spatial.stem.stage3,0.537664
+stratified,0,2,margin,aux only,spatial.stem.fold,0.294138
+stratified,0,2,margin,aux only,spatial.tail.0,0.473115
+stratified,0,2,margin,aux only,spatial.tail.1,0.363704
+stratified,0,2,margin,aux only,spatial.tail.2,0.388924
+stratified,0,2,margin,aux only,spatial.tail.3,0.133436
+stratified,0,2,margin,aux only,spatial.tail.4,0.245372
+stratified,0,2,margin,aux only,spatial.tail.5,0.122554
+stratified,0,2,margin,aux only,spatial.tail.6,0.223897
+stratified,0,2,margin,aux only,spatial.proj,0.185617
+stratified,0,2,margin,aux only,aux_head_spatial,0.530736
+stratified,0,2,margin,aux only,[clip group] head,0
+stratified,0,2,margin,aux only,[clip group] fusion,0
+stratified,0,2,margin,aux only,[clip group] backbone,2.55553
+stratified,0,3,clean,total,se,0.0718751
+stratified,0,3,clean,total,spatial.stem.stage1,9.6941
+stratified,0,3,clean,total,spatial.stem.stage2,2.87172
+stratified,0,3,clean,total,spatial.stem.stage3,1.58351
+stratified,0,3,clean,total,spatial.stem.fold,0.96697
+stratified,0,3,clean,total,spatial.tail.0,1.54094
+stratified,0,3,clean,total,spatial.tail.1,1.54515
+stratified,0,3,clean,total,spatial.tail.2,1.33774
+stratified,0,3,clean,total,spatial.tail.3,0.744328
+stratified,0,3,clean,total,spatial.tail.4,1.00518
+stratified,0,3,clean,total,spatial.tail.5,0.646685
+stratified,0,3,clean,total,spatial.tail.6,0.900715
+stratified,0,3,clean,total,spatial.proj,0.773308
+stratified,0,3,clean,total,spectral.index_bank,0.0101841
+stratified,0,3,clean,total,spectral.in_norm,0.387024
+stratified,0,3,clean,total,spectral.mlp,3.69086
+stratified,0,3,clean,total,fuse,1.38112
+stratified,0,3,clean,total,embed_net,0.966459
+stratified,0,3,clean,total,arcface_head,0.827426
+stratified,0,3,clean,total,aux_head_spatial,0.616175
+stratified,0,3,clean,total,[clip group] head,0.827426
+stratified,0,3,clean,total,[clip group] fusion,0.966459
+stratified,0,3,clean,total,[clip group] backbone,11.5521
+stratified,0,3,clean,main only,se,0.0736714
+stratified,0,3,clean,main only,spatial.stem.stage1,8.04537
+stratified,0,3,clean,main only,spatial.stem.stage2,2.46351
+stratified,0,3,clean,main only,spatial.stem.stage3,1.38736
+stratified,0,3,clean,main only,spatial.stem.fold,0.858524
+stratified,0,3,clean,main only,spatial.tail.0,1.36495
+stratified,0,3,clean,main only,spatial.tail.1,1.32693
+stratified,0,3,clean,main only,spatial.tail.2,1.13519
+stratified,0,3,clean,main only,spatial.tail.3,0.644632
+stratified,0,3,clean,main only,spatial.tail.4,0.863773
+stratified,0,3,clean,main only,spatial.tail.5,0.551184
+stratified,0,3,clean,main only,spatial.tail.6,0.77307
+stratified,0,3,clean,main only,spatial.proj,0.688876
+stratified,0,3,clean,main only,spectral.index_bank,0.0101841
+stratified,0,3,clean,main only,spectral.in_norm,0.387024
+stratified,0,3,clean,main only,spectral.mlp,3.69086
+stratified,0,3,clean,main only,fuse,1.38112
+stratified,0,3,clean,main only,embed_net,0.966459
+stratified,0,3,clean,main only,arcface_head,0.827426
+stratified,0,3,clean,main only,[clip group] head,0.827426
+stratified,0,3,clean,main only,[clip group] fusion,0.966459
+stratified,0,3,clean,main only,[clip group] backbone,9.91914
+stratified,0,3,clean,aux only,se,0.00984258
+stratified,0,3,clean,aux only,spatial.stem.stage1,2.81578
+stratified,0,3,clean,aux only,spatial.stem.stage2,0.730239
+stratified,0,3,clean,aux only,spatial.stem.stage3,0.402481
+stratified,0,3,clean,aux only,spatial.stem.fold,0.238458
+stratified,0,3,clean,aux only,spatial.tail.0,0.390804
+stratified,0,3,clean,aux only,spatial.tail.1,0.368013
+stratified,0,3,clean,aux only,spatial.tail.2,0.406648
+stratified,0,3,clean,aux only,spatial.tail.3,0.231748
+stratified,0,3,clean,aux only,spatial.tail.4,0.299131
+stratified,0,3,clean,aux only,spatial.tail.5,0.214823
+stratified,0,3,clean,aux only,spatial.tail.6,0.268106
+stratified,0,3,clean,aux only,spatial.proj,0.211226
+stratified,0,3,clean,aux only,aux_head_spatial,0.616175
+stratified,0,3,clean,aux only,[clip group] head,0
+stratified,0,3,clean,aux only,[clip group] fusion,0
+stratified,0,3,clean,aux only,[clip group] backbone,3.16724
+stratified,0,3,margin,total,se,0.455481
+stratified,0,3,margin,total,spatial.stem.stage1,33.4184
+stratified,0,3,margin,total,spatial.stem.stage2,10.2648
+stratified,0,3,margin,total,spatial.stem.stage3,5.51991
+stratified,0,3,margin,total,spatial.stem.fold,3.49286
+stratified,0,3,margin,total,spatial.tail.0,5.75813
+stratified,0,3,margin,total,spatial.tail.1,4.96077
+stratified,0,3,margin,total,spatial.tail.2,5.97932
+stratified,0,3,margin,total,spatial.tail.3,3.44624
+stratified,0,3,margin,total,spatial.tail.4,4.3246
+stratified,0,3,margin,total,spatial.tail.5,3.03279
+stratified,0,3,margin,total,spatial.tail.6,3.77925
+stratified,0,3,margin,total,spatial.proj,3.05117
+stratified,0,3,margin,total,spectral.index_bank,0.0455779
+stratified,0,3,margin,total,spectral.in_norm,1.9472
+stratified,0,3,margin,total,spectral.mlp,16.7378
+stratified,0,3,margin,total,fuse,6.14673
+stratified,0,3,margin,total,embed_net,4.39328
+stratified,0,3,margin,total,arcface_head,3.35843
+stratified,0,3,margin,total,aux_head_spatial,0.503117
+stratified,0,3,margin,total,[clip group] head,3.35843
+stratified,0,3,margin,total,[clip group] fusion,4.39328
+stratified,0,3,margin,total,[clip group] backbone,42.5124
+stratified,0,3,margin,main only,se,0.4523
+stratified,0,3,margin,main only,spatial.stem.stage1,31.4473
+stratified,0,3,margin,main only,spatial.stem.stage2,9.80746
+stratified,0,3,margin,main only,spatial.stem.stage3,5.29176
+stratified,0,3,margin,main only,spatial.stem.fold,3.36184
+stratified,0,3,margin,main only,spatial.tail.0,5.55157
+stratified,0,3,margin,main only,spatial.tail.1,4.80229
+stratified,0,3,margin,main only,spatial.tail.2,5.75108
+stratified,0,3,margin,main only,spatial.tail.3,3.31596
+stratified,0,3,margin,main only,spatial.tail.4,4.16387
+stratified,0,3,margin,main only,spatial.tail.5,2.92432
+stratified,0,3,margin,main only,spatial.tail.6,3.64036
+stratified,0,3,margin,main only,spatial.proj,2.96169
+stratified,0,3,margin,main only,spectral.index_bank,0.0455779
+stratified,0,3,margin,main only,spectral.in_norm,1.9472
+stratified,0,3,margin,main only,spectral.mlp,16.7378
+stratified,0,3,margin,main only,fuse,6.14673
+stratified,0,3,margin,main only,embed_net,4.39328
+stratified,0,3,margin,main only,arcface_head,3.35843
+stratified,0,3,margin,main only,[clip group] head,3.35843
+stratified,0,3,margin,main only,[clip group] fusion,4.39328
+stratified,0,3,margin,main only,[clip group] backbone,40.6212
+stratified,0,3,margin,aux only,se,0.0084652
+stratified,0,3,margin,aux only,spatial.stem.stage1,2.30101
+stratified,0,3,margin,aux only,spatial.stem.stage2,0.597703
+stratified,0,3,margin,aux only,spatial.stem.stage3,0.327819
+stratified,0,3,margin,aux only,spatial.stem.fold,0.194499
+stratified,0,3,margin,aux only,spatial.tail.0,0.318453
+stratified,0,3,margin,aux only,spatial.tail.1,0.298315
+stratified,0,3,margin,aux only,spatial.tail.2,0.332384
+stratified,0,3,margin,aux only,spatial.tail.3,0.190328
+stratified,0,3,margin,aux only,spatial.tail.4,0.244832
+stratified,0,3,margin,aux only,spatial.tail.5,0.175927
+stratified,0,3,margin,aux only,spatial.tail.6,0.219516
+stratified,0,3,margin,aux only,spatial.proj,0.173087
+stratified,0,3,margin,aux only,aux_head_spatial,0.503117
+stratified,0,3,margin,aux only,[clip group] head,0
+stratified,0,3,margin,aux only,[clip group] fusion,0
+stratified,0,3,margin,aux only,[clip group] backbone,2.58861
+stratified,0,4,clean,total,se,0.127881
+stratified,0,4,clean,total,spatial.stem.stage1,11.254
+stratified,0,4,clean,total,spatial.stem.stage2,4.15919
+stratified,0,4,clean,total,spatial.stem.stage3,2.34981
+stratified,0,4,clean,total,spatial.stem.fold,1.29672
+stratified,0,4,clean,total,spatial.tail.0,1.98126
+stratified,0,4,clean,total,spatial.tail.1,1.12383
+stratified,0,4,clean,total,spatial.tail.2,1.72703
+stratified,0,4,clean,total,spatial.tail.3,0.904801
+stratified,0,4,clean,total,spatial.tail.4,1.43996
+stratified,0,4,clean,total,spatial.tail.5,0.676618
+stratified,0,4,clean,total,spatial.tail.6,1.26592
+stratified,0,4,clean,total,spatial.proj,1.09319
+stratified,0,4,clean,total,spectral.index_bank,0.0150609
+stratified,0,4,clean,total,spectral.in_norm,0.849519
+stratified,0,4,clean,total,spectral.mlp,5.87447
+stratified,0,4,clean,total,fuse,1.66873
+stratified,0,4,clean,total,embed_net,1.22164
+stratified,0,4,clean,total,arcface_head,0.821576
+stratified,0,4,clean,total,aux_head_spatial,0.568217
+stratified,0,4,clean,total,[clip group] head,0.821576
+stratified,0,4,clean,total,[clip group] fusion,1.22164
+stratified,0,4,clean,total,[clip group] backbone,14.3257
+stratified,0,4,clean,main only,se,0.126142
+stratified,0,4,clean,main only,spatial.stem.stage1,10.2447
+stratified,0,4,clean,main only,spatial.stem.stage2,3.8652
+stratified,0,4,clean,main only,spatial.stem.stage3,2.171
+stratified,0,4,clean,main only,spatial.stem.fold,1.19421
+stratified,0,4,clean,main only,spatial.tail.0,1.81746
+stratified,0,4,clean,main only,spatial.tail.1,1.02743
+stratified,0,4,clean,main only,spatial.tail.2,1.57671
+stratified,0,4,clean,main only,spatial.tail.3,0.819214
+stratified,0,4,clean,main only,spatial.tail.4,1.3276
+stratified,0,4,clean,main only,spatial.tail.5,0.640732
+stratified,0,4,clean,main only,spatial.tail.6,1.20483
+stratified,0,4,clean,main only,spatial.proj,1.01542
+stratified,0,4,clean,main only,spectral.index_bank,0.0150609
+stratified,0,4,clean,main only,spectral.in_norm,0.849519
+stratified,0,4,clean,main only,spectral.mlp,5.87447
+stratified,0,4,clean,main only,fuse,1.66873
+stratified,0,4,clean,main only,embed_net,1.22164
+stratified,0,4,clean,main only,arcface_head,0.821576
+stratified,0,4,clean,main only,[clip group] head,0.821576
+stratified,0,4,clean,main only,[clip group] fusion,1.22164
+stratified,0,4,clean,main only,[clip group] backbone,13.312
+stratified,0,4,clean,aux only,se,0.00635146
+stratified,0,4,clean,aux only,spatial.stem.stage1,1.67214
+stratified,0,4,clean,aux only,spatial.stem.stage2,0.646793
+stratified,0,4,clean,aux only,spatial.stem.stage3,0.483877
+stratified,0,4,clean,aux only,spatial.stem.fold,0.274694
+stratified,0,4,clean,aux only,spatial.tail.0,0.452914
+stratified,0,4,clean,aux only,spatial.tail.1,0.260726
+stratified,0,4,clean,aux only,spatial.tail.2,0.418435
+stratified,0,4,clean,aux only,spatial.tail.3,0.201005
+stratified,0,4,clean,aux only,spatial.tail.4,0.334566
+stratified,0,4,clean,aux only,spatial.tail.5,0.175509
+stratified,0,4,clean,aux only,spatial.tail.6,0.289023
+stratified,0,4,clean,aux only,spatial.proj,0.224321
+stratified,0,4,clean,aux only,aux_head_spatial,0.568217
+stratified,0,4,clean,aux only,[clip group] head,0
+stratified,0,4,clean,aux only,[clip group] fusion,0
+stratified,0,4,clean,aux only,[clip group] backbone,2.15485
+stratified,0,4,margin,total,se,0.464937
+stratified,0,4,margin,total,spatial.stem.stage1,31.7133
+stratified,0,4,margin,total,spatial.stem.stage2,13.1042
+stratified,0,4,margin,total,spatial.stem.stage3,8.25854
+stratified,0,4,margin,total,spatial.stem.fold,4.72921
+stratified,0,4,margin,total,spatial.tail.0,7.76845
+stratified,0,4,margin,total,spatial.tail.1,4.35092
+stratified,0,4,margin,total,spatial.tail.2,6.69636
+stratified,0,4,margin,total,spatial.tail.3,3.39647
+stratified,0,4,margin,total,spatial.tail.4,5.38844
+stratified,0,4,margin,total,spatial.tail.5,2.89135
+stratified,0,4,margin,total,spatial.tail.6,4.69274
+stratified,0,4,margin,total,spatial.proj,3.86151
+stratified,0,4,margin,total,spectral.index_bank,0.0354231
+stratified,0,4,margin,total,spectral.in_norm,2.41461
+stratified,0,4,margin,total,spectral.mlp,19.9573
+stratified,0,4,margin,total,fuse,6.13468
+stratified,0,4,margin,total,embed_net,4.70719
+stratified,0,4,margin,total,arcface_head,2.93651
+stratified,0,4,margin,total,aux_head_spatial,0.463708
+stratified,0,4,margin,total,[clip group] head,2.93651
+stratified,0,4,margin,total,[clip group] fusion,4.70719
+stratified,0,4,margin,total,[clip group] backbone,44.3916
+stratified,0,4,margin,main only,se,0.462832
+stratified,0,4,margin,main only,spatial.stem.stage1,30.8923
+stratified,0,4,margin,main only,spatial.stem.stage2,12.7883
+stratified,0,4,margin,main only,spatial.stem.stage3,8.0194
+stratified,0,4,margin,main only,spatial.stem.fold,4.58918
+stratified,0,4,margin,main only,spatial.tail.0,7.53047
+stratified,0,4,margin,main only,spatial.tail.1,4.20976
+stratified,0,4,margin,main only,spatial.tail.2,6.47479
+stratified,0,4,margin,main only,spatial.tail.3,3.29439
+stratified,0,4,margin,main only,spatial.tail.4,5.21574
+stratified,0,4,margin,main only,spatial.tail.5,2.79869
+stratified,0,4,margin,main only,spatial.tail.6,4.57398
+stratified,0,4,margin,main only,spatial.proj,3.76569
+stratified,0,4,margin,main only,spectral.index_bank,0.0354231
+stratified,0,4,margin,main only,spectral.in_norm,2.41461
+stratified,0,4,margin,main only,spectral.mlp,19.9573
+stratified,0,4,margin,main only,fuse,6.13468
+stratified,0,4,margin,main only,embed_net,4.70719
+stratified,0,4,margin,main only,arcface_head,2.93651
+stratified,0,4,margin,main only,[clip group] head,2.93651
+stratified,0,4,margin,main only,[clip group] fusion,4.70719
+stratified,0,4,margin,main only,[clip group] backbone,43.5085
+stratified,0,4,margin,aux only,se,0.00510077
+stratified,0,4,margin,aux only,spatial.stem.stage1,1.35627
+stratified,0,4,margin,aux only,spatial.stem.stage2,0.524355
+stratified,0,4,margin,aux only,spatial.stem.stage3,0.393073
+stratified,0,4,margin,aux only,spatial.stem.fold,0.223429
+stratified,0,4,margin,aux only,spatial.tail.0,0.368555
+stratified,0,4,margin,aux only,spatial.tail.1,0.211839
+stratified,0,4,margin,aux only,spatial.tail.2,0.340718
+stratified,0,4,margin,aux only,spatial.tail.3,0.163523
+stratified,0,4,margin,aux only,spatial.tail.4,0.272503
+stratified,0,4,margin,aux only,spatial.tail.5,0.143132
+stratified,0,4,margin,aux only,spatial.tail.6,0.235473
+stratified,0,4,margin,aux only,spatial.proj,0.183715
+stratified,0,4,margin,aux only,aux_head_spatial,0.463708
+stratified,0,4,margin,aux only,[clip group] head,0
+stratified,0,4,margin,aux only,[clip group] fusion,0
+stratified,0,4,margin,aux only,[clip group] backbone,1.74975
+stratified,0,5,clean,total,se,0.333233
+stratified,0,5,clean,total,spatial.stem.stage1,7.22163
+stratified,0,5,clean,total,spatial.stem.stage2,2.74815
+stratified,0,5,clean,total,spatial.stem.stage3,1.53587
+stratified,0,5,clean,total,spatial.stem.fold,0.849201
+stratified,0,5,clean,total,spatial.tail.0,1.49923
+stratified,0,5,clean,total,spatial.tail.1,1.39031
+stratified,0,5,clean,total,spatial.tail.2,1.21125
+stratified,0,5,clean,total,spatial.tail.3,0.942727
+stratified,0,5,clean,total,spatial.tail.4,0.823921
+stratified,0,5,clean,total,spatial.tail.5,0.338038
+stratified,0,5,clean,total,spatial.tail.6,0.769807
+stratified,0,5,clean,total,spatial.proj,0.70354
+stratified,0,5,clean,total,spectral.index_bank,0.0462665
+stratified,0,5,clean,total,spectral.in_norm,1.40276
+stratified,0,5,clean,total,spectral.mlp,9.1581
+stratified,0,5,clean,total,fuse,1.83298
+stratified,0,5,clean,total,embed_net,1.38141
+stratified,0,5,clean,total,arcface_head,1.39372
+stratified,0,5,clean,total,aux_head_spatial,0.614641
+stratified,0,5,clean,total,[clip group] head,1.39372
+stratified,0,5,clean,total,[clip group] fusion,1.38141
+stratified,0,5,clean,total,[clip group] backbone,12.9316
+stratified,0,5,clean,main only,se,0.322973
+stratified,0,5,clean,main only,spatial.stem.stage1,5.66176
+stratified,0,5,clean,main only,spatial.stem.stage2,2.13233
+stratified,0,5,clean,main only,spatial.stem.stage3,1.23262
+stratified,0,5,clean,main only,spatial.stem.fold,0.688527
+stratified,0,5,clean,main only,spatial.tail.0,1.2175
+stratified,0,5,clean,main only,spatial.tail.1,1.12535
+stratified,0,5,clean,main only,spatial.tail.2,1.02062
+stratified,0,5,clean,main only,spatial.tail.3,0.81462
+stratified,0,5,clean,main only,spatial.tail.4,0.693204
+stratified,0,5,clean,main only,spatial.tail.5,0.286216
+stratified,0,5,clean,main only,spatial.tail.6,0.655944
+stratified,0,5,clean,main only,spatial.proj,0.632863
+stratified,0,5,clean,main only,spectral.index_bank,0.0462665
+stratified,0,5,clean,main only,spectral.in_norm,1.40276
+stratified,0,5,clean,main only,spectral.mlp,9.1581
+stratified,0,5,clean,main only,fuse,1.83298
+stratified,0,5,clean,main only,embed_net,1.38141
+stratified,0,5,clean,main only,arcface_head,1.39372
+stratified,0,5,clean,main only,[clip group] head,1.39372
+stratified,0,5,clean,main only,[clip group] fusion,1.38141
+stratified,0,5,clean,main only,[clip group] backbone,11.7005
+stratified,0,5,clean,aux only,se,0.0247486
+stratified,0,5,clean,aux only,spatial.stem.stage1,2.10582
+stratified,0,5,clean,aux only,spatial.stem.stage2,0.813538
+stratified,0,5,clean,aux only,spatial.stem.stage3,0.455358
+stratified,0,5,clean,aux only,spatial.stem.fold,0.253806
+stratified,0,5,clean,aux only,spatial.tail.0,0.445868
+stratified,0,5,clean,aux only,spatial.tail.1,0.477513
+stratified,0,5,clean,aux only,spatial.tail.2,0.323173
+stratified,0,5,clean,aux only,spatial.tail.3,0.244742
+stratified,0,5,clean,aux only,spatial.tail.4,0.230227
+stratified,0,5,clean,aux only,spatial.tail.5,0.100836
+stratified,0,5,clean,aux only,spatial.tail.6,0.204706
+stratified,0,5,clean,aux only,spatial.proj,0.177486
+stratified,0,5,clean,aux only,aux_head_spatial,0.614641
+stratified,0,5,clean,aux only,[clip group] head,0
+stratified,0,5,clean,aux only,[clip group] fusion,0
+stratified,0,5,clean,aux only,[clip group] backbone,2.57191
+stratified,0,5,margin,total,se,0.45082
+stratified,0,5,margin,total,spatial.stem.stage1,20.7247
+stratified,0,5,margin,total,spatial.stem.stage2,7.52508
+stratified,0,5,margin,total,spatial.stem.stage3,4.01271
+stratified,0,5,margin,total,spatial.stem.fold,2.18599
+stratified,0,5,margin,total,spatial.tail.0,3.76347
+stratified,0,5,margin,total,spatial.tail.1,3.78325
+stratified,0,5,margin,total,spatial.tail.2,2.9004
+stratified,0,5,margin,total,spatial.tail.3,2.00075
+stratified,0,5,margin,total,spatial.tail.4,2.20474
+stratified,0,5,margin,total,spatial.tail.5,0.979339
+stratified,0,5,margin,total,spatial.tail.6,2.18406
+stratified,0,5,margin,total,spatial.proj,1.8273
+stratified,0,5,margin,total,spectral.index_bank,0.0857729
+stratified,0,5,margin,total,spectral.in_norm,4.1748
+stratified,0,5,margin,total,spectral.mlp,22.0614
+stratified,0,5,margin,total,fuse,5.00411
+stratified,0,5,margin,total,embed_net,3.78985
+stratified,0,5,margin,total,arcface_head,3.55479
+stratified,0,5,margin,total,aux_head_spatial,0.500278
+stratified,0,5,margin,total,[clip group] head,3.55479
+stratified,0,5,margin,total,[clip group] fusion,3.78985
+stratified,0,5,margin,total,[clip group] backbone,33.281
+stratified,0,5,margin,main only,se,0.44227
+stratified,0,5,margin,main only,spatial.stem.stage1,19.3585
+stratified,0,5,margin,main only,spatial.stem.stage2,7.03966
+stratified,0,5,margin,main only,spatial.stem.stage3,3.73816
+stratified,0,5,margin,main only,spatial.stem.fold,2.03613
+stratified,0,5,margin,main only,spatial.tail.0,3.49391
+stratified,0,5,margin,main only,spatial.tail.1,3.51564
+stratified,0,5,margin,main only,spatial.tail.2,2.71713
+stratified,0,5,margin,main only,spatial.tail.3,1.89029
+stratified,0,5,margin,main only,spatial.tail.4,2.07611
+stratified,0,5,margin,main only,spatial.tail.5,0.93305
+stratified,0,5,margin,main only,spatial.tail.6,2.0734
+stratified,0,5,margin,main only,spatial.proj,1.76447
+stratified,0,5,margin,main only,spectral.index_bank,0.0857729
+stratified,0,5,margin,main only,spectral.in_norm,4.1748
+stratified,0,5,margin,main only,spectral.mlp,22.0614
+stratified,0,5,margin,main only,fuse,5.00411
+stratified,0,5,margin,main only,embed_net,3.78985
+stratified,0,5,margin,main only,arcface_head,3.55479
+stratified,0,5,margin,main only,[clip group] head,3.55479
+stratified,0,5,margin,main only,[clip group] fusion,3.78985
+stratified,0,5,margin,main only,[clip group] backbone,32.1482
+stratified,0,5,margin,aux only,se,0.0197631
+stratified,0,5,margin,aux only,spatial.stem.stage1,1.70005
+stratified,0,5,margin,aux only,spatial.stem.stage2,0.66015
+stratified,0,5,margin,aux only,spatial.stem.stage3,0.369419
+stratified,0,5,margin,aux only,spatial.stem.fold,0.206388
+stratified,0,5,margin,aux only,spatial.tail.0,0.363149
+stratified,0,5,margin,aux only,spatial.tail.1,0.387721
+stratified,0,5,margin,aux only,spatial.tail.2,0.262775
+stratified,0,5,margin,aux only,spatial.tail.3,0.196637
+stratified,0,5,margin,aux only,spatial.tail.4,0.187565
+stratified,0,5,margin,aux only,spatial.tail.5,0.0820881
+stratified,0,5,margin,aux only,spatial.tail.6,0.166444
+stratified,0,5,margin,aux only,spatial.proj,0.145225
+stratified,0,5,margin,aux only,aux_head_spatial,0.500278
+stratified,0,5,margin,aux only,[clip group] head,0
+stratified,0,5,margin,aux only,[clip group] fusion,0
+stratified,0,5,margin,aux only,[clip group] backbone,2.08057

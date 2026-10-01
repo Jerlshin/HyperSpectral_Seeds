@@ -13,6 +13,8 @@ aggregator can read any run without knowing which pipeline produced it::
         preds_<split>.npy        argmax predictions
         targets_<split>.npy      ground truth
         rows_<split>.npy         the patch row of every prediction, when known
+        logits_<split>.npz       float16 logits + targets (+ rows), reported split
+                                 and calib, ±TTA (D18; evaluation.save_logits)
         session_<split>.json     same- vs cross-session breakdown, when computed
         session_<split>.csv      its per-session table
       figures/
@@ -97,6 +99,29 @@ class RunArtifacts:
         np.save(self.results / f"targets_{split}.npy", np.asarray(targets))
         if rows is not None:
             np.save(self.results / f"rows_{split}.npy", np.asarray(rows, dtype=np.int64))
+
+    def write_logits(
+        self,
+        split: str,
+        logits: npt.NDArray[Any],
+        targets: npt.NDArray[Any],
+        rows: npt.NDArray[Any] | None = None,
+    ) -> Path:
+        """Persist one pass's logits as float16, with its targets and rows (D18).
+
+        float16 keeps a 4,311 × 90 split at ≈ 0.8 MB; the logits are scaled
+        cosines (|z| ≤ s = 32), where float16's 11-bit mantissa resolves
+        0.016 — far below any gap a calibration or margin analysis reads.
+        """
+        path = self.results / f"logits_{split}.npz"
+        payload: dict[str, npt.NDArray[Any]] = {
+            "logits": np.asarray(logits, dtype=np.float16),
+            "targets": np.asarray(targets, dtype=np.int64),
+        }
+        if rows is not None:
+            payload["rows"] = np.asarray(rows, dtype=np.int64)
+        np.savez_compressed(path, **payload)  # type: ignore[arg-type]
+        return path
 
     def write_session(self, report: SessionReport) -> Path:
         """Write one split's same- vs cross-session breakdown and per-session table."""

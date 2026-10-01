@@ -16,6 +16,7 @@ flowchart TD
     S07["<b>S07</b> White-tile reflectance<br/>30 Sep<br/>215-band reflectance cube"]
     S08["<b>S08</b> Neural confirmation<br/>1 Oct · protocol sweep run<br/>grouped 0.530 · strat 0.712"]
     S09["<b>S09</b> Post-sweep forensics<br/>1 Oct<br/>fit-limited in-distribution;<br/>+0.05 over LDA; shape carries cross-session"]
+    S10["<b>S10</b> Training & architecture review<br/>1 Oct<br/>3.6 % of the LR on clean labels;<br/>aux weight not as documented;<br/>dead tail, inert descriptor, level-blind"]
     S00 -->|"run could not support its claims"| S01
     S01 -->|"14 implementation changes,<br/>ablation plan A1–A12"| S02
     S01 -->|"band selection leaked labels,<br/>elbows vacuous"| S03
@@ -27,6 +28,7 @@ flowchart TD
     S07 -->|"new cube; effect unmeasured"| S08
     S04 -->|"pre-sliced cube, T4 × 2"| S08
     S08 -->|"12 runs, 4.7 GPU-h —<br/>what limits the score?"| S09
+    S09 -->|"under-fits — why?<br/>before spending X1/X2"| S10
 ```
 
 ---
@@ -134,3 +136,40 @@ Reflectance moved the session fingerprint rather than removing it (F40). Prior 7
 within-acquisition with RGB morphology (F43).
 **Changed:** three reporting tiers with 80/20 as tier 1, never the headline (D16); two frozen diagnostics
 before any architecture work (D17); instrumentation fixes (D18); D06, D07 under review.
+
+### S10 · Training & architecture review — 2026-10-01
+**Triggered by:** S09's verdict that the network under-fits within the acquisition (F34, F35) and beats LDA on its own
+scalars by only 0.05 (F32) — and the need to know *why* before X1 and X2 spend ≈ 8 GPU-pair-hours.
+**Did:** reconstructed the network, loss, optimiser and selection from the code path that ran; re-read every logged
+scalar of the 12 runs; worked out the objective's geometry and the schedule's LR budget; opened all 12 selected
+checkpoints on CPU (train and calib rows only) — clean fit, angular geometry, linear probes of every representation,
+knock-outs, gain response, the learned index bank, per-module gradients. No model or training code was changed.
+**Found:** the clean-label objective gets 3.6 % of the cumulative LR, most of it spent on a margin 0–52 % of training
+kernels satisfy (F44, F47); measured cleanly the network fits 0.87–0.95 of its training kernels and, within the
+acquisition, held-out moves with fit one for one (F45, F46). The auxiliary weight that ran was 0.65 → 0.25, not the
+documented 0.2 (F54). Three component defects: the spatial tail collapses to 1 × 1 and 11.5 % of the parameters never
+train (F48); the spectral path's chemometric blocks are inert, leaving SNV + morph (F49); reflectance level reaches the
+network only through a 6-parameter gate (F50). Weight decay is inert (F55); clipping is mostly harmless under AdamW
+(F53).
+**Changed:** the order of work — training is repaired first on the unchanged architecture (D19); instrumentation
+scope widened, with the applied aux schedule frozen at `legacy` until X1/X2 run (D20); guards on how X1's frozen
+outcomes are read (D21); three new frozen arms — X4 fit ceiling, X5 tail stride, X6 reflectance level
+(`preregistration_s10.json`). D05, D06, D07, D12 annotated.
+
+### S11 · Executing the frozen diagnostics, part 1: instrumentation — 2026-10-01
+**Triggered by:** S10 §9 — the P0 instrumentation is a gate before X1, X2 and X4 spend ≈ 8 GPU-pair-hours, and X2
+needed a pathway switch that did not exist.
+**Did:** implemented S10 P0.1–P0.7: DDP de-duplication, code revision + applied regime in `run.json`, float16 logits
+(held-out and calib, ±TTA), pathway labels, the fixed-subset clean-fit probe, honest training telemetry
+(`sched/aux_weight_applied`, `train/acc_dominant`, `train/acc_plain`), the aux schedule as a named choice with a
+`legacy` default, model-declared gradient groups with finite-step means, structural tests, docs. Added
+`model.pathways` (X2) and `scripts/run_frozen.py`, which builds the 23 X1/X2/X4 cells from the hashed
+pre-registrations. Validated with a before/after gate on miniature runs, the S08 checkpoints, a 2-rank DDP run and
+both test tiers.
+**Found:** the changes move no training number and the gate detects a real change (F57); the clean-fit probe
+reproduces S10's offline numbers (F57); the old DDP evaluation scored one kernel twice per grouped run, but S09's
+frozen reference had already counted each kernel once (F58). Two gaps in the plan: S10's model-declared clip partition
+is not neutral at the shipped clip, and the frozen X1 commands lacked a launcher and output directories.
+**Changed:** D22 — the clip partition stays `legacy` (the new one is opt-in), the frozen commands run under `torchrun`
+with one directory per cell; D18, D20 implemented. X1, X2, X4 are ready to run (S11 §10); X5/X6 wait for X1 (D19).
+

@@ -104,6 +104,13 @@ spectral_hidden: 256
 # double-counting rather than a design.
 n_morphometrics: 8
 
+# ── Pathway switch (X2 attribution, S09 FW-16) ────────────────────────
+# [spatial, spectral] is the network. [spectral] / [spatial] zero the other
+# pathway's output in train AND eval, freeze its parameters and skip its forward;
+# [spectral] also drops the aux term (its head is on the spatial output),
+# [spatial] also loses the morphometrics (they enter only via the spectral path).
+pathways: [spatial, spectral]
+
 # ── Shared front end ──────────────────────────────────────────────────
 # MaskedSpectralECA is 6 parameters. Free. Kept.
 wl_embed_dim: 16

@@ -122,8 +122,14 @@ NOT_FORWARD_OBSERVABLE: dict[str, str] = {
         "tests/unit/test_spectral_seed_net.py::test_the_parameter_budget_matches_the_design."
     ),
     "aux_head_weight": (
-        "a loss coefficient read by the stage loop, not a construction-time value. "
-        "Covered by tests/unit/test_observability.py and the single-stage smoke run."
+        "a loss coefficient read by the stage loop, not a construction-time value — and, "
+        "under the default single.aux_weight_schedule=legacy, not applied at all (S10 F54). "
+        "Covered by tests/unit/test_s11_instrumentation.py and the single-stage smoke run."
+    ),
+    "pathways": (
+        "SpectralSeedNet's X2 pathway switch — unread by SpectralQuadNet, which is what "
+        "this module perturbs. Covered by tests/unit/test_s11_instrumentation.py::"
+        "test_spectral_only_logits_ignore_the_spatial_arrangement."
     ),
 }
 

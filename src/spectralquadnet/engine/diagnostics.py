@@ -356,6 +356,61 @@ def branch_grad_norm_tensors(
     return {prefix.rstrip("."): value.sqrt() for prefix, value in squares.items()}
 
 
+def declared_grad_groups(model: nn.Module) -> tuple[tuple[str, tuple[str, ...]], ...] | None:
+    """The model's own ``(label, prefixes)`` gradient groups, or ``None``.
+
+    ``SpectralSeedNet`` declares nine (S10 P0.5): the four-branch
+    :data:`BRANCH_PREFIXES` match only its ``arcface_head``, so without this its
+    per-module gradient norms were never logged and S10 had to measure them
+    offline (F53). A model that declares nothing keeps :data:`BRANCH_PREFIXES`.
+    """
+    getter = getattr(unwrap_model(model), "grad_groups", None)
+    if not callable(getter):
+        return None
+    return tuple((str(label), tuple(prefixes)) for label, prefixes in getter())
+
+
+#: ``model -> {label: [parameters]}`` for :func:`module_grad_norm_tensors`.
+_MODULE_GROUP_CACHE: weakref.WeakKeyDictionary[nn.Module, dict[str, Any]] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+@torch.no_grad()
+def module_grad_norm_tensors(
+    model: nn.Module, groups: tuple[tuple[str, tuple[str, ...]], ...]
+) -> dict[str, torch.Tensor]:
+    """Pre-clip L2 gradient norm per declared module group, as device tensors.
+
+    The labelled analogue of :func:`branch_grad_norm_tensors`: each parameter
+    joins the first group whose prefixes it matches, parameters matching none
+    are not reported, and groups with no gradient this step (a frozen X2
+    pathway) are omitted rather than reported as 0.
+    """
+    cached = _MODULE_GROUP_CACHE.get(model)
+    if cached is None or cached.get("__groups__") != groups:
+        cached = {"__groups__": groups}
+        for name, param in model.named_parameters():
+            for label, prefixes in groups:
+                if name.startswith(prefixes):
+                    cached.setdefault(label, []).append(param)
+                    break
+        _MODULE_GROUP_CACHE[model] = cached
+    out: dict[str, torch.Tensor] = {}
+    for label, _prefixes in groups:
+        params = cached.get(label, [])
+        grads = [p.grad.detach().float() for p in params if p.grad is not None]
+        if not grads:
+            continue
+        total: torch.Tensor | None = None
+        for squared in torch._foreach_pow(grads, 2):
+            term = squared.sum()
+            total = term if total is None else total + term
+        assert total is not None
+        out[label] = total.sqrt()
+    return out
+
+
 @torch.no_grad()
 def branch_grad_norms(
     model: nn.Module, prefixes: tuple[str, ...] = BRANCH_PREFIXES

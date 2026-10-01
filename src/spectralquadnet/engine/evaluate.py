@@ -28,6 +28,10 @@ epoch wall time. It used to synchronise twice for every batch of that:
 Under DDP the split is sharded across ranks and re-joined by
 :func:`~spectralquadnet.utils.distributed.gather_concat` before any metric is
 computed, because a macro-F1 over half the classes is not half of the macro-F1.
+``DistributedSampler`` pads an odd-sized split by repeating its first kernel, so
+the joined arrays are then **de-duplicated** (:func:`~spectralquadnet.data.loaders.dedup_index`,
+S10 P0.1 / D18): every kernel is scored exactly once, in dataset order, on any
+world size. Before S11 the padded kernel was scored twice (S09 §8; Δ < 1e-4).
 
 What each pass is allowed to hold
 ─────────────────────────────────
@@ -61,6 +65,7 @@ from sklearn.metrics import (
 from torch.amp import autocast
 from torch.utils.data import DataLoader
 
+from spectralquadnet.data.loaders import dedup_index
 from spectralquadnet.engine.batch import side_inputs, unpack_batch
 from spectralquadnet.utils.distributed import DistContext, gather_concat
 
@@ -113,6 +118,9 @@ def _run_eval(
     out_preds = joined_preds.cpu().numpy()
     out_targets = joined_targets.cpu().numpy()
     del joined_preds, joined_targets
+    keep = dedup_index(loader) if dist.enabled else None
+    if keep is not None:
+        out_preds, out_targets = out_preds[keep], out_targets[keep]
     return out_preds, out_targets
 
 

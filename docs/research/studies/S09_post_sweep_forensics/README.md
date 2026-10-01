@@ -32,7 +32,7 @@ sweep's artifacts or is a CPU control on mean spectra; held-out rows were used *
 | runs | 12, all completed: grouped folds {0,1} × seeds {0,1,2}; stratified fold 0 × seeds {0…5} (`sweep.json`) |
 | input | 32 reflectance bands, 432–999 nm, gap 601→716 nm (the dropped tile-saturated window), 64×64, foreground mask, 8 morphometrics in physical pixels (`band_axis.json`, `segmentation.py`) |
 | model | SpectralSeedNet, **2,849,478** params: spatial path 2,267,510 (**79.6 %**), spectral path 118,640, fuse 131,840, embed 263,936, ArcFace 23,040, aux 44,506 (`metrics_*.json` context) |
-| objective | single stage, ≤150 epochs, early-stop patience 25 on calib macro-F1; AdamW 5e-4 → 5e-6 cosine, 5-epoch warm-up, wd 2e-4, per-group clip 5.0; **mixup α 0.35 for epochs 1–110**; ArcFace s 32, **margin 0 → 0.3 over epochs 111–130**; label smoothing 0.10 → 0.04; aux 0.2; dropout 0.15; aug `medium`; EMA 0.999 (resolved `config.yaml`) |
+| objective | single stage, ≤150 epochs, early-stop patience 25 on calib macro-F1; AdamW 5e-4 → 5e-6 cosine, 5-epoch warm-up, wd 2e-4, per-group clip 5.0; **mixup α 0.35 for epochs 1–110**; ArcFace s 32, **margin 0 → 0.3 over epochs 111–130**; label smoothing 0.10 → 0.04; aux 0.2 *as configured — the loop applied 0.65 → 0.25 (S10 F54)*; dropout 0.15; aug `medium`; EMA 0.999 (resolved `config.yaml`) |
 | runtime | Kaggle T4 × 2, DDP + SyncBN, fp16 + GradScaler, compile off; 1,231 ± 32 s grouped, 1,599 ± 18 s stratified; **4.7 GPU-pair-hours total** |
 | grouped split | per class: one bundle trains (3,683 / 3,685 train + 630 calib, calib = patch-level carve from the training bundle), the other bundle is held out (4,311 / 4,309 kernels = val ∪ test) |
 | stratified split | fixed `random_state=42`: 5,130 train + 906 calib + 2,588 val ∪ test — **~1.39× the grouped training set and two acquisitions per class** |
@@ -157,6 +157,12 @@ gain of Δ has historically come with ≈ 0.73 Δ on grouped. That is a predicti
 law.
 
 ### 5.6 Training dynamics — the model is not fitting its training data
+
+> **Refined by [S10](../S10_training_architecture_review/README.md).** Measured in eval mode on the selected
+> checkpoints, clean training accuracy is 0.87–0.95, not 0.76–0.87 (F45); the loss above ln 90 is the margin
+> penalty at s = 32 on kernels the network classifies correctly 90 % of the time (F47); clipping binds on ≥ 82.5 %
+> of steps per epoch and, under AdamW, re-weights batches rather than shrinking steps (F53). The conclusions of this
+> section — under-fit, a margin phase that does not help, a clip that binds — stand.
 
 ![training dynamics](../../figures/S09_post_sweep_forensics/s09_training_dynamics.png)
 

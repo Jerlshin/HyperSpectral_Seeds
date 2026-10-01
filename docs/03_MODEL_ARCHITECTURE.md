@@ -56,7 +56,7 @@ x (B,256,64,64)  +  mask (B,1,64,64)  +  morph (B,8)
       │       Conv3d(16→32, k=( 5,3,3), s=(2,2,2)) → (B,32,16,32,32)
       │       Conv3d(32→64, k=( 5,3,3), s=(2,2,2)) → (B,64, 8,16,16)
       │       reshape (B,512,16,16) → Conv2d(512→192,1)
-      │     tail: ResBlock2D/CBAM ×4 → pn(mean)‖pn(max) → ℓ2 → Linear(512→256)
+      │     tail: ResBlock2D(s=2)/CBAM ×4: 16→8→4→2→1 (!) → pn(mean)‖pn(max) → ℓ2 → Linear(512→256)
       │
       └── masked mean x̄ (B,256) ─────────► SpectralPath ───► (B,256)
             SoftIndexBank(64) ‖ ContinuumDepths(16)
@@ -68,8 +68,24 @@ x (B,256,64,64)  +  mask (B,1,64,64)  +  morph (B,8)
                               EmbedNet(256, 512) ─► ê (B,256), ℓ2-normalised
                                      │
                    AdaptiveSubcenterArcFaceHead(K=1, s=32, m varies) ─► (B,90)
-                   AuxiliaryHead(256→128→90) on b_spatial, fixed weight 0.2
+                   AuxiliaryHead(256→128→90) on b_spatial, weight w_aux(t) — see 04 §4.0:
+                   applied 0.65 → 0.25 (`single.aux_weight_schedule=legacy`, the default),
+                   NOT the 0.2 of `model.aux_head_weight` unless `=fixed` (S10 F54)
 ```
+
+> **Two demonstrated structural defects (S10 F48, F50), deliberately not yet repaired (D19).**
+> (i) The spatial tail's four stride-2 blocks take the 16 × 16 stem output to **1 × 1**, not the
+> 4 × 4 this page used to state. The last block's 3 × 3 stride-2 conv (`spatial.stages.6.c2`)
+> sees a 2 × 2 map, so 5 of its 9 taps multiply padding only: **327,680 parameters (11.5 % at
+> k = 32) never receive a gradient**; CBAM's 7 × 7 spatial gate on the 2 × 2 map has 40 of 49
+> taps on padding; at 1 × 1 "mean ‖ max" pooling concatenates two copies of one vector. X5
+> (`model.spatial_tail_strides=[2,2,2,1]`, pre-registered in S10) is the repair.
+> (ii) Everything after `MaskedSpectralECA` is invariant to a global reflectance gain — the
+> stem's convs are bias-free and GroupNorm-ed, every spectral feature but morph is
+> scale-free — so absolute reflectance (albedo) reaches the network only through the
+> 6-parameter gate. X6 (`model.spectral_level_block=log`) is the repair. Both are pinned by
+> `tests/unit/test_structural_defects.py` (the F48 checks are `xfail(strict=True)`, so landing
+> X5 forces the marker's removal).
 
 ### Parameter budget
 
@@ -93,6 +109,23 @@ x (B,256,64,64)  +  mask (B,1,64,64)  +  morph (B,8)
 `continuum` and `derivatives` hold **zero parameters**: the Savitzky–Golay operators are
 persistent $(256,256)$ buffers and the hull's constants are $O(C)$ non-persistent ones.
 
+**At k = 32 — the S08 sweep and every S11 arm** (`data=ablation/u430k32_*`), from the runs'
+`results/run.json → parameter_breakdown`:
+
+| Child | Parameters | of which never trained (F48) |
+|---|---:|---:|
+| `spatial` | 2,267,510 | 327,680 (`stages.6.c2`, 5 of 9 taps) |
+| &nbsp;&nbsp;├ `stem` (strides (2,2,2) at 32 bands, fold 512 → 192) | 215,120 | — |
+| &nbsp;&nbsp;├ `stages` (ResBlock2D ×4 + CBAM ×3) | 1,920,550 | 327,680 (+ 80 CBAM gate weights) |
+| &nbsp;&nbsp;└ `proj` | 131,840 | — |
+| `spectral` (descriptor 184 = 64 + 16 + 3·32 + 8) | 118,640 | — |
+| `fuse` | 131,840 | — |
+| `embed_net` | 263,936 | — |
+| `arcface_head` | 23,040 | — |
+| `aux_head_spatial` | 44,506 | — |
+| `se` | 6 | — |
+| **Total** | **2,849,478** | **327,680 (11.5 %)** |
+
 ### Forward contract
 
 ```python
@@ -103,6 +136,10 @@ SpectralSeedNet.forward(x, labels=None, return_embed=False, arc_m=None,
 Returns exactly the shapes `SpectralQuadNet` does, because every caller in `engine/`
 branches on them: a **dict** in `.train()` mode (`main`, `aux_spatial`, plus `emb` when
 asked and `balance` when labels are given and $K>1$), the **bare logits** in `.eval()`.
+Two S11 additions to the train-mode dict, neither loss-bearing: `main_plain` — the
+**unpenalised** scaled-cosine logits, detached, emitted only when labels are given and a
+non-zero margin is applied, so the loop can log `train/acc_plain` (S10 P0.3); and the absence
+of `aux_spatial` when the spatial pathway is disabled (below).
 `mask=None` falls back to the $\sum_c|x_c| > 10^{-5}$ threshold and `morph=None`
 substitutes zeros, both exactly.
 
@@ -116,6 +153,29 @@ not a regulariser.
 touches it** — `{"spatial": x ⊙ m, "spectral": masked_mean_spectrum(x, m)}` — because the
 distinctness claim is a claim about those tensors and cannot be made from the embeddings.
 
+### What the model declares to the engine (S11)
+
+| Method | Returns | Read by |
+|---|---|---|
+| `pathway_labels()` | `("SPATIAL", "SPECTRAL")` | the leave-one-pathway-out influence probe → `influence/branch_spatial`, `influence/branch_spectral` (they were logged as `A`–`D`, with `C = D = 0`, before S11) |
+| `grad_groups()` | nine `(label, prefixes)`: `gate se.` · `stem spatial.stem.` · `tail spatial.stages.` · `proj spatial.proj.` · `spectral` · `fuse` · `embed embed_net.` · `head arcface_head.` · `aux aux_head_spatial.` | per-module pre-clip `grad_norm/<label>` every step (the four-branch prefixes matched only `arcface_head` on this model) |
+| `clip_groups()` | `head arcface_head.` · `fusion fuse. + embed_net.` · `backbone` (rest) | the per-group clip **only when `clip_partition=model`**; the default `legacy` partition keeps `SpectralQuadNet`'s prefixes, under which `fuse` and the aux head clip with the backbone (S10 F53, S11 D22) |
+
+### The X2 pathway switch — `model.pathways`
+
+`[spatial, spectral]` (default) is the network. `[spectral]` (X2 `spectral_only`) and
+`[spatial]` (X2 `spatial_only`) make the other pathway's output **exactly zero in training and
+in evaluation**: its forward is skipped, its parameters are frozen (`requires_grad=False`, so
+the optimiser holds no state for them, the clip partition omits them, and DDP — which runs
+with `find_unused_parameters=False` — sees no unused parameter), and the fusion layer receives
+zeros in its place. Every module is still constructed, in the same order, so the live
+pathway's initial weights are the full model's. `[spectral]` also drops the auxiliary term:
+the aux head reads the spatial output, so it is frozen and `aux_spatial` is not emitted.
+`[spatial]` also removes the morphometrics, which enter only through the spectral path. The
+influence probe still reports both labels (a disabled pathway scores 0). Pinned by
+`tests/unit/test_s11_instrumentation.py` (frozen parameters receive no gradient; logits are
+independent of the disabled pathway's input).
+
 ### Tensor-shape matrix
 
 | Step | Module | In | Out |
@@ -126,8 +186,8 @@ distinctness claim is a claim about those tensors and cannot be made from the em
 | S.1 | `stem.stage2` | $(B,16,32,64,64)$ | $(B,32,16,32,32)$ |
 | S.2 | `stem.stage3` | $(B,32,16,32,32)$ | $(B,64,8,16,16)$ |
 | S.3 | `stem.fold` | $(B,512,16,16)$ | $(B,192,16,16)$ |
-| S.4 | `stages` (ResBlock2D/CBAM ×4) | $(B,192,16,16)$ | $(B,256,4,4)$ |
-| S.5 | pn(mean)‖pn(max) → ℓ2 → `proj` | $(B,512)$ | $(B,256)$ |
+| S.4 | `stages` (ResBlock2D ×4, stride 2; CBAM after the first three) | $(B,192,16,16)$ | $(B,128,8,8)\to(B,192,4,4)\to(B,256,2,2)\to(B,256,1,1)$ |
+| S.5 | pn(mean)‖pn(max) (two copies of one vector at 1 × 1) → ℓ2 → `proj` | $(B,512)$ | $(B,256)$ |
 | P.0 | `masked_mean_spectrum` | $(B,256,64,64)$ | $(B,256)$ |
 | P.1 | `index_bank` | $(B,256)$ | $(B,64)$ |
 | P.2 | `continuum` | $(B,256)$ | $(B,16)$ |
@@ -515,8 +575,12 @@ hardcoded. Measured stem parameters: **216,272** at 256 bands, **178,256** at 40
 **Tail** — four `ResBlock2D` stages, stride 2, `CBAM` after the first three:
 
 $$
-16{\times}16 \;(192\text{ ch}) \;\to\; 32{\times}32\,(128) \;\to\; 16{\times}16\,(192) \;\to\; 8{\times}8\,(256) \;\to\; 4{\times}4\,(256)
+16{\times}16 \;(192\text{ ch}) \;\to\; 8{\times}8\,(128) \;\to\; 4{\times}4\,(192) \;\to\; 2{\times}2\,(256) \;\to\; 1{\times}1\,(256)
 $$
+
+(Corrected in S11; this page used to give $32\times32 \to 16 \to 8 \to 4$.) The last block's
+3 × 3 stride-2 conv on the 2 × 2 map has 5 of 9 taps on padding — 327,680 untrainable
+parameters (S10 F48, §3.0). The audited Branch C has the same geometry.
 
 Pooling by signed power normalisation, concatenated mean+max, $\ell_2$-normalised:
 
@@ -848,8 +912,8 @@ Input contract: $x\in\mathbb{R}^{B\times C\times64\times64}$, `float32`.
 | Step | Module | Input | Output |
 |---|---|---|---|
 | C.1 | `stem` (3-D, 3 stages, strides $(8,2,2)$) | $(B,1,256,64,64)$ | $(B,64,8,16,16)\to(B,192,16,16)$ |
-| C.2–5 | `stages` (4× `ResBlock2D`, 3× `CBAM`) | $(B,192,16,16)$ | $(B,256,4,4)$ |
-| C.6 | pool (pn-mean, pn-max, $\ell_2$) | $(B,256,4,4)$ | $(B,512)$ |
+| C.2–5 | `stages` (4× `ResBlock2D`, 3× `CBAM`) | $(B,192,16,16)$ | $(B,256,1,1)$ |
+| C.6 | pool (pn-mean, pn-max, $\ell_2$) | $(B,256,1,1)$ | $(B,512)$ |
 | C.7 | `proj` | $(B,512)$ | $\mathbf{b}_C\,(B,256)$ |
 
 ### Branch D ($16B$ flattened cells)

@@ -1,0 +1,16 @@
+module,kind,params,out_channels,out_hw,dead_params
+spatial.stem,SpectralSpatialStem3D,215120,192,16x16,0
+spatial.stages.0,ResBlock2D,419072,128,8x8,0
+spatial.stages.1,CBAM,4194,128,8x8,0
+spatial.stages.2,ResBlock2D,214272,192,4x4,0
+spatial.stages.3,CBAM,9314,192,4x4,0
+spatial.stages.4,ResBlock2D,468736,256,2x2,0
+spatial.stages.5,CBAM,16482,256,2x2,0
+spatial.stages.6,ResBlock2D,788480,256,1x1,327680
+spatial.proj,Linear+BN+GELU,131840,256,vector,0
+spectral,SpectralPath,118640,,vector,0
+fuse,Sequential,131840,,vector,0
+embed_net,EmbedNet,263936,,vector,0
+arcface_head,AdaptiveSubcenterArcFaceHead,23040,,vector,0
+aux_head_spatial,AuxiliaryHead,44506,,vector,0
+se,MaskedSpectralECA,6,,vector,0

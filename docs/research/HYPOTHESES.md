@@ -55,11 +55,11 @@ would confirm or reverse.
 | A4 | Branch A `grid_size_a` ∈ {8, 4, 2} | only if A3 keeps A | D05 | not run |
 | A5 | bilinear+gate vs gate-only vs concat+MLP | only if A3 keeps ≥ 3 modalities | D05 | not run |
 | A6 | CE vs CE + SupCon, balanced sampler both arms | SupCon earns a Phase B only if > 2σ | D06 | not run |
-| A7 | margin 0 / global 0.30 / + per-class / + Ω penalty | one variable per arm | D07 | not run |
+| A7 | margin 0 / global 0.30 / + per-class / + Ω penalty | one variable per arm | D07 | not run — S10 (F47): only with ≥ 25 % of the LR budget and ε = 0 (S10 P1.4) |
 | A8 | S1 vs S1+S2 vs S1+S2+S3, grouped, 3 seeds | falsification test for the single stage | **D06** | **not run** — FW-07 |
 | A9 | What are classes {41, 49, 51, 52, 70}? (no training: embeddings, overlays, confusion, segmentation audit) | genetic vs segmentation vs acquisition | — | **partly answered (S09, F42)** — 70 is acquisition; {0, 30, 41, 49, 51, 52} a mutual-confusion cluster; segmentation audit not run |
-| A10 | Spatial-path width × {0.5, 0.75, 1, 1.5} | is capacity harmful? | D05 | not run |
-| A11 | mixup on/off × augmentation profile | is mixup the load-bearing regulariser? | D07 | not run |
+| A10 | Spatial-path width × {0.5, 0.75, 1, 1.5} | is capacity harmful? | D05 | not run — S10: after X4 (H16) and X5; 11.5 % of the width is untrainable today (F48) |
+| A11 | mixup on/off × augmentation profile | is mixup the load-bearing regulariser? | D07 | not run — partly answered by X1 (mixup 110 → 30) and X4 (all softeners off) |
 
 ## 4 · S08 drafts (never frozen) — what the sweep showed, and the frozen S09 → S10 set
 
@@ -86,7 +86,31 @@ of these arms ran. Reference values: grouped 0.530 (σ 0.009), stratified 0.712 
 | H14b | full − spectral-only grouped ≤ +0.02 | X2 | is the spatial pathway dead weight? (D05) | not run |
 | H15 | 80/20 − 59 %-stratified (same regime) ≤ +0.03 | X3 (FW-17) | is training share the literature gap? (D16) | not run |
 
-## 5 · Adding a hypothesis
+**S10 interpretation guards (D21), recorded before X1 runs; the frozen file is unchanged.** H13's reference,
+measured as H13 defines it (eval mode, no augmentation, margin 0), is 0.90 grouped / 0.91 stratified (F45), not
+0.76–0.87 — reaching 0.95 is +0.05. An X1 effect is credited to mixup duration, margin and epochs jointly (clip 50 is
+near-neutral under AdamW, F53). The reference regime applied aux 0.65 → 0.25, not 0.2 (F54); X1 inherits the same
+schedule as a function of progress only while the code default stays `legacy`.
+
+## 5 · S10 → S11: frozen arms
+
+`evidence/S10_training_architecture_review/preregistration_s10.json`, SHA-256
+`1c8ae6937796cd7867f58ae901c1630671869f949ef8067cfefd72b2d4922739`,
+frozen 2026-10-01 before any of these arms exist. Reference = the same-regime grouped mean (X1's grouped runs if
+H12a is supported, else the S09 sweep, 0.530); σ_ref = max(observed sd, 0.009).
+
+| ID | Hypothesis (as frozen) | Experiment | Decision it drives | Status |
+|---|---|---|---|---|
+| H16 | With every softener off (mixup 0, ε 0, aux 0, dropout 0, no augmentation) under X1's schedule, clean training accuracy ≥ 0.98 at the final epoch (grouped fold 0) | X4 (FW-20) | capacity vs regime (D19's reversal trigger) | not run |
+| H17 | Last spatial-tail block at stride 1 (no untrainable parameters) is non-inferior: grouped ≥ reference − max(2σ_ref, 0.018) | X5 (FW-21) | adopt the stride fix as default | not run |
+| H18a | Log-reflectance level block in the spectral descriptor raises grouped by ≥ max(2σ_ref, 0.02) | X6 (FW-22) | adopt level (with H18b) | not run |
+| H18b | …without losing > 0.03 cross-session recall or adding > 0.05 cross-session attraction | X6 | the gain is not session recognition | not run |
+
+**S11 (part 1).** The measurement for every hypothesis above now exists, and where each will be read from — file
+and key, fixed before any arm runs — is S11 §6.1. One reading question is flagged there rather than resolved: H14b's
+"full" (the four matching S08 cells or the six-run mean). Statuses stay `not run`.
+
+## 6 · Adding a hypothesis
 
 Write it here *before* the run, with: the exact claim, the metric and split, the threshold, what
 outcome supports it, and which decision or finding it would change. If held-out data will be

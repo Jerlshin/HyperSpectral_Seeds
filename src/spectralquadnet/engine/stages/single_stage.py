@@ -12,13 +12,18 @@ What this loop is
     epochs 1-150, early stop patience 25 on CALIB macro-F1
 
     loss    CE(label smoothing 0.10 -> 0.04)
-            + model.aux_head_weight x aux CE on the spatial path
+            + w_aux(t) x aux CE on the spatial path, where w_aux is chosen by
+              single.aux_weight_schedule: `legacy` (default) = 0.65 -> 0.25,
+              what every run so far applied; `fixed` = model.aux_head_weight
+              (S10 F54 — the docs said a fixed 0.2 that was never applied)
             + mixup(0.35) while ep <= single.mixup_epochs
     margin  0 until margin_warmup_start, cosine to single.arcface_m by _end
     sampler plain shuffled (classes are 91-96/class — already balanced)
     aug     one profile throughout + D4 + same-class CutMix
     optim   AdamW, warm-up then one cosine decay, per-group clip at 5.0
-    amp     bf16 throughout, fp32 confined to the head and any similarity matrix
+            (groups per cfg.clip_partition; `legacy` by default)
+    amp     bf16 throughout (fp16 + GradScaler on the T4 profile), fp32
+            confined to the head and any similarity matrix
     ema     d_max 0.999, never re-initialised
     select  max(F1_live, F1_ema) on the split cfg.evaluation.select_split names
 
@@ -44,6 +49,16 @@ Selection
 ``fit_ldr``/``select_ldr`` are separated on purpose and both are usually
 ``calib``. The audited run fitted 270+ parameters on ``val``, selected the
 checkpoint on ``val`` and reported ``val`` — see :class:`EvaluationConfig`.
+
+Clean fit (S10 P0.2)
+────────────────────
+Given a :class:`~spectralquadnet.engine.clean_fit.CleanFitProbe`, the loop
+measures clean training fit — fixed subset, eval mode, no augmentation, no
+margin, no label smoothing, live and EMA — on every diagnostics stride, on
+every checkpoint improvement and on the final epoch (including an early stop),
+logs it as ``fit/*``, stores the at-checkpoint value in the checkpoint's
+metadata and writes ``output_dir/clean_fit.json``. The probe never touches the
+global RNG, so the training trajectory is the one it would have been without it.
 """
 
 from __future__ import annotations
@@ -58,6 +73,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 
 from spectralquadnet.engine.checkpoint import save_ckpt
+from spectralquadnet.engine.clean_fit import CleanFitProbe
 from spectralquadnet.engine.diagnostics import (
     compute_class_difficulty,
     epoch_tag,
@@ -73,11 +89,12 @@ from spectralquadnet.engine.resume import (
     snapshot_training_state,
 )
 from spectralquadnet.engine.train_epoch import train_one_epoch
+from spectralquadnet.losses.auxiliary import describe_aux_weight_schedule, single_stage_aux_weight
 from spectralquadnet.losses.contrastive import SupConLoss
 from spectralquadnet.losses.focal import FocalLoss
 from spectralquadnet.models.control import set_dropout as set_module_dropout
 from spectralquadnet.models.ema import ModelEMA
-from spectralquadnet.optim.param_groups import build_optimizer_s1
+from spectralquadnet.optim.param_groups import build_optimizer_s1, clip_group_table
 from spectralquadnet.optim.schedulers import (
     single_stage_label_smoothing,
     single_stage_lr,
@@ -120,6 +137,7 @@ def run_single_stage(
     train_module: nn.Module | None = None,
     supcon_ldr: DataLoader[Any] | None = None,
     resume_from: str | None = None,
+    clean_fit: CleanFitProbe | None = None,
 ) -> float:
     """Run the single-stage curriculum and return the best selection macro-F1.
 
@@ -140,6 +158,8 @@ def run_single_stage(
         resume_from: A ``last_stage1.pth`` training state to continue from —
             see :mod:`spectralquadnet.engine.resume`. The full state is written
             every ``runtime.checkpoint_every`` epochs regardless.
+        clean_fit: The fixed-subset clean-fit probe (S10 P0.2), or ``None`` to
+            measure nothing. See the module docstring for its cadence.
 
     Returns:
         Best ``max(F1_live, F1_ema)`` on ``select_ldr``.
@@ -159,6 +179,11 @@ def run_single_stage(
             "128 over 90 classes gives most anchors none. Pass `supcon_ldr`."
         )
     ep_total = main_ep + phase_b_ep
+    # Fail before the first epoch, not at the first step that reads them: both
+    # select a training regime, and a typo would otherwise pick one silently.
+    single_stage_aux_weight(cfg, 1, ep_total)
+    clip_partition = str(getattr(cfg, "clip_partition", "legacy"))
+    clip_group_table(model, clip_partition)
 
     optimizer = build_optimizer_s1(
         cfg, model, cfg.single.max_lr, fused=plan.fused_optimizer if plan else False
@@ -204,6 +229,9 @@ def run_single_stage(
         start_ep = int(state["epoch"]) + 1
         best_f1 = float(state.get("best_f1", 0.0))
         no_improve = int(state.get("no_improve", 0))
+        if clean_fit is not None and isinstance(state.get("clean_fit"), dict):
+            clean_fit.history = list(state["clean_fit"].get("history", []))
+            clean_fit.at_best = state["clean_fit"].get("at_best")
         trk.log_message(
             f"[RESUME] {resume_from}: epoch {state['epoch']} done, best {select_split} "
             f"F1={best_f1:.4f}, {no_improve} stale — continuing at epoch {start_ep}",
@@ -221,6 +249,11 @@ def run_single_stage(
                 scheduler=scheduler,
                 scaler=scaler,
                 **counters,
+                clean_fit=(
+                    {"history": clean_fit.history, "at_best": clean_fit.at_best}
+                    if clean_fit is not None
+                    else None
+                ),
             )
             writer.submit(
                 bundle,
@@ -237,9 +270,16 @@ def run_single_stage(
             f"{cfg.single.margin_warmup_start}–{cfg.single.margin_warmup_end}  "
             f"(s={cfg.single.arcface_s})",
             f"Label smooth {cfg.single.label_smooth_hi} → {cfg.single.label_smooth_lo}  |  "
-            f"focal γ={cfg.single.focal_gamma}  |  aux w={cfg.model.aux_head_weight} (fixed)",
+            f"focal γ={cfg.single.focal_gamma}",
+            f"Aux: {describe_aux_weight_schedule(cfg, ep_total)}",
             f"AdamW {cfg.single.max_lr} → {cfg.single.min_lr}, {cfg.single.warmup_ep}-epoch "
-            f"warm-up, cosine  |  per-group clip {cfg.grad_clip}",
+            f"warm-up, cosine  |  per-group clip {cfg.grad_clip} ({clip_partition} groups)",
+            (
+                f"Clean fit: {clean_fit.rows.size} fixed training kernels (seed "
+                f"{clean_fit.seed}), eval mode, live + EMA"
+                if clean_fit is not None
+                else "Clean fit: off (single.clean_fit_kernels=0)"
+            ),
             f"Selected on: {select_split} ({len(select_ldr.dataset)} patches)  |  "  # type: ignore[arg-type]
             f"Early stop patience {cfg.single.patience}",
             (
@@ -305,10 +345,13 @@ def run_single_stage(
             current_ep=ep,
             total_ep=ep_total,
             tracker=trk,
-            # IC-5: no GradNorm state is threaded, so the auxiliary weight is
-            # exactly `model.aux_head_weight` and `aux_weight/*` is a constant.
+            # IC-5: no GradNorm state is threaded. The scalar weight is chosen by
+            # `single.aux_weight_schedule` (S10 F54: it was always the legacy
+            # 0.65 -> 0.25 decay, whatever the config said) and logged by the
+            # loop as `sched/aux_weight_applied`.
             aux_weights=None,
             amp_dtype=amp_dtype if amp_dtype is not None else torch.bfloat16,
+            aux_weight=single_stage_aux_weight(cfg, ep, ep_total),
         )
         if not in_phase_b:
             scheduler.step()
@@ -341,6 +384,24 @@ def run_single_stage(
 
         if improved:
             best_f1, no_improve = best_ep_f1, 0
+        else:
+            no_improve += 1
+        # Phase B is a fixed-length tail and is not early-stopped: it is 30
+        # epochs by construction and stopping it early would confound A6's
+        # comparison with a variable budget. Decided here, before anything is
+        # logged, so the clean-fit probe below can measure the last epoch of an
+        # early-stopped run — on every rank, since it is a collective.
+        stop_now = (not in_phase_b) and bool(
+            dist.broadcast_object(no_improve >= int(cfg.single.patience))
+        )
+
+        fit_now = None
+        if clean_fit is not None and (improved or on_stride or ep == ep_total or stop_now):
+            fit_now = clean_fit.measure(model, ema.shadow, device, dist)
+            clean_fit.record(ep, fit_now, improved=improved)
+            trk.log_scalars(CleanFitProbe.scalars(fit_now), step=ep)
+
+        if improved:
             save_ckpt(
                 cfg,
                 best_ckpt,
@@ -357,9 +418,10 @@ def run_single_stage(
                 arcface_init_done=True,
                 select_split=select_split,
                 pipeline="single",
+                clean_fit=(
+                    {k: v.as_dict() for k, v in fit_now.items()} if fit_now is not None else None
+                ),
             )
-        else:
-            no_improve += 1
 
         trk.log_row(
             "single",
@@ -373,6 +435,11 @@ def run_single_stage(
                 "LR": f"{lr_now:.2e}",
                 "LS": f"{ls_now:.3f}",
                 "m": f"{margin_now:.3f}",
+                "fit": (
+                    f"{fit_now['live'].acc:.1%}/{fit_now['ema'].acc:.1%}"
+                    if fit_now is not None
+                    else ""
+                ),
                 "mix": "on" if use_mx else "off",
                 "Ph": "B" if in_phase_b else "A",
                 "ckpt": "✓" if improved else "",
@@ -396,7 +463,10 @@ def run_single_stage(
                 "sched/label_smooth": ls_now,
                 "sched/arcface_m": margin_now,
                 "sched/mixup": float(use_mx),
-                "sched/aux_weight": float(cfg.model.aux_head_weight),
+                # The *configured* fixed weight, named as such. The applied one
+                # is `sched/aux_weight_applied`, logged by the epoch loop; the
+                # old `sched/aux_weight` key logged this value as if applied.
+                "sched/aux_weight_configured": float(cfg.model.aux_head_weight),
             },
             step=ep,
         )
@@ -407,10 +477,7 @@ def run_single_stage(
         if save_every and ep % save_every == 0:
             _save_state(ep, finished=False)
 
-        # Phase B is a fixed-length tail and is not early-stopped: it is 30
-        # epochs by construction and stopping it early would confound A6's
-        # comparison with a variable budget.
-        if not in_phase_b and dist.broadcast_object(no_improve >= int(cfg.single.patience)):
+        if stop_now:
             trk.log_message(
                 f"{tag}Early stopping ({no_improve} epochs without improvement).", level="warn"
             )
@@ -420,5 +487,8 @@ def run_single_stage(
     # flag, not the file's existence, to decide that this stage is complete.
     _save_state(ep, finished=True)
     writer.wait()
+    if clean_fit is not None and dist.is_main:
+        path = clean_fit.write(cfg.output_dir, final_epoch=ep)
+        trk.log_message(f"Clean fit → {path}", level="plain")
     trk.progress_stop("single")
     return best_f1

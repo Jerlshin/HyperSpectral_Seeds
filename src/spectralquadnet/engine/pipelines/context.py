@@ -26,10 +26,10 @@ before this, for the same reason.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
 import logging
 import time
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 import numpy.typing as npt
 import torch
@@ -63,6 +63,7 @@ from spectralquadnet.utils.device import (
     resolve_runtime,
 )
 from spectralquadnet.utils.distributed import DistContext, wrap_for_training
+from spectralquadnet.utils.provenance import code_revision, environment, training_regime
 from spectralquadnet.utils.seed import set_seed
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -133,8 +134,24 @@ class RunContext:
         return smap
 
     def summary(self) -> dict[str, Any]:
-        """Run facts worth writing into the results JSON."""
+        """Run facts worth writing into the results JSON.
+
+        Since S11 (D18, S10 P0.1) this also carries the run's identity on disk,
+        the code revision it ran (commit + dirty flag), the environment, and the
+        resolved training regime — enough to tell an S11 arm (X1, X2, X4) from
+        the S08 reference using ``run.json`` alone.
+        """
+        regime = (
+            training_regime(self.cfg, morph_input=self.morph is not None)
+            if str(self.cfg.pipeline) == "single"
+            else None
+        )
         return {
+            "run_name": str(self.cfg.run_name),
+            "output_dir": str(self.cfg.output_dir),
+            "code": code_revision(),
+            "environment": environment(self.device, self.dist.world_size),
+            "regime": regime,
             "arch": str(self.cfg.model.arch),
             "pipeline": str(self.cfg.pipeline),
             "seed": int(self.cfg.seed),

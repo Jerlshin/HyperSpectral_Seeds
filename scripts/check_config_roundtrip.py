@@ -423,6 +423,23 @@ INTENDED_ADDITIONS: dict[str, str] = {
     "single.supcon_temp": "IC-11 / §17 — Phase B's temperature.",
     "single.bal_n_cls": "IC-11 / §17 — Phase B's classes per batch.",
     "single.bal_n_spc": "IC-11 / §17 — Phase B's samples per class.",
+    # ── S11 (S10 P0, D20, D22) ─────────────────────────────────────────
+    "single.aux_weight_schedule": (
+        "S10 P0.4 / F54 — `legacy` (default) names the 0.65 → 0.25 decay every "
+        "single-stage run actually applied; `fixed` applies model.aux_head_weight."
+    ),
+    "single.clean_fit_kernels": (
+        "S10 P0.2 / D18 — size of the fixed training subset clean fit is measured on."
+    ),
+    "single.clean_fit_seed": "S10 P0.2 — seed of the private RNG that draws that subset.",
+    "clip_partition": (
+        "S10 P0.5 / S11 D22 — `legacy` (default) = CLIP_GROUPS; `model` = the "
+        "model's clip_groups(). Differ only where the clip binds."
+    ),
+    "model.pathways": (
+        "X2 (S09 FW-16) — SpectralSeedNet's live pathways; [spatial, spectral] is the "
+        "shipped network."
+    ),
 }
 
 #: Config subtrees that are net-new capabilities rather than relocated CONFIG keys.

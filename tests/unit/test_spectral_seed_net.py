@@ -160,11 +160,24 @@ def test_eval_mode_returns_bare_logits(seed_model, batch, cfg_default) -> None:
 
 def test_train_mode_returns_the_main_head_and_one_auxiliary(seed_model, batch) -> None:
     seed_model.train()
-    out = seed_model(batch, labels=torch.zeros(BATCH, dtype=torch.long))
+    out = seed_model(batch, labels=torch.zeros(BATCH, dtype=torch.long), arc_m=0.0)
     assert set(out) == {"main", "aux_spatial"}, (
         "one auxiliary head, on the spatial path — four heads at 8x the main loss "
         "inverted the audited objective (CHANGES §7.1)"
     )
+
+
+def test_under_a_margin_the_unpenalised_logits_ride_along_detached(seed_model, batch) -> None:
+    """S10 P0.3: ``main_plain`` is telemetry — no gradient, no aux key, no margin."""
+    seed_model.train()
+    labels = torch.zeros(BATCH, dtype=torch.long)
+    out = seed_model(batch, labels=labels, arc_m=0.3)
+    assert set(out) == {"main", "aux_spatial", "main_plain"}
+    assert not out["main_plain"].requires_grad
+    # Only the target column differs: the margin lowers it, nothing else moves.
+    diff = (out["main_plain"] - out["main"]).abs()
+    assert torch.all(diff[:, 1:] < 1e-5)
+    assert torch.all(out["main"][:, 0] <= out["main_plain"][:, 0] + 1e-5)
 
 
 def test_return_embed_yields_a_normalised_embedding(seed_model, batch) -> None:

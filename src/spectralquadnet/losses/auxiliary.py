@@ -5,7 +5,9 @@ These two functions are about deep supervision, not mixup — they merely
 
 Stage 3 does not use :func:`_aux_loss_weight`'s decay schedule at all; it
 passes a fixed ``cfg.stage3.aux_loss_weight`` straight to
-``train_one_epoch_sam``.
+``train_one_epoch_sam``. The single-stage curriculum chooses between that decay
+(``legacy``, what it has always applied) and ``model.aux_head_weight``
+(``fixed``) through :func:`single_stage_aux_weight` — see S10 F54.
 
 :func:`_compute_aux_loss` can optionally return the per-branch terms alongside
 the summed total (``return_components=True``), for the per-branch loss
@@ -214,6 +216,59 @@ def _aux_loss_weight(cfg: ExperimentConfig | Any, current_ep: int, total_ep: int
     return max(
         cfg.stage1.aux_loss_weight_final,
         cfg.stage1.aux_loss_weight_init * (1.0 - progress * 0.7),  # slower decay
+    )
+
+
+#: The values ``single.aux_weight_schedule`` accepts (S10 P0.4 / D20).
+AUX_WEIGHT_SCHEDULES: tuple[str, ...] = ("legacy", "fixed")
+
+
+def single_stage_aux_weight(cfg: ExperimentConfig | Any, current_ep: int, total_ep: int) -> float:
+    """The auxiliary weight the single-stage loop applies at epoch ``current_ep``.
+
+    **S10 F54.** Until S11 the single-stage loop called :func:`_aux_loss_weight`
+    unconditionally, so every ``SpectralSeedNet`` run applied the three-stage
+    curriculum's ``0.65 → 0.25`` decay while its config, its banner and its
+    ``sched/aux_weight`` series all said a fixed ``0.2``. Both behaviours are now
+    named:
+
+    * ``legacy`` — exactly that call, same arguments, same float. The default,
+      because X1, X2 and X4 must run the S08 sweep's regime (D21 guard 3).
+    * ``fixed`` — ``cfg.model.aux_head_weight`` on every epoch, the weight D07
+      describes. A separate arm (S10 P1.3), never the silent default.
+
+    Args:
+        current_ep: 1-based epoch within the stage, as the loop passes it.
+        total_ep: The stage's epoch budget — the same ``total_ep`` the legacy
+            call received, so ``legacy`` is bit-identical to the old path.
+
+    Raises:
+        ValueError: An unknown schedule name — a typo here would otherwise
+            silently select one of the two regimes.
+    """
+    schedule = str(getattr(cfg.single, "aux_weight_schedule", "legacy"))
+    if schedule == "legacy":
+        return _aux_loss_weight(cfg, current_ep, total_ep)
+    if schedule == "fixed":
+        return float(cfg.model.aux_head_weight)
+    raise ValueError(
+        f"single.aux_weight_schedule={schedule!r}; expected one of {AUX_WEIGHT_SCHEDULES}"
+    )
+
+
+def describe_aux_weight_schedule(cfg: ExperimentConfig | Any, total_ep: int) -> str:
+    """One banner line that states the weight the loop will *apply* (S10 B14)."""
+    schedule = str(getattr(cfg.single, "aux_weight_schedule", "legacy"))
+    if schedule == "fixed":
+        return (
+            f"aux w = {float(cfg.model.aux_head_weight):g} fixed (single.aux_weight_schedule=fixed)"
+        )
+    first = single_stage_aux_weight(cfg, 1, total_ep)
+    last = single_stage_aux_weight(cfg, total_ep, total_ep)
+    return (
+        f"aux w = {first:.3f} → {last:.3f} (legacy: max({cfg.stage1.aux_loss_weight_final}, "
+        f"{cfg.stage1.aux_loss_weight_init}·(1−0.7·t/T)); model.aux_head_weight="
+        f"{cfg.model.aux_head_weight} is NOT applied)"
     )
 
 

@@ -20,6 +20,7 @@ from spectralquadnet.data.datasets import RiceSeedDataset
 from spectralquadnet.data.loaders import build_eval_loader, build_train_loader
 from spectralquadnet.data.samplers import ClassBalancedBatchSampler
 from spectralquadnet.engine.checkpoint import load_ckpt, stage_ckpt_path, stage_exists
+from spectralquadnet.engine.clean_fit import CleanFitProbe
 from spectralquadnet.engine.resume import resumable_state_path, stage_interrupted
 from spectralquadnet.engine.stages.final_eval import final_evaluation
 from spectralquadnet.engine.stages.single_stage import run_single_stage
@@ -68,6 +69,7 @@ def run(ctx: RunContext) -> None:
             train_module=ctx.train_module,
             supcon_ldr=supcon_ldr,
             resume_from=resume_from,
+            clean_fit=_clean_fit_probe(ctx),
         )
         trk.log_message(f"Single stage → best {ctx.select_split} F1={best_select_f1:.4f}")
         trk.log_message("Reloading best checkpoint ...")
@@ -89,6 +91,7 @@ def run(ctx: RunContext) -> None:
         dist=ctx.dist,
         run_summary=ctx.summary(),
         sessions=ctx.session_map(),
+        calib_ldr=ctx.calib_loader,
     )
 
 
@@ -118,6 +121,27 @@ def _train_loader(ctx: RunContext) -> DataLoader[Any]:
     )
     return build_train_loader(
         ds, int(ctx.cfg.single.batch), seed=int(ctx.cfg.seed), plan=ctx.plan, dist=ctx.dist
+    )
+
+
+def _clean_fit_probe(ctx: RunContext) -> CleanFitProbe | None:
+    """The fixed-subset clean-fit probe (S10 P0.2), or ``None`` when switched off.
+
+    Built from ``splits.train`` only — never calib — with the run's own
+    train-standardised morphometrics, exactly as the training loader sees them
+    minus the augmentation.
+    """
+    return CleanFitProbe.build(
+        store=ctx.store,
+        data_cfg=ctx.cfg.data,
+        device=ctx.device,
+        train_rows=ctx.splits.train,
+        labels=ctx.splits.labels,
+        morph=ctx.morph,
+        n=int(getattr(ctx.cfg.single, "clean_fit_kernels", 0)),
+        seed=int(getattr(ctx.cfg.single, "clean_fit_seed", 0)),
+        plan=ctx.plan,
+        dist=ctx.dist,
     )
 
 

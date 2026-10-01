@@ -154,6 +154,7 @@ def run(ctx: RunContext) -> None:
         dist=ctx.dist,
         run_summary=ctx.summary(),
         sessions=ctx.session_map(),
+        calib_ldr=ctx.calib_loader,
     )
 
 

@@ -22,3 +22,6 @@ tta: true
 # smaller than the noise it was never compared against.
 bootstrap_samples: 2000
 save_artifacts: true
+# D18. The selected weights' logits (float16) for the reported split AND calib,
+# ±TTA, with row ids and targets: `results/logits_<split>_<variant>.npz`.
+save_logits: true

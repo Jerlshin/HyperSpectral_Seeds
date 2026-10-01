@@ -1,0 +1,133 @@
+arm,fold,seed,features,n_features,calib_acc,calib_macro_f1
+grouped,0,0,SNV,32,0.312698,0.30117
+grouped,0,0,SNV + D1 + D2,96,0.373016,0.358083
+grouped,0,0,continuum depths,16,0.084127,0.0611736
+grouped,0,0,index bank,64,0.326984,0.307512
+grouped,0,0,SNV + D1 + D2 + continuum,112,0.342857,0.330001
+grouped,0,0,descriptor without morph,176,0.409524,0.39908
+grouped,0,0,morph,8,0.150794,0.137308
+grouped,0,0,SNV + morph,40,0.522222,0.517035
+grouped,0,0,full descriptor,184,0.626984,0.622492
+grouped,0,0,raw mean reflectance (ungated),32,0.385714,0.365352
+grouped,0,0,raw mean reflectance + morph,40,0.530159,0.523777
+grouped,0,1,SNV,32,0.338095,0.324371
+grouped,0,1,SNV + D1 + D2,96,0.412698,0.399218
+grouped,0,1,continuum depths,16,0.0873016,0.0752615
+grouped,0,1,index bank,64,0.231746,0.20756
+grouped,0,1,SNV + D1 + D2 + continuum,112,0.360317,0.345482
+grouped,0,1,descriptor without morph,176,0.422222,0.409659
+grouped,0,1,morph,8,0.150794,0.137308
+grouped,0,1,SNV + morph,40,0.522222,0.515903
+grouped,0,1,full descriptor,184,0.64127,0.634046
+grouped,0,1,raw mean reflectance (ungated),32,0.385714,0.365352
+grouped,0,1,raw mean reflectance + morph,40,0.530159,0.523777
+grouped,0,2,SNV,32,0.387302,0.374019
+grouped,0,2,SNV + D1 + D2,96,0.474603,0.464647
+grouped,0,2,continuum depths,16,0.0904762,0.0767698
+grouped,0,2,index bank,64,0.207937,0.188683
+grouped,0,2,SNV + D1 + D2 + continuum,112,0.446032,0.436319
+grouped,0,2,descriptor without morph,176,0.465079,0.452502
+grouped,0,2,morph,8,0.150794,0.137308
+grouped,0,2,SNV + morph,40,0.549206,0.544292
+grouped,0,2,full descriptor,184,0.64127,0.632637
+grouped,0,2,raw mean reflectance (ungated),32,0.385714,0.365352
+grouped,0,2,raw mean reflectance + morph,40,0.530159,0.523777
+grouped,1,0,SNV,32,0.265079,0.246246
+grouped,1,0,SNV + D1 + D2,96,0.344444,0.327273
+grouped,1,0,continuum depths,16,0.0777778,0.0610908
+grouped,1,0,index bank,64,0.27619,0.261548
+grouped,1,0,SNV + D1 + D2 + continuum,112,0.315873,0.303603
+grouped,1,0,descriptor without morph,176,0.374603,0.364633
+grouped,1,0,morph,8,0.180952,0.166675
+grouped,1,0,SNV + morph,40,0.507937,0.499256
+grouped,1,0,full descriptor,184,0.601587,0.596422
+grouped,1,0,raw mean reflectance (ungated),32,0.347619,0.339292
+grouped,1,0,raw mean reflectance + morph,40,0.526984,0.510076
+grouped,1,1,SNV,32,0.301587,0.283758
+grouped,1,1,SNV + D1 + D2,96,0.353968,0.348217
+grouped,1,1,continuum depths,16,0.0730159,0.057296
+grouped,1,1,index bank,64,0.233333,0.216532
+grouped,1,1,SNV + D1 + D2 + continuum,112,0.352381,0.340464
+grouped,1,1,descriptor without morph,176,0.384127,0.380383
+grouped,1,1,morph,8,0.180952,0.166675
+grouped,1,1,SNV + morph,40,0.528571,0.522537
+grouped,1,1,full descriptor,184,0.596825,0.595451
+grouped,1,1,raw mean reflectance (ungated),32,0.347619,0.339292
+grouped,1,1,raw mean reflectance + morph,40,0.526984,0.510076
+grouped,1,2,SNV,32,0.338095,0.323136
+grouped,1,2,SNV + D1 + D2,96,0.419048,0.416145
+grouped,1,2,continuum depths,16,0.0825397,0.0695214
+grouped,1,2,index bank,64,0.168254,0.147033
+grouped,1,2,SNV + D1 + D2 + continuum,112,0.404762,0.401155
+grouped,1,2,descriptor without morph,176,0.449206,0.444775
+grouped,1,2,morph,8,0.180952,0.166675
+grouped,1,2,SNV + morph,40,0.552381,0.544977
+grouped,1,2,full descriptor,184,0.622222,0.618493
+grouped,1,2,raw mean reflectance (ungated),32,0.347619,0.339292
+grouped,1,2,raw mean reflectance + morph,40,0.526984,0.510076
+stratified,0,0,SNV,32,0.286976,0.27445
+stratified,0,0,SNV + D1 + D2,96,0.322296,0.307639
+stratified,0,0,continuum depths,16,0.0871965,0.0718558
+stratified,0,0,index bank,64,0.263797,0.241879
+stratified,0,0,SNV + D1 + D2 + continuum,112,0.302428,0.286074
+stratified,0,0,descriptor without morph,176,0.352097,0.337041
+stratified,0,0,morph,8,0.184327,0.167283
+stratified,0,0,SNV + morph,40,0.512141,0.504392
+stratified,0,0,full descriptor,184,0.599338,0.591728
+stratified,0,0,raw mean reflectance (ungated),32,0.356512,0.340962
+stratified,0,0,raw mean reflectance + morph,40,0.543046,0.535726
+stratified,0,1,SNV,32,0.320088,0.308093
+stratified,0,1,SNV + D1 + D2,96,0.354305,0.343474
+stratified,0,1,continuum depths,16,0.0629139,0.0511916
+stratified,0,1,index bank,64,0.229581,0.210796
+stratified,0,1,SNV + D1 + D2 + continuum,112,0.334437,0.319569
+stratified,0,1,descriptor without morph,176,0.36755,0.355196
+stratified,0,1,morph,8,0.184327,0.167283
+stratified,0,1,SNV + morph,40,0.53532,0.527933
+stratified,0,1,full descriptor,184,0.602649,0.595223
+stratified,0,1,raw mean reflectance (ungated),32,0.356512,0.340962
+stratified,0,1,raw mean reflectance + morph,40,0.543046,0.535726
+stratified,0,2,SNV,32,0.345475,0.332944
+stratified,0,2,SNV + D1 + D2,96,0.38521,0.374657
+stratified,0,2,continuum depths,16,0.0772627,0.0694392
+stratified,0,2,index bank,64,0.18543,0.171955
+stratified,0,2,SNV + D1 + D2 + continuum,112,0.374172,0.363511
+stratified,0,2,descriptor without morph,176,0.401766,0.390921
+stratified,0,2,morph,8,0.184327,0.167283
+stratified,0,2,SNV + morph,40,0.548565,0.539199
+stratified,0,2,full descriptor,184,0.618102,0.608712
+stratified,0,2,raw mean reflectance (ungated),32,0.356512,0.340962
+stratified,0,2,raw mean reflectance + morph,40,0.543046,0.535726
+stratified,0,3,SNV,32,0.313466,0.300543
+stratified,0,3,SNV + D1 + D2,96,0.337748,0.325414
+stratified,0,3,continuum depths,16,0.0551876,0.044098
+stratified,0,3,index bank,64,0.203091,0.186179
+stratified,0,3,SNV + D1 + D2 + continuum,112,0.321192,0.305282
+stratified,0,3,descriptor without morph,176,0.374172,0.360889
+stratified,0,3,morph,8,0.184327,0.167283
+stratified,0,3,SNV + morph,40,0.537528,0.529475
+stratified,0,3,full descriptor,184,0.589404,0.582318
+stratified,0,3,raw mean reflectance (ungated),32,0.356512,0.340962
+stratified,0,3,raw mean reflectance + morph,40,0.543046,0.535726
+stratified,0,4,SNV,32,0.298013,0.284785
+stratified,0,4,SNV + D1 + D2,96,0.322296,0.308808
+stratified,0,4,continuum depths,16,0.0463576,0.0371947
+stratified,0,4,index bank,64,0.201987,0.187037
+stratified,0,4,SNV + D1 + D2 + continuum,112,0.309051,0.29112
+stratified,0,4,descriptor without morph,176,0.346578,0.331682
+stratified,0,4,morph,8,0.184327,0.167283
+stratified,0,4,SNV + morph,40,0.527594,0.518683
+stratified,0,4,full descriptor,184,0.584989,0.578685
+stratified,0,4,raw mean reflectance (ungated),32,0.356512,0.340962
+stratified,0,4,raw mean reflectance + morph,40,0.543046,0.535726
+stratified,0,5,SNV,32,0.296909,0.282433
+stratified,0,5,SNV + D1 + D2,96,0.337748,0.327818
+stratified,0,5,continuum depths,16,0.0761589,0.0600141
+stratified,0,5,index bank,64,0.218543,0.200987
+stratified,0,5,SNV + D1 + D2 + continuum,112,0.335541,0.323833
+stratified,0,5,descriptor without morph,176,0.368653,0.357477
+stratified,0,5,morph,8,0.184327,0.167283
+stratified,0,5,SNV + morph,40,0.529801,0.521017
+stratified,0,5,full descriptor,184,0.590508,0.580741
+stratified,0,5,raw mean reflectance (ungated),32,0.356512,0.340962
+stratified,0,5,raw mean reflectance + morph,40,0.543046,0.535726

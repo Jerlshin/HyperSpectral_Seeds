@@ -1,0 +1,46 @@
+{
+ "world_size": 2,
+ "held_out_kernels": 91,
+ "note": "2 gloo/CPU ranks, odd held-out split (7 classes x 13); same synthetic data and overrides through both trees",
+ "runs": {
+  "post_S11 (working tree on 8050ba2 + S11 changes)": {
+   "held_out_kernels": 91,
+   "calib_kernels": 14,
+   "predictions_written": 91,
+   "support_sum": 91,
+   "logits_val_test_no_tta": {
+    "n": 91,
+    "unique": 91
+   },
+   "logits_val_test_tta": {
+    "n": 91,
+    "unique": 91
+   },
+   "logits_calib_no_tta": {
+    "n": 14,
+    "unique": 14
+   },
+   "logits_calib_tta": {
+    "n": 14,
+    "unique": 14
+   },
+   "clean_fit_final_n": 77,
+   "code": {
+    "commit": "8050ba2ec66319dcca2b5e0c0ddddae1fb50f62f",
+    "dirty": true,
+    "source": "git"
+   },
+   "world_size": 2,
+   "each_kernel_once": true
+  },
+  "pre_S11 (8050ba2, git worktree)": {
+   "held_out_kernels": 91,
+   "calib_kernels": 14,
+   "predictions_written": 92,
+   "support_sum": 92,
+   "code": null,
+   "world_size": 2,
+   "each_kernel_once": false
+  }
+ }
+}

@@ -76,6 +76,7 @@ WIRED_KEYS = (
     "per_class_margin",  # IC-9 / A7 — gates the signed R-P rule
     "pairwise_penalty",  # IC-9 / A7 — gates the confusion penalty
     "spectral_hidden",  # IC-10 — SpectralSeedNet's spectral MLP width
+    "pathways",  # S11 / X2 — SpectralSeedNet's live pathways (FW-16)
 )
 
 #: Keys accepted by the schema that never reach the module they name. 0-J found

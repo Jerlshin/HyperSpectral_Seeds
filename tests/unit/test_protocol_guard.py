@@ -189,8 +189,30 @@ def test_the_audited_replica_keeps_the_run_s_actual_overrides() -> None:
 
 
 def test_gradnorm_is_off_and_the_aux_weight_is_a_constant(cfg_default) -> None:
+    """The *configured* key. What the loop applies is pinned separately, below (S10 F54)."""
     assert float(cfg_default.aux_gradnorm_alpha) == 0.0
     assert float(cfg_default.model.aux_head_weight) == 0.2
+
+
+def test_the_applied_aux_weight_is_the_legacy_schedule_until_x1_reports(cfg_default) -> None:
+    """D20 / D21 guard 3. This test checked the config value (0.2) for months while the
+    loop applied 0.65 → 0.25 (S10 F54). The default stays `legacy` so X1/X2/X4 run the
+    S08 sweep's regime; switching it is a decision (S10 P1.3), not a default edit."""
+    from spectralquadnet.losses.auxiliary import single_stage_aux_weight
+
+    assert cfg_default.single.aux_weight_schedule == "legacy"
+    total = int(cfg_default.single.epochs)
+    applied = [single_stage_aux_weight(cfg_default, ep, total) for ep in range(1, total + 1)]
+    assert applied[0] == pytest.approx(0.647, abs=1e-3) and applied[-1] == pytest.approx(0.25)
+
+
+def test_the_clip_partition_is_the_one_every_run_so_far_used(cfg_default) -> None:
+    """S11 D22. `model` (fuse in `fusion`) changes training wherever the 5.0 clip binds."""
+    assert cfg_default.clip_partition == "legacy"
+
+
+def test_the_shipped_model_runs_both_pathways(cfg_default) -> None:
+    assert list(cfg_default.model.pathways) == ["spatial", "spectral"]
 
 
 def test_the_clip_threshold_was_raised_but_the_lr_was_not_co_tuned(cfg_default) -> None:

@@ -1,0 +1,19 @@
+{
+ "num_bands": 32,
+ "total_params": 2849478,
+ "dead_params": 327680,
+ "dead_share": 0.11499650111353729,
+ "stem_spectral_strides": [
+  2,
+  2,
+  1
+ ],
+ "stem_kernel_depths": [
+  7,
+  5,
+  5
+ ],
+ "stem_folded_depth": 8,
+ "spectral_descriptor_width": 184,
+ "eca_kernel": 3
+}

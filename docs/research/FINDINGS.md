@@ -49,8 +49,8 @@ training bundle · `held-out` = the other acquisition bundle (`val ∪ test`), s
 | F32 | The 2.85 M-param network adds only +0.035–0.054 macro-F1 over LDA on mean spectrum + 8 morphometrics | S09 | held-out / strat | E3 | standing |
 | F33 | Morphometrics are acquisition-invariant (0.167 grouped vs 0.174 strat) and alone reach cross-session recall 0.124 (network 0.152) | S09 | held-out | E3 | standing |
 | F34 | Within-acquisition, run-level F1 tracks training fit (r = −0.98); across bundles no link is detectable (r = −0.32, n = 6) | S09 | strat / held-out | E3 | standing |
-| F35 | The network under-fits: clean training accuracy 0.76–0.87; the margin phase drives training loss above ln 90 in 10/12 runs | S09 | train | E4 | standing |
-| F36 | The backbone gradient is clipped on 100 % of steps at clip 5.0 (pre-clip median 8.9, up to ≈ 44) | S09 | — | E4 | standing |
+| F35 | The network under-fits: clean training accuracy 0.76–0.87; the margin phase drives training loss above ln 90 in 10/12 runs | S09 | train | E4 | standing — **refined by F45, F47** (eval-mode clean fit 0.87–0.95; the loss rise is the margin, not chance) |
+| F36 | The backbone gradient is clipped on 100 % of steps at clip 5.0 (pre-clip median 8.9, up to ≈ 44) | S09 | — | E4 | standing — **refined by F53** (≥ 82.5 % of steps per epoch after epoch 30; under Adam a re-weighting, not a step-size cut) |
 | F37 | Grouped ≈ 0.005 + 0.73 × stratified macro-F1 across 18 model/input pairs (r = 0.94); the network sits on the line | S09 | held-out vs strat | E3 | standing |
 | F38 | The grouped–stratified gap is acquisition coverage, not training-set size (LDA: size ≈ 0.01 of 0.15; 24 test-bundle kernels +0.16) | S09 | held-out | E3 | standing (linear proxy) |
 | F39 | Cross-session recall is directional (older → session 8: 0.22–0.25; reverse 0.07–0.08) and carried by 4 varieties | S09 | held-out | E3 | standing |
@@ -58,6 +58,21 @@ training bundle · `held-out` = the other acquisition bundle (`val ∪ test`), s
 | F41 | Errors are systematic: 80 % shared by all seeds; 3-seed vote +0.01; TTA +0.011 mean and negative in 1/6 grouped runs | S09 | held-out | E4 | standing |
 | F42 | A hard in-distribution cluster {0, 30, 41, 49, 51, 52} confuses mutually under both protocols (stratified F1 0.17–0.39) | S09 | strat | E3 | standing — refines F09 |
 | F43 | Prior 78–96 % results on this dataset are within-acquisition (random kernel splits) and rely on high-resolution RGB morphology | S09 | — | E1 | standing |
+| F44 | The clean-label phase (epochs 111–150) gets 3.6 % of the cumulative LR; switching mixup off lifts calib F1 in 12/12 runs at 18 % of peak LR | S10 | train / calib | E4 | standing |
+| F45 | Clean fit (D18 definition: eval mode, no augmentation, margin 0) of the selected checkpoints is 0.87–0.95 (mean 0.90 grouped, 0.91 stratified); train–calib gap ≈ 0.19 in every run | S10 | train / calib | E4 | standing — refines F35 |
+| F46 | Within acquisition, held-out F1 rises ≈ 1 : 1 with clean training accuracy (r = 0.99, slope 1.01, n = 6); across bundles r = 0.36 | S10 | train vs strat / held-out | E3 | standing — strengthens F34 |
+| F47 | The margin phase's loss is the margin, not chance: on the same training kernels plain-cosine CE 0.15–0.39 vs margin-penalised 2.9–6.7; 0–52 % satisfy m = 0.30; LS at s = 32 fixes the cosine gap at 0.21–0.24 | S10 | train | E4 | standing — refines F35 |
+| F48 | The spatial tail reduces the kernel to 1 × 1; the last 3 × 3 stride-2 conv sees a 2 × 2 map, so 327,680 parameters (11.5 %) never receive a gradient | S10 | — | E4 | standing |
+| F49 | The spectral pathway is in effect SNV(32) + morphometrics: the learned index bank never left uniform; index, continuum, D₁, D₂ carry ≈ 1 % of the descriptor's normalised variance | S10 | train / calib | E4 | standing |
+| F50 | Reflectance level reaches the learned layers only through the 6-parameter ECA gate; a ±20–25 % gain flips 8–18 % of calib predictions | S10 | calib | E4 | standing |
+| F51 | Eval-time on calib: morphometrics at the train mean cost 0.22 macro-F1; spatial path off → 0.19–0.21; spectral path off → 0.42–0.48 | S10 | calib | E2 | standing — X2 tests it by retraining |
+| F52 | Linear probes (train → calib): fused embedding ≈ network (0.70 / 0.72); spatial output 0.54 / 0.56; spectral output 0.42 / 0.44, below its own input (0.62 / 0.59); the aux head fits 0.53–0.81 of training kernels | S10 | train / calib | E2 | standing |
+| F53 | The backbone clip-group norm is set by two small modules — the stem's first Conv3d (1,008 params) and the spectral MLP — not the 1.9 M-param tail; the margin triples every main-path gradient; under AdamW the clip re-weights batches, it does not shrink steps | S10 | train | E2 | standing |
+| F54 | The applied auxiliary weight is 0.65 → 0.25 (`stage1.aux_loss_weight_*`), not the configured and logged 0.2, in every SpectralSeedNet run | S10 | — | E4 | standing |
+| F55 | Weight decay is inert: AdamW's total shrink over a run is 2 × 10⁻⁴ | S10 | — | E4 | standing |
+| F56 | EMA leads live by +0.03–0.04 calib F1 under mixup and ≈ 0 after epoch 130; EMA and Adam memory span 25–36 epochs | S10 | calib | E2 | standing |
+| F57 | The S11 instrumentation moves no training number (identical per-step losses, 222/222 checkpoint tensors and held-out predictions before/after, 3 regimes); the same gate detects a real change; the clean-fit probe equals S10's offline clean fit on the full training set and is within 0.017 of it on its 1,000-kernel subset | S11 | train (synthetic + S08 checkpoints) | E4 | standing |
+| F58 | Before S11 a 2-rank evaluation scored the sampler's padding kernel twice: every grouped S08 run wrote one extra held-out prediction (Δ macro-F1 ≤ 1.7 × 10⁻⁴); the frozen S09 reference (0.530) is already the once-per-kernel value | S11 | held-out (re-scored, no new inference) | E4 | standing |
 
 ---
 
@@ -268,12 +283,18 @@ At epoch 111 (first epoch without mixup and margin) training accuracy on augment
 0.76–0.87; calib accuracy 0.66–0.73. Ramping the ArcFace margin to 0.3 (s = 32) raises training loss
 from ≈ 1.6 to 3.7–6.1; 10 of 12 runs end above ln 90 = 4.50. Calib F1 changes by 0 to +0.03 across
 that phase while the LR decays. → `curves.csv`
+**Refined (S10).** Measured as D18 defines clean fit, the selected checkpoints fit 0.87–0.95 of their training
+kernels (F45); the loss above ln 90 coexists with that accuracy and is the margin penalty at s = 32 (F47), so
+"above chance" describes the loss, not the predictions. The under-fit stands; its size is smaller.
 
 ### F36 · Clipping binds on every step, again
 `grad_norm/clipped_backbone` = 1.0 in every epoch of every run; backbone pre-clip norm median 8.9
 against threshold 5.0, ≈ 26 during the margin ramp and ≈ 44 after it. D07 raised the clip from 1.0 to
 5.0 so that it would clip outliers only; it still clips everything. Effect size unknown (Adam is
 largely invariant to a constant gradient scale). → `curves.csv`
+**Refined (S10, F53).** Per-epoch clip fractions after epoch 30 are ≥ 0.825 (1.0 in 55–98 % of epochs), not 1.0
+everywhere; the `head` and `embed_net` groups are never clipped. Under AdamW a per-step clip re-weights batches
+inside Adam's ≈ 1,000-step memory rather than shrinking the step.
 
 ### F37 · The transfer line
 Across 18 (model, input) pairs measured on both protocols — the network ± TTA, 8 LDA representations,
@@ -313,3 +334,115 @@ Fabiyi et al. 2020 (the dataset authors): random forest on high-resolution RGB s
 256 bands, random 4:1 kernel split, 90-variety average F1 78.27 % (maximum over LDA component counts).
 Taheri et al. 2024: 92.73–96.17 % precision with 15 bands + RGB, split protocol not stated. **E1:** read
 from the papers, not reproduced. → `literature.csv`
+
+### F44 · The clean objective gets the last 3.6 % of the learning rate
+Under the shipped single stage, epochs 1–110 (mixup) receive 96.4 % of the cumulative LR, the margin ramp
+(111–130) 2.9 % and the held margin (131–150) 0.6 %. When mixup stops (epoch 111, LR 0.18 × peak), logged
+training accuracy jumps 0.30–0.45 → 0.76–0.87 and calib F1 (live) rises in all 12 runs (+0.001…+0.042; ≈ 12× the
+0.0016/epoch trend of epochs 90–110); the best calib F1 after epoch 110 exceeds the best before by +0.016…+0.044.
+**Caveat:** the step coincides with the margin ramp starting; the margin can only have pulled the other way.
+→ [S10](studies/S10_training_architecture_review/README.md) · `schedule_budget.csv`, `transitions.csv`
+
+### F45 · How well the selected checkpoints actually fit
+Eval mode, no augmentation, margin 0, on each run's own training rows: accuracy 0.872–0.920 grouped (mean 0.900),
+0.872–0.951 stratified (0.911); plain-cosine CE (s = 32, no smoothing) 0.15–0.39; calib accuracy 0.690–0.758;
+train − calib 0.17–0.21 in every run. S09's 0.76–0.87 (F35) was train mode on augmented batches at epoch 111.
+**Caveat:** these are the calib-selected checkpoints (epochs 121–150), not converged ones. → `ckpt_fit.csv`
+
+### F46 · Fit and held-out move together, one for one, within the acquisition
+Stratified (6 seeds, one split): S09's held-out macro-F1 (TTA) against F45's clean training accuracy: r = 0.99
+(95 % CI 0.92–1.00), slope 1.01; the train–calib gap does not widen as fit improves. Grouped: r = 0.36 (CI −0.64…0.91).
+**Caveat:** observational, over 0.87–0.95 only; no held-out row was re-read (S09's scores were paired with a
+train-only measurement). → `ckpt_fit.csv`, S09 `runs.csv`
+
+### F47 · The margin phase in angular terms
+On the same clean training kernels: margin-penalised CE (m 0.30, ε 0.04) 2.9–6.7 — reproducing the logged loss
+without augmentation or dropout — against plain-cosine CE 0.15–0.39 and 0.87–0.95 accuracy. Median target angle
+53–72°, median target-vs-rival cosine gap 0.10–0.27; 0–52 % of kernels satisfy cos(θ_y + 0.30) > max_{j≠y} cos θ_j
+(0–7 % in the three runs selected during the ramp). Label smoothing's optimum at s = 32 is a cosine gap of
+0.21–0.24 (ε 0.10–0.04); a 0.30 rad margin needs ≈ 0.45–0.48 at θ_y = 45–60°. → `ckpt_fit.csv`,
+`objective_geometry.csv`
+
+### F48 · A quarter of the spatial tail's last block cannot learn
+Stem spatial strides (1, 2, 2) take 64 → 16; four stride-2 ResBlocks take 16 → 8 → 4 → 2 → 1. The last block's
+3 × 3, stride-2, padding-1 conv on a 2 × 2 map uses kernel rows/cols 1–2 only: 5 of 9 taps (327,680 parameters,
+11.5 % of 2,849,478) get exactly zero gradient (backward-pass check) and end all 12 runs at init × 0.99980 /
+0.99971 (the weight-decay factor). Mean and max pooling coincide at 1 × 1. `docs/03` states (B, 256, 4, 4).
+→ `structure.csv`, `ckpt_dead_taps.json`
+
+### F49 · The chemometric half of the spectral pathway is inert
+Index bank: softmax entropy 0.9998 of ln 32 (31.98 effective bands), max weight 0.033–0.038 vs uniform 0.031,
+cos(π⁺, π⁻) 0.998, |z| ≈ 0.008 with sd 0.001 across kernels. In the shared LayerNorm(184): SNV 79 % of the
+variance, morph 20 %, D₁ 0.7 %, D₂ 0.09 %, continuum 0.07 %, index bank 0.08 %. The blocks are not
+information-free (shrinkage LDA alone: index 0.20–0.22, continuum 0.06 calib F1; chance 0.011), but they reach
+the MLP at ≈ 1 % amplitude; D₁/D₂ are fixed linear maps of SNV. → `ckpt_index_bank.csv`,
+`ckpt_spectral_scale.csv`, `descriptor_probe.csv`
+
+### F50 · The network sees reflectance level only through the ECA gate
+Bias-free Conv3d → per-sample GroupNorm makes the stem invariant to x → a·x; SNV, D₁/D₂ of SNV, normalised
+differences and hull-ratio depths are scale-invariant. Gain after the gate: spatial output ≤ 0.09 %, spectral
+descriptor 0.000 %. Gain before it (×0.8 / ×1.25): spatial 6.6–8.4 %, descriptor 1.2–1.9 %, spectral output
+12–22 %, 8–18 % of calib predictions change. For a linear model on the same rows, level is worth +0.04 calib F1
+(raw 0.35 vs SNV 0.31) and +0.085 grouped held-out (S09 C3). → `level_channel.csv`, `ckpt_gain.csv`
+
+### F51 · What the trained network leans on (eval-time knock-outs)
+Calib macro-F1 0.70 / 0.72 (grouped / stratified) → morphometrics at the train mean 0.48 / 0.50; spatial output
+zeroed 0.19 / 0.21; spectral output zeroed 0.42 / 0.48. **Caveat:** reliance, not ablation — a network trained
+without the input would adapt (X2). → `ckpt_probes.csv`
+
+### F52 · Linear probes of every representation
+Shrinkage LDA fit on train, scored on calib (macro-F1, grouped / stratified): network 0.70 / 0.72; fused embedding
+0.70 / 0.72; spatial output 0.54 / 0.56; spectral output 0.42 / 0.44; spectral descriptor 0.62 / 0.59 (without
+morph 0.41 / 0.36); raw mean spectrum + morph 0.52 / 0.54; raw mean spectrum 0.35 / 0.34; SNV 0.31 / 0.30. The aux
+head (spatial path) classifies 0.53–0.81 of training and 0.44–0.65 of calib kernels. → `ckpt_probes.csv`,
+`ckpt_fit.csv`
+
+### F53 · Where the gradient norm comes from, and what the clip does
+Per-module gradient norms on each run's selected checkpoint (train mode, 4 unaugmented batches of 64, the applied
+aux weight): under the clean objective (margin 0, ε 0.056, aux 0.313) the backbone group's norm is 16.6, of which the
+stem's first Conv3d (1,008 parameters) contributes 11.2 and the spectral MLP 9.2; every one of the seven tail blocks
+contributes ≤ 2.3 and the index bank 0.03. The auxiliary term adds 3.1 (in the spatial path only). Under the margin
+objective (m 0.30, ε 0.04, aux 0.25) every main-path norm triples (backbone 49.2, stem stage 1 34.2, spectral MLP 26.0)
+while the aux contribution is unchanged — the logged 25 → 45 rise is the margin, not the network. The signed-√ pooling
+amplifies little (4 % of pooled activations below 0.01; median derivative 1.22, p99 9–15). Per-epoch clip fractions after
+epoch 30 are ≥ 0.825 (1.0 in 55–98 % of epochs); the head and `embed_net` groups are never clipped. Because AdamW
+normalises each parameter by its own second moment, a group-wide clip factor changes how batches are weighted within
+Adam's ≈ 1,000-step memory, not the step size; its harm is likely small (exact for a constant scale, approximate
+otherwise). **Caveat:** CPU, 4 batches per run; not the DDP-averaged gradient the run clipped. → `grad_modules.csv`, `grad_pn.csv`, `dynamics_epochs.csv`
+
+### F54 · The auxiliary weight was never 0.2
+`engine/train_epoch.py` computes `aux_w = _aux_loss_weight(cfg, ep, T)` on every call, which reads the
+three-stage curriculum's `stage1.aux_loss_weight_init/final` = 0.65 / 0.25: 0.647 at epoch 1, 0.316 at 110, 0.25
+from 132 (mean 0.424). `model.aux_head_weight` and `single.aux_loss_weight` (both 0.2) are never read; the banner
+and `sched/aux_weight` print 0.2. Every SpectralSeedNet run is affected; D07's "fixed 0.2" was never executed.
+→ [S10 B7](studies/S10_training_architecture_review/README.md)
+
+### F55 · Weight decay does nothing at these settings
+AdamW multiplies weights by (1 − lr·wd) per step; Σ lr·wd ≈ 2 × 10⁻⁴ over 4,200–6,000 steps. Measured on the
+never-trained taps: × 0.99980 (grouped), × 0.99971 (stratified). → `ckpt_dead_taps.json`
+
+### F56 · EMA helps only while the LR is high
+EMA − live calib F1: +0.032…+0.041 per run over epochs 11–110, −0.005…+0.008 over 131–150; EMA selected in 5/12
+runs. EMA decay 0.999 and Adam β₂ 0.999 both average over ≈ 1,000 steps = 36 epochs grouped, 25 stratified.
+→ `transitions.csv`, `horizons.csv`
+
+### F57 · The instrumentation is neutral, and the clean-fit probe measures what S10 measured
+Gate G-neutral (S11 §4.1): the same miniature run through the code before (`8050ba2`) and after S11, with every new
+probe switched on, in three regimes (shipped mixup → margin, a binding clip, X1-like): every one of 30 step losses
+identical (max |Δ| = 0), all 222 live + EMA checkpoint tensors bit-identical, held-out predictions ±TTA identical. The
+gate is not blind: `clip_partition=model` under a binding clip changes 213/222 tensors (step-loss Δ up to 1.17) and
+`aux_weight_schedule=fixed` 210/222 (Δ up to 1.35) — the first is D22's evidence. On the 12 S08 selected checkpoints
+the probe, built exactly as the pipeline builds it, reproduces `ckpt_fit.csv` (S10) on the full training set to
+< 10⁻⁶ and differs from it by at most 0.017 (mean 0.008) on the 1,000-kernel subset — binomial sampling
+error. **Caveat:** neutrality is shown on CPU with a single RNG stream; CUDA runs are not bit-reproducible anyway
+(`cudnn.benchmark`, fused AdamW). → `evidence/S11_frozen_arms_execution/g_neutral.json`,
+`clean_fit_reproduction.csv`
+
+### F58 · DDP used to score one held-out kernel twice — the frozen reference did not
+`DistributedSampler` pads a split to a multiple of the world size with its own first entries; before S11 the gathered
+predictions kept the pad. A 2-rank run on a 91-kernel held-out split wrote 92 predictions (support 92) before S11 and
+91 after. All six grouped S08 runs (4,311 / 4,309 held-out kernels) wrote one extra prediction; stratified held-out
+(2,588) and calib (630, 906) are even, so checkpoint selection was unaffected. Re-scored without the duplicate, each
+run moves by ≤ 1.7 × 10⁻⁴; the grouped TTA mean goes 0.530068 (`run.json`) → 0.530033 — which is the value S09 froze
+(its extraction counted each kernel once). The S11 arms, de-duplicated natively, therefore compare with the frozen
+reference without correction. → `ddp_dedup.json`, `reference_dedup.csv`

@@ -1,0 +1,74 @@
+{
+ "grouped_f0_s0": {
+  "dead_params": 327680,
+  "dead_over_init_median": 0.999797523021698,
+  "dead_max_abs_dev_from_init_x_ratio": 3.4421682357788086e-06,
+  "live_rel_change": 0.3472714126110077
+ },
+ "grouped_f0_s1": {
+  "dead_params": 327680,
+  "dead_over_init_median": 0.9997975826263428,
+  "dead_max_abs_dev_from_init_x_ratio": 3.4123659133911133e-06,
+  "live_rel_change": 0.3390163779258728
+ },
+ "grouped_f0_s2": {
+  "dead_params": 327680,
+  "dead_over_init_median": 0.9997974634170532,
+  "dead_max_abs_dev_from_init_x_ratio": 4.041939973831177e-06,
+  "live_rel_change": 0.3617802560329437
+ },
+ "grouped_f1_s0": {
+  "dead_params": 327680,
+  "dead_over_init_median": 0.9997977018356323,
+  "dead_max_abs_dev_from_init_x_ratio": 3.4347176551818848e-06,
+  "live_rel_change": 0.34134167432785034
+ },
+ "grouped_f1_s1": {
+  "dead_params": 327680,
+  "dead_over_init_median": 0.999797523021698,
+  "dead_max_abs_dev_from_init_x_ratio": 3.4123659133911133e-06,
+  "live_rel_change": 0.3190141022205353
+ },
+ "grouped_f1_s2": {
+  "dead_params": 327680,
+  "dead_over_init_median": 0.9997975826263428,
+  "dead_max_abs_dev_from_init_x_ratio": 4.045665264129639e-06,
+  "live_rel_change": 0.342090368270874
+ },
+ "stratified_f0_s0": {
+  "dead_params": 327680,
+  "dead_over_init_median": 0.9997106790542603,
+  "dead_max_abs_dev_from_init_x_ratio": 5.736947059631348e-06,
+  "live_rel_change": 0.4023866057395935
+ },
+ "stratified_f0_s1": {
+  "dead_params": 327680,
+  "dead_over_init_median": 0.9997107982635498,
+  "dead_max_abs_dev_from_init_x_ratio": 4.872679710388184e-06,
+  "live_rel_change": 0.4193381369113922
+ },
+ "stratified_f0_s2": {
+  "dead_params": 327680,
+  "dead_over_init_median": 0.9997106790542603,
+  "dead_max_abs_dev_from_init_x_ratio": 4.872679710388184e-06,
+  "live_rel_change": 0.37391746044158936
+ },
+ "stratified_f0_s3": {
+  "dead_params": 327680,
+  "dead_over_init_median": 0.9997107982635498,
+  "dead_max_abs_dev_from_init_x_ratio": 5.900859832763672e-06,
+  "live_rel_change": 0.4038344621658325
+ },
+ "stratified_f0_s4": {
+  "dead_params": 327680,
+  "dead_over_init_median": 0.9997106790542603,
+  "dead_max_abs_dev_from_init_x_ratio": 5.7406723499298096e-06,
+  "live_rel_change": 0.5146533846855164
+ },
+ "stratified_f0_s5": {
+  "dead_params": 327680,
+  "dead_over_init_median": 0.9997107982635498,
+  "dead_max_abs_dev_from_init_x_ratio": 5.360692739486694e-06,
+  "live_rel_change": 0.3670332133769989
+ }
+}

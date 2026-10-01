@@ -1,0 +1,6 @@
+regime,phase,first_epoch,last_epoch,share_of_cumulative_lr,lr_mult_at_phase_start,lr_mult_at_phase_end
+shipped (150 ep; mixup 1-110; margin ramp 111-130),mixup,1,110,0.96434,0.2,0.184544
+shipped (150 ep; mixup 1-110; margin ramp 111-130),"clean, margin ramp",111,130,0.0292632,0.176446,0.0557502
+shipped (150 ep; mixup 1-110; margin ramp 111-130),"clean, margin 0.30",131,150,0.00639671,0.0513528,0.01
+X1 as frozen = S10 R1 (200 ep; mixup 1-30; no margin),mixup,1,30,0.273797,0.2,0.96039
+X1 as frozen = S10 R1 (200 ep; mixup 1-30; no margin),clean,31,200,0.726203,0.957205,0.01

@@ -17,11 +17,22 @@ its own scalars (F32), and its cross-session recall matched by shape alone (F33)
 compute through two diagnostics before any new architecture or tuning.
 
 ### FW-19 · Instrumentation (D18) — prerequisite, code only
+> **Status: done (S11, D22).** All of P0.1–P0.7 plus the X2 pathway switch and the frozen-arm runner; gate
+> G-neutral passed (F57). One deviation: the model-declared clip partition is opt-in (`clip_partition=legacy`
+> default). Code must be committed and pushed before a Kaggle session clones it.
 De-duplicate DDP eval rows before scoring; write the git commit into `run.json`; save calib and held-out
 logits (float16); add `SpectralSeedNet.pathway_labels()`; log clean training accuracy (eval mode, no
 augmentation, no margin) on a fixed 1,000-kernel training subset. None changes a metric; H13 needs the last.
+> **Extended by S10 (D20)** — the full list is S10 §6 P0.1–P0.7: also log the *applied* aux weight and add
+> `single.aux_weight_schedule ∈ {legacy, fixed}` with **default `legacy`** (F54 — do not change the applied
+> schedule before X1/X2); `train/loss_main`, `train/acc_dominant` (mixup), `train/acc_plain` (margin); model-declared
+> gradient/clip groups (`fuse` joins `fusion`); finite-step epoch means; structural tests (zero-gradient parameters,
+> tail resolution, gain response — xfail until X5/X6); dry-run composition of every frozen command; docs fixes.
+> Gate: a 2-epoch CPU run is bit-identical before and after. Ordered checklist: S10 §9.
 
 ### FW-15 · X1 — fit-first regime (H12a, H12b, H13) — **decides route A vs B**
+> **Status: ready to run (S11).** `python scripts/run_frozen.py --arms X1 X4 --nproc-per-node 2 --stream`
+> (with X4); every cell composes to its frozen command; where each hypothesis is read from is fixed in S11 §6.
 - **Builds on** F34, F35, F36, F37. Could reverse D06, D07.
 - **Design.** Overrides `single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31
   single.margin_warmup_end=31 grad_clip=50.0 single.epochs=200 single.patience=40`; grouped folds 0, 1 ×
@@ -31,8 +42,13 @@ augmentation, no margin) on a fixed 1,000-kernel training subset. None changes a
 - **If H12a and H12b hold:** the score bottleneck is model/training — invest in architecture/training,
   measured on all three D16 tiers. **If H12a holds, H12b fails:** gains do not transfer — route A
   (FW-03, FW-18, FW-12). **If H12a fails:** the regime is not the limit; X2 decides.
+- **S10 reading guards (D21).** H13's reference under its own definition is 0.90 / 0.91 (F45), not 0.76–0.87; an
+  X1 effect is credited to mixup, margin and epochs jointly (clip 50 ≈ neutral under AdamW, F53); the applied aux
+  schedule (0.65 → 0.25, F54) must stay `legacy`. Run X4 (FW-20) in the same session.
 
 ### FW-16 · X2 — what the network uses (H14a, H14b)
+> **Status: ready to run (S11).** `model.pathways` implemented (freeze + skip, aux term off with the spatial
+> path); `python scripts/run_frozen.py --arms X2 --nproc-per-node 2 --stream`.
 - **Builds on** F32, F33; tests D05's two-pathway rationale and D12's effect on the network.
 - **Design.** Grouped folds 0, 1 × seeds 0, 1 per arm: `no_morph` (`data.morphology_path=''`, config-only),
   `spectral_only` and `spatial_only` (need a `model.pathways` switch masking a pathway in train *and* eval).
@@ -41,6 +57,10 @@ augmentation, no margin) on a fixed 1,000-kernel training subset. None changes a
 - **If H14a holds:** cross-session recall is shape — the paper says so; spectral session invariance is
   unproven. **If H14b holds:** 79.6 % of parameters are dead weight; the architecture work targets the
   spatial-spectral pathway, not the head.
+- **S10 notes.** Of the spatial path's 2.27 M parameters, 1.94 M can train (F48). The `model.pathways` switch must
+  mask the pathway *before* the aux head and set the aux term to zero in `spectral_only` (the aux head sits on the
+  spatial output). Eval-time knock-outs already show strong in-sample reliance on morph (−0.22 calib F1, F51); X2's
+  retrained arms are the test.
 
 ### FW-17 · X3 — the within-acquisition tier (H15, D16)
 - `data=ablation/u430k32_stratified data.split_eval_frac=0.2`, seeds 0–2, under X1's chosen regime. The
@@ -54,6 +74,45 @@ augmentation, no margin) on a fixed 1,000-kernel training subset. None changes a
 - **If cross-session recall ≥ 0.25 and grouped ≥ 0.55 (LDA):** an RGB-shape × HSI-spectrum fusion is the
   architecture direction with acquisition-robust signal. This widens the research question (HSI → RGB +
   HSI) and needs a decision of its own.
+
+## Priority 0b — the S10 arms (frozen in `evidence/S10_training_architecture_review/preregistration_s10.json`)
+
+S10 found the regime, not capacity, to be the demonstrated limiter (F44, F47), the documented aux weight never
+applied (F54), and three component defects: an untrainable spatial-tail block (F48), an inert chemometric
+descriptor (F49) and a level-blind input path (F50). D19 orders the work: X4 with X1; X5 and X6 after X1.
+
+### FW-20 · X4 — fit ceiling (H16)
+> **Status: ready to run (S11)**, in the same session as X1. H16 is read from `clean_fit.json → final.live.acc`
+> of the grouped cell.
+- **Builds on** F45, F47; D19's reversal trigger.
+- **Design.** X1's schedule with every softener off: `single.mixup_epochs=0 single.label_smooth_hi=0.0
+  single.label_smooth_lo=0.0 stage1.aux_loss_weight_init=0.0 stage1.aux_loss_weight_final=0.0 single.dropout=0.0
+  single.aug_profile=none single.patience=200` (+ X1's margin/clip/epochs). Grouped f0 s0 and stratified s0.
+  Diagnostic only — never a candidate.
+- **Cost.** 2 runs ≈ 1 h. **If H16 fails:** capacity/optimisation-limited — X5 and tail layout (S10 P3.6) first.
+
+### FW-21 · X5 — spatial tail without untrainable parameters (H17)
+- **Builds on** F48. Last `ResBlock2D` stride 2 → 1 behind `model.spatial_tail_strides` (default = today's model,
+  bit-for-bit). Grouped 2 × 3 under X1's regime if H12a holds. Non-inferiority; adopt as default if it holds.
+- **Cost.** 6 runs ≈ 2.7 h.
+
+### FW-22 · X6 — reflectance level in the spectral path (H18a, H18b)
+- **Builds on** F50, S09 C3 (+0.085 grouped for LDA from level). Append standardised log mean reflectance (train-split
+  statistics) to the descriptor behind `model.spectral_level_block` (default none). Grouped 2 × 3 with the session
+  guard (H18b). **Changes what the model may know** — albedo — so it is reported with cross-session recall and
+  attraction.
+- **Cost.** 6 runs ≈ 2.7 h.
+
+### FW-23 · Training-objective follow-ups (S10 P1.3, P1.4, P3.3–P3.5)
+Each one arm, after X1, under the chosen regime: aux weight as documented (0.2, then 0); a margin with ≥ 25 % of the
+LR budget and ε = 0 (A7); label smoothing 0 / s ∈ {16, 24}; an effective weight decay only if X1 over-fits.
+
+### FW-24 · Spectral descriptor repair or removal (S10 P3.1)
+Only if X2 shows the spectral path matters (H14b rejected): per-block standardisation instead of one LayerNorm,
+an index bank initialised from sharp band pairs, D₁/D₂ dropped (linear in SNV). Otherwise remove the inert blocks.
+
+### FW-25 · Masked normalisation in the stem (S10 P3.2)
+GroupNorm statistics over the foreground only, so activation scale stops depending on kernel area.
 
 ## Priority 1 — decides what the project is about
 
@@ -157,6 +216,16 @@ or planning as new acquisition.
 Band selection on all data vs within-fold at several k, neural, grouped — the CHANGES §19.3 test,
 using the per-fold band files the band study already writes.
 
+### FW-26 · Restore the pinned pre-refactor reference for two gates
+`scripts/capture_golden.py --verify` and `scripts/check_config_roundtrip.py` read commit `886560fe…` with
+`git show`; that commit is not in this repository's history (S11), so both fail before doing anything — before and
+after S11 alike. Either restore the ref (fetch the old history or vendor the two baseline files) or retire the two
+scripts in favour of the committed-golden pytest gates, which run without it. Same housekeeping pass: two smoke
+tests (`test_the_primary_pipeline_runs_on_all_256_acquired_bands`, `test_the_stem_reads_the_full_band_axis_in_the_run_that_ships`)
+build a 256-band synthetic cube against the 215-band primary config and fail since S07; one expects an fp16 NaN that
+torch 2.14 no longer produces (`test_amp_precision`); the W&B step-collision smoke test fails. All fail identically
+before and after S11 (`evidence/S11_frozen_arms_execution/test_tiers.json`).
+
 ### FW-14 · Write-up
 Lead with the protocol: stratified → grouped → cross-session, as a three-level gap with intervals;
 then the band-budget result; publish the negative results (F05, F09, F18, F25).
@@ -171,3 +240,4 @@ then the band-budget result; publish the negative results (F05, F09, F18, F25).
 | White-tile reflectance (raised in S06) | S07 |
 | Kaggle infrastructure for neural runs | S04 (Oct 2026 part), S08 |
 | FW-02 σ, FW-04 leakage gap (first neural sweep, u430k32) | S08 (run) → S09 (analysis) |
+| FW-19 instrumentation (D18, D20) + X2's pathway switch + the frozen-arm runner | S11 |

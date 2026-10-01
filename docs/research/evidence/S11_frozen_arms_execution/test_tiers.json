@@ -1,0 +1,76 @@
+{
+ "environment": "macOS, CPU, python 3.13, torch 2.14.0",
+ "fast_tier": {
+  "pre_S11": "645 passed, 1 failed (amp_precision)",
+  "post_S11": "711 passed, 1 failed (same), 2 xfailed"
+ },
+ "run_all": {
+  "pre_S11 (8050ba2 worktree)": "964 passed, 6 failed, 37 errors, 32 skipped",
+  "post_S11": "1034 passed, 6 failed, 37 errors, 32 skipped, 3 xfailed (strict, F48)"
+ },
+ "failure_sets_identical": true,
+ "pre_existing_non_passes": {
+  "pinned baseline ref 886560fe\u2026 absent from git history (git show fails) \u2014 FW-26": 37,
+  "Stage-1 golden drift, torch/BLAS environment \u2014 FW-11": 2,
+  "256-band synthetic smoke fixture vs the 215-band primary config (stale since S07)": 2,
+  "W&B step-collision smoke test": 1,
+  "fp16 NaN expectation no longer reproduces under torch 2.14": 1
+ },
+ "non_passes": {
+  "pinned baseline ref 886560fe\u2026 absent from git history (git show fails) \u2014 FW-26": [
+   "ERROR tests/unit/test_cdws.py::test_cdws_defaults_match_baseline",
+   "ERROR tests/unit/test_cdws.py::test_cdws_shipped_config_values_match_baseline",
+   "ERROR tests/unit/test_cdws.py::test_cdws_weights_match_baseline[1.0-0.5-all_perfect]",
+   "ERROR tests/unit/test_cdws.py::test_cdws_weights_match_baseline[1.0-0.5-all_zero]",
+   "ERROR tests/unit/test_cdws.py::test_cdws_weights_match_baseline[1.0-0.5-bimodal]",
+   "ERROR tests/unit/test_cdws.py::test_cdws_weights_match_baseline[1.0-0.5-empty]",
+   "ERROR tests/unit/test_cdws.py::test_cdws_weights_match_baseline[1.0-0.5-realistic]",
+   "ERROR tests/unit/test_cdws.py::test_cdws_weights_match_baseline[1.0-0.5-sparse]",
+   "ERROR tests/unit/test_cdws.py::test_cdws_weights_match_baseline[20.0-0.05-all_perfect]",
+   "ERROR tests/unit/test_cdws.py::test_cdws_weights_match_baseline[20.0-0.05-all_zero]",
+   "ERROR tests/unit/test_cdws.py::test_cdws_weights_match_baseline[20.0-0.05-bimodal]",
+   "ERROR tests/unit/test_cdws.py::test_cdws_weights_match_baseline[20.0-0.05-empty]",
+   "ERROR tests/unit/test_cdws.py::test_cdws_weights_match_baseline[20.0-0.05-realistic]",
+   "ERROR tests/unit/test_cdws.py::test_cdws_weights_match_baseline[20.0-0.05-sparse]",
+   "ERROR tests/unit/test_cdws.py::test_cdws_weights_match_baseline[3.0-0.05-all_perfect]",
+   "ERROR tests/unit/test_cdws.py::test_cdws_weights_match_baseline[3.0-0.05-all_zero]",
+   "ERROR tests/unit/test_cdws.py::test_cdws_weights_match_baseline[3.0-0.05-bimodal]",
+   "ERROR tests/unit/test_cdws.py::test_cdws_weights_match_baseline[3.0-0.05-empty]",
+   "ERROR tests/unit/test_cdws.py::test_cdws_weights_match_baseline[3.0-0.05-realistic]",
+   "ERROR tests/unit/test_cdws.py::test_cdws_weights_match_baseline[3.0-0.05-sparse]",
+   "ERROR tests/unit/test_cdws.py::test_cdws_weights_match_baseline[7.0-1e-06-all_perfect]",
+   "ERROR tests/unit/test_cdws.py::test_cdws_weights_match_baseline[7.0-1e-06-all_zero]",
+   "ERROR tests/unit/test_cdws.py::test_cdws_weights_match_baseline[7.0-1e-06-bimodal]",
+   "ERROR tests/unit/test_cdws.py::test_cdws_weights_match_baseline[7.0-1e-06-empty]",
+   "ERROR tests/unit/test_cdws.py::test_cdws_weights_match_baseline[7.0-1e-06-realistic]",
+   "ERROR tests/unit/test_cdws.py::test_cdws_weights_match_baseline[7.0-1e-06-sparse]",
+   "ERROR tests/unit/test_schedulers.py::test_arcface_margin_matches_baseline[0.0-0.5-10]",
+   "ERROR tests/unit/test_schedulers.py::test_arcface_margin_matches_baseline[0.18-0.35-0]",
+   "ERROR tests/unit/test_schedulers.py::test_arcface_margin_matches_baseline[0.18-0.35-20]",
+   "ERROR tests/unit/test_schedulers.py::test_arcface_margin_matches_baseline[0.3-0.3-5]",
+   "ERROR tests/unit/test_schedulers.py::test_phase_aware_lr_matches_baseline",
+   "ERROR tests/unit/test_schedulers.py::test_sgdr_lambda_matches_baseline[0-7-1-0.5]",
+   "ERROR tests/unit/test_schedulers.py::test_sgdr_lambda_matches_baseline[10-1-3-0.0]",
+   "ERROR tests/unit/test_schedulers.py::test_sgdr_lambda_matches_baseline[3-25-2-0.004]",
+   "ERROR tests/unit/test_schedulers.py::test_sgdr_lambda_matches_baseline[5-10-2-0.001]",
+   "ERROR tests/unit/test_schedulers.py::test_sgdr_stepped_lr_trajectory_matches_baseline",
+   "ERROR tests/unit/test_schedulers.py::test_the_baseline_s3_margin_schedule_was_a_scalar_that_discarded_the_vector"
+  ],
+  "Stage-1 golden drift, torch/BLAS environment \u2014 FW-11": [
+   "FAILED tests/regression/test_golden_forward_pass.py::test_stage1_epoch_loss_matches_golden",
+   "FAILED tests/regression/test_golden_forward_pass.py::test_stage1_epoch_weights_match_golden"
+  ],
+  "256-band synthetic smoke fixture vs the 215-band primary config (stale since S07)": [
+   "FAILED tests/smoke/test_end_to_end.py::test_the_primary_pipeline_runs_on_all_256_acquired_bands",
+   "FAILED tests/smoke/test_end_to_end.py::test_the_stem_reads_the_full_band_axis_in_the_run_that_ships"
+  ],
+  "W&B step-collision smoke test": [
+   "FAILED tests/smoke/test_end_to_end.py::test_no_wandb_step_collision_across_three_stages"
+  ],
+  "fp16 NaN expectation no longer reproduces under torch 2.14": [
+   "FAILED tests/unit/test_amp_precision.py::test_branch_cs_power_normalisation_floor_survives_the_autocast_dtype"
+  ]
+ },
+ "lint": "ruff: 13 findings, all pre-existing (14 before; I001 in context.py fixed)",
+ "types": "mypy --strict: 12 errors before and after, identical set, none new"
+}

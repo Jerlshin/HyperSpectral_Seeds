@@ -37,16 +37,28 @@ recall, attraction to the kernel's own session, and session-prediction entropy
 share a session across their two bundles, so the grouped macro-F1 alone cannot
 say whether a model recognises varieties or sessions. The breakdown is a
 measurement only: it reads the same predictions and changes nothing.
+
+Exactly once per kernel, with its logits (D18, S10 P0.1)
+────────────────────────────────────────────────────────
+Under DDP the joined predictions are de-duplicated before anything is scored
+(:func:`~spectralquadnet.data.loaders.dedup_index`): ``DistributedSampler`` pads
+an odd-sized split with its first kernel, which used to be scored twice. The
+selected weights' **logits** are written for the reported split and — given a
+``calib_ldr`` — for ``calib``, each with and without TTA, as float16
+``results/logits_<split>_<variant>.npz`` (``logits``, ``targets``, ``rows``).
+No metric is computed on calib here; its logits are for calibration and margin
+analyses that need the selection split's scores, not its argmax.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from spectralquadnet.data.loaders import eval_row_order
+from spectralquadnet.data.loaders import dedup_index, eval_row_order
 from spectralquadnet.engine.batch import side_inputs, unpack_batch
 from spectralquadnet.engine.checkpoint import load_ckpt
 from spectralquadnet.engine.diagnostics import hardest_classes_report
@@ -85,6 +97,7 @@ def final_evaluation(
     dist: DistContext | None = None,
     run_summary: dict[str, Any] | None = None,
     sessions: SessionMap | None = None,
+    calib_ldr: DataLoader[Any] | None = None,
 ) -> dict[str, ClassificationResult]:
     """Load the selected weights and score the reporting split, ±TTA.
 
@@ -97,6 +110,9 @@ def final_evaluation(
         sessions: The fold's session map. When given, each variant is also
             scored by acquisition session and the breakdown is written beside
             the headline metrics. ``None`` skips it.
+        calib_ldr: The selection split's loader. When given (and
+            ``evaluation.save_logits``), the selected weights' calib logits are
+            written ±TTA. Nothing is scored on it.
 
     Returns:
         ``{"no_tta": …, "tta": …}`` (the second only when
@@ -120,6 +136,7 @@ def final_evaluation(
     report_split = str(getattr(cfg.evaluation, "report_split", "test"))
     select_split = (run_summary or {}).get("select_split", "?")
     want_tta = bool(getattr(cfg.evaluation, "tta", True))
+    want_logits = bool(getattr(cfg.evaluation, "save_logits", True))
     n_boot = int(getattr(cfg.evaluation, "bootstrap_samples", 0))
     epoch = int(ckpt.get("epoch", 0))
 
@@ -152,7 +169,7 @@ def final_evaluation(
     artifacts = RunArtifacts.for_run(cfg.output_dir) if dist.is_main else None
     results: dict[str, ClassificationResult] = {}
     session_results: dict[str, SessionReport] = {}
-    rows = eval_row_order(test_ldr) if sessions is not None else None
+    rows = _rows_after_dedup(test_ldr)
     if sessions is not None and rows is None:
         trk.log_message(
             "Session breakdown skipped: the report loader's row order cannot be established",
@@ -164,7 +181,8 @@ def final_evaluation(
         variants.append(("tta", True))
 
     for key, use_tta in variants:
-        preds, targets = _predict(cfg, eval_model, test_ldr, device, dist, use_tta)
+        logits, targets = _predict(cfg, eval_model, test_ldr, device, dist, use_tta)
+        preds = logits.argmax(1)
         split_tag = f"{report_split}_{key}"
         result = score(
             targets,
@@ -195,16 +213,33 @@ def final_evaluation(
             session_results[key] = breakdown
         if artifacts is not None:
             artifacts.write_predictions(split_tag, preds, targets, rows=aligned)
+            if want_logits:
+                artifacts.write_logits(split_tag, logits, targets, rows=aligned)
             publish(artifacts, result, trk, step=epoch, prefix=split_tag)
             if breakdown is not None:
                 artifacts.write_session(breakdown)
                 trk.log_scalars(breakdown.scalars(split_tag), step=epoch)
                 trk.log_table(f"session/{split_tag}", breakdown.per_session, step=epoch)
 
+    logit_files: list[str] = [f"{report_split}_{k}" for k, _ in variants] if want_logits else []
+    if want_logits and calib_ldr is not None:
+        calib_rows = _rows_after_dedup(calib_ldr)
+        for key, use_tta in variants:
+            logits, targets = _predict(cfg, eval_model, calib_ldr, device, dist, use_tta)
+            if artifacts is not None:
+                aligned = (
+                    calib_rows
+                    if calib_rows is not None and len(calib_rows) == len(logits)
+                    else None
+                )
+                artifacts.write_logits(f"calib_{key}", logits, targets, rows=aligned)
+            logit_files.append(f"calib_{key}")
+
     if artifacts is not None:
         artifacts.write_manifest(
             {
                 "run": dict(run_summary or {}),
+                "logits": {"dtype": "float16", "splits": logit_files},
                 "checkpoint": {
                     "path": best_ckpt,
                     "epoch": epoch,
@@ -264,6 +299,18 @@ def _session_breakdown(
     return report
 
 
+def _rows_after_dedup(loader: DataLoader[Any]) -> Any:
+    """The patch row of each prediction :func:`_predict` returns, or ``None``.
+
+    :func:`_predict` de-duplicates a DDP pass into dataset order, so whenever the
+    raw gathered order can be established at all, the de-duplicated order is
+    simply ``dataset.indices``.
+    """
+    if eval_row_order(loader) is None:
+        return None
+    return np.asarray(loader.dataset.indices, dtype=np.int64)  # type: ignore[attr-defined]
+
+
 @torch.inference_mode()
 def _predict(
     cfg: ExperimentConfig | Any,
@@ -273,13 +320,16 @@ def _predict(
     dist: DistContext,
     use_tta: bool,
 ) -> tuple[Any, Any]:
-    """One pass over ``loader``, returning ``(preds, targets)`` as numpy arrays.
+    """One pass over ``loader``, returning ``(logits, targets)`` as numpy arrays.
 
     ``inference_mode`` and on-device accumulation for the same reason
     ``engine/evaluate.py::_run_eval`` uses them: a ``.cpu()`` per batch is a
     queue drain per batch, and the TTA pass runs twelve forwards for each.
+    Logits are fp32 here (the forward runs with autocast off) and gathered
+    row-wise; under DDP the result is de-duplicated into dataset order, so each
+    kernel appears once.
     """
-    preds, targets = [], []
+    logit_parts, targets = [], []
     for batch in loader:
         x, y, mask, morph = unpack_batch(batch, device)
         side = side_inputs(mask, morph)
@@ -288,9 +338,16 @@ def _predict(
             if use_tta
             else eval_model(x, **side)
         )
-        preds.append(logits.argmax(1))
+        logit_parts.append(logits.float())
         targets.append(y)
         del x, mask, morph, logits
-    p = gather_concat(dist, torch.cat(preds)).cpu().numpy()
-    t = gather_concat(dist, torch.cat(targets)).cpu().numpy()
-    return p, t
+    joined = torch.cat(logit_parts)
+    n_cls = joined.shape[1]
+    # `gather_concat` joins 1-D tensors; the (B, C) block travels flattened.
+    flat = gather_concat(dist, joined.reshape(-1)).cpu().numpy()
+    lg: Any = flat.reshape(-1, n_cls)
+    t: Any = gather_concat(dist, torch.cat(targets)).cpu().numpy()
+    keep = dedup_index(loader) if dist.enabled else None
+    if keep is not None:
+        lg, t = lg[keep], t[keep]
+    return lg, t

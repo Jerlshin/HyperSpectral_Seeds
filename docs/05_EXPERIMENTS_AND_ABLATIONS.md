@@ -67,19 +67,36 @@ twelve transforms alter shape.
 
 ### Final evaluation protocol
 
-`engine/stages/final_eval.py` runs the test loader twice — no-TTA then 12-view TTA — on the
-**EMA shadow** of the checkpoint `_pick_best_checkpoint` selected, reports macro-F1, weighted
-F1 and accuracy for each, prints a full `classification_report`, logs a bottom-10 hardest-class
-table, and writes three arrays to `cfg.output_dir`:
+`engine/stages/final_eval.py` scores `evaluation.report_split` (`val ∪ test` under the grouped
+protocol) **once**, no-TTA then 12-view TTA, with the weight set the checkpoint's `best_source`
+names (`live` or `ema`), and writes the `results/` tree (`reporting/artifacts.py`):
 
-| Artifact | Shape | Contents |
-|---|---|---|
-| `test_preds_noTTA.npy` | $(1294,)$ | $\arg\max$ over single-view logits |
-| `test_preds_TTA.npy` | $(1294,)$ | $\arg\max$ over 12-view averaged logits |
-| `test_targets.npy` | $(1294,)$ | ground truth for the test split |
+| Artifact | Contents |
+|---|---|
+| `run.json` | run identity, metrics + bootstrap CI for both variants, session breakdown, the checkpoint (epoch, `best_source`, selection F1) — and since S11 the provenance block below |
+| `metrics_<split>.json`, `confusion_<split>.{npy,csv}`, `per_class_<split>.csv` | one scored variant |
+| `preds_<split>.npy`, `targets_<split>.npy`, `rows_<split>.npy` | argmax predictions, ground truth, the patch row of each |
+| `logits_<split>.npz` (S11, `evaluation.save_logits`) | float16 logits + targets + rows for the reported split **and for `calib`**, each ±TTA — what calibration and margin analyses need (D18); no metric is computed on calib |
+| `session_<split>.{json,csv}` | the session breakdown below |
 
-Any reported metric is therefore recomputable from disk without re-running inference — which
-is exactly what `test_recorded_test_predictions_match_their_reported_metrics` does.
+Any reported metric is therefore recomputable from disk without re-running inference.
+
+**Each kernel exactly once (S11, D18).** Under DDP, `DistributedSampler` pads a split whose size
+does not divide by the world size with its own first kernels, and the gathered predictions used
+to keep that duplicate (S09 §8: 4,312 predictions for 4,311 held-out kernels; Δ < 1e-4). Every
+evaluation pass — the per-epoch calib selection, the clean-fit probe, the final scoring and the
+logits — now de-duplicates the gathered arrays into dataset order
+(`data.loaders.dedup_index`). Verified on a 2-rank gloo run with a 91-kernel held-out split:
+pre-S11 code returned 92 predictions, S11 code 91.
+
+**Provenance in `run.json → run` (S11, D18).**
+
+| Key | Contents |
+|---|---|
+| `run_name`, `output_dir` | where the run wrote |
+| `code` | `{"commit": git rev-parse HEAD, "dirty": uncommitted changes?, "source": "git"}` (or `SPECTRALQUADNET_GIT_COMMIT` when the code ships without `.git`) |
+| `environment` | python, torch, CUDA, device, GPU name, world size |
+| `regime` | the resolved training regime **as applied**: epochs, patience, LR, wd, EMA, `grad_clip`, `clip_partition`, mixup α and epochs, margin and its window, label smoothing, dropout, `aug_profile`, `aux_weight_schedule` **and the applied aux weight's first/last/mean**, `pathways`, whether morphometrics reached the model, AMP dtype, clean-fit subset size |
 
 ### Session breakdown (`reporting/session.py`)
 
@@ -139,10 +156,14 @@ $$
 \qquad \sum_b \hat{I}_b = 100
 $$
 
-An empty loader returns all zeros. **Cost is $5\,|\mathcal{B}|$ forward passes** (one full plus
-four ablated per batch), which is why every caller passes a small `max_batches` — 3 from
-`compute_class_difficulty` — and why it runs only on a checkpoint improvement. The four values
-are logged as `influence/branch_{a,b,c,d}` and appear in the per-stage difficulty message.
+An empty loader returns all zeros. **Cost is $(1 + n)\,|\mathcal{B}|$ forward passes** for $n$
+maskable pathways, which is why every caller passes a small `max_batches` — 3 from
+`compute_class_difficulty` — and why it runs only on a checkpoint improvement or the diagnostics
+stride. The pathway names come from the model's `pathway_labels()`: `SpectralQuadNet` logs
+`influence/branch_{a,b,c,d}` (or the A3 subset), `SpectralSeedNet` logs
+`influence/branch_{spatial,spectral}`. Before S11 SeedNet declared none and its two influences were
+logged as `A`/`B` with `C = D = 0` (S09 §8) — read `branch_a` as spatial and `branch_b` as
+spectral in those runs.
 
 Because the mask is applied to the *fused* path only, $\hat{I}_b$ measures each branch's
 contribution through `CrossModalInteraction`, not its standalone discriminative power (which
@@ -187,7 +208,13 @@ $$
 $$
 
 This is the *same* quantity `clip_grad_norm_` returns, split by owner — the groups sum in
-quadrature to the model total. Contract details that matter:
+quadrature to the model total. **A model that declares `grad_groups()` is grouped by those
+instead** (`engine/diagnostics.py::module_grad_norm_tensors`, S11): `SpectralSeedNet` declares
+`gate, stem, tail, proj, spectral, fuse, embed, head, aux`, logged as `grad_norm/<label>` — the six
+four-branch prefixes matched only its `arcface_head`. Every logged `grad_norm/*` epoch mean is
+over **finite** steps; fp16 GradScaler overflow steps are excluded and counted in
+`grad_norm/nonfinite_steps` (GradNorm still reads the unfiltered sums). Contract details that
+matter:
 
 - **Sampled before the clip** (and after `scaler.unscale_`), so the numbers describe the true
   pre-clip gradient. Called after clipping, they would describe the clipped one.
@@ -340,7 +367,8 @@ Every key any backend receives, by producer:
 
 | Producer | Keys |
 |---|---|
-| `train_one_epoch` / `_sam` | `loss/branch_{a,b,c,d}_{raw,weighted}` (IC-2), `grad_norm/{branch_a,branch_b,branch_c,branch_d,cross_interaction,arcface_head}`, `grad_norm/{preclip,postclip,clipped}_{head,fusion,backbone}` and `grad_norm/clip_fraction` (IC-6), `train/{steps,skipped_batches,epoch_s}`; `sam/grad_cos` from the SAM loop only |
+| `train_one_epoch` / `_sam` | `loss/branch_{a,b,c,d}_{raw,weighted}` (IC-2; `loss/branch_spatial_*` for SeedNet), `grad_norm/{branch_a,branch_b,branch_c,branch_d,cross_interaction,arcface_head}` — or, for a model declaring `grad_groups()`, `grad_norm/{gate,stem,tail,proj,spectral,fuse,embed,head,aux}` — `grad_norm/{preclip,postclip,clipped}_{head,fusion,backbone}`, `grad_norm/clip_fraction` (IC-6), `grad_norm/nonfinite_steps` (S11), `train/{steps,skipped_batches,epoch_s}`, and since S11 `sched/aux_weight_applied`, `train/{loss_main,acc_dominant,acc_plain}`; `sam/grad_cos` from the SAM loop only |
+| Single stage | `train/{loss,acc}` (legacy definitions — see 04 §4.0), `val/{f1_live,acc_live,f1_ema,acc_ema,f1_best}`, `sched/{lr,label_smooth,arcface_m,mixup,aux_weight_configured}`, `fit/clean_train_{acc,ce}_{live,ema}` (S11; diagnostics stride, new best, final epoch). The pre-S11 key `sched/aux_weight` logged the configured 0.2 as if applied and is gone |
 | Stage 1 | `train/{loss,acc}`, `val/{f1_live,acc_live,f1_ema,acc_ema,f1_best}`, `sched/{lr,label_smooth,aux_weight,subcentre_tau,phase}` |
 | Stage 2 | `train/{loss,acc}`, `val/{…}`, `sched/{head_lr,back_lr,arcface_margin,supcon_weight,proto_weight,subcentre_tau}`, `margin/{mean,min,max}` |
 | Stage 3 | `train/{loss,acc}`, `val/{f1_live,acc_live,f1_ema,acc_ema,f1_best}`, `sched/{lr,margin_kappa,arcface_margin,supcon_weight,proto_weight}`, `swa/{n_snapshots,n_rejected,f1_running}`, then once at stage end `swa/{f1,acc}` and `ema/{f1,acc}` |
@@ -421,6 +449,33 @@ distributed (DDP) training — is in `06_EXECUTION_AND_HARDWARE.md`.
 > anything, and every delta the audited run reported was smaller than a variance nobody had
 > measured.
 
+### The S11 frozen arms — X1, X2, X4
+
+`scripts/run_frozen.py` (logic in `experiments/frozen.py`) expands the diagnostic arms frozen in
+S09's `preregistration_next.json` (X1, X2) and S10's `preregistration_s10.json` (X4) into 23
+cells, **reading the overrides out of the frozen files after checking their SHA-256** (it refuses
+to run if either changed). Each cell writes `outputs/experiments_u430k32/s11/<arm>/<variant>__f<fold>_s<seed>/`
+and, before it starts, `frozen_cell.json` (arm, frozen source, both hashes, exact command).
+
+| Arm | Overrides (frozen) | Cells |
+|---|---|---|
+| **X1** fit-first | `single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0 single.epochs=200 single.patience=40` | grouped f0,1 × s0–2; stratified × s0–2 |
+| **X2** attribution (shipped regime) | `no_morph`: `data.morphology_path=''` · `spectral_only`: `model.pathways=[spectral]` · `spatial_only`: `model.pathways=[spatial]` | grouped f0,1 × s0,1 per arm |
+| **X4** fit ceiling | X1's + `single.mixup_epochs=0 single.patience=200 single.label_smooth_hi=0.0 single.label_smooth_lo=0.0 stage1.aux_loss_weight_init=0.0 stage1.aux_loss_weight_final=0.0 single.dropout=0.0 single.aug_profile=none` | grouped f0 s0; stratified f0 s0 |
+
+All cells add `data=ablation/u430k32_{grouped,stratified} runtime=kaggle_t4x2
+tracking=console_jsonl` (as the frozen commands do) and keep `single.aux_weight_schedule=legacy`
+and `clip_partition=legacy`. What S11 adds to the frozen strings — a `torchrun` launcher
+(`runtime=kaggle_t4x2` refuses to start without one) and one output directory per cell (the
+frozen X1 commands name none, so X1 and X2/X4 cells would otherwise share
+`outputs/seednet_full256_f*_s*` and auto-resume would re-score one arm's checkpoint as another's)
+— is listed in every `frozen_cell.json` and in S11 D22. `--check` composes every cell and asserts
+its regime (and, for X1, equality with the config its literal frozen command composes);
+`--cfg-job` runs `train.py --cfg job` per cell. X5 and X6 (S10) are **not** implemented: D19
+orders them after X1 reports.
+
+### Levers
+
 The system exposes ablations through Hydra overrides — no code changes required.
 
 | Ablation | Override | Mechanism |
@@ -456,6 +511,11 @@ The system exposes ablations through Hydra overrides — no code changes require
 | **Band-selection scope** (A2/IC-4) | `data=ablation/spa40_grouped data.patches_data=./dataset/folds/patches_fold0_40b.npy` | bands chosen on training rows only, per fold |
 | **Arbitrary band subset** (A2) | `data.band_indices_path=… data.num_bands=k` | slices k bands off the full cube as each patch is read — no reduced cube materialised (`07_BAND_SELECTION_PATHWAY.md`) |
 | **Selection/report split** (IC-3) | `evaluation=held_out_once` / `audited_replica` | select on `calib` and score `val ∪ test` once, or reproduce the audited `val`-for-everything protocol |
+| **Aux weight actually applied** (S10 F54, P1.3) | `single.aux_weight_schedule=legacy` (default) / `fixed` | the 0.65 → 0.25 decay every run so far applied, or `model.aux_head_weight` (0.2) fixed; `fixed` + `model.aux_head_weight=0` turns the aux term off |
+| **Clip partition** (S10 P0.5, S11 D22) | `clip_partition=legacy` (default) / `model` | QuadNet's prefixes (SeedNet's `fuse` clips with the backbone) or the model's `clip_groups()` (`fuse` joins `fusion`); differ only where the clip binds |
+| **Pathways** (X2) | `model.pathways=[spectral]` / `[spatial]` | SeedNet only: the other pathway is zeroed in train and eval, frozen and skipped (03 §3.0) |
+| **Morphometrics off** (X2) | `data.morphology_path=''` | the model substitutes zeros |
+| **Clean-fit probe** (S10 P0.2) | `single.clean_fit_kernels=1000` / `0`, `single.clean_fit_seed=0` | subset size (0 = off) and the seed of its private RNG — measurement only |
 
 Four caveats for anyone running these:
 
@@ -484,6 +544,19 @@ Four caveats for anyone running these:
 
 Run them all with `pytest --run-all`, `ruff check . && black --check . && mypy`,
 `python scripts/check_config_roundtrip.py` and `python scripts/capture_golden.py --verify`.
+The last two read a pinned pre-refactor commit (`886560fe…`) with `git show`; that commit is not
+in this checkout's history (S11: both fail identically before and after the S11 changes), so in
+this checkout the committed-golden pytest gates are the operative regression check.
+
+S11 adds:
+
+| Gate | What it pins |
+|---|---|
+| `tests/unit/test_s11_instrumentation.py` | `aux_weight_schedule` (`legacy` bit-identical to the old call; `fixed` = 0.2; logged = applied); `train/{loss_main,acc_dominant,acc_plain}`; the declared gradient groups and both clip partitions (each parameter once; `legacy` keeps `fuse` in `backbone`); finite-step means; the pathway switch (frozen pathway gets no gradient, logits independent of its input, initial weights unchanged); the clean-fit subset (fixed, class-stratified, RNG-free) and its measurement; DDP de-dup; float16 logits; provenance |
+| `tests/unit/test_structural_defects.py` | S10 F48 (`xfail(strict=True)` until X5: no dead tail taps, tail map ≥ 2 × 2) and the measured defect (5 dead taps in `stages.6.c2`, 40/49 in CBAM's gate); S10 F50 (gain invariance after the ECA gate, response before it) |
+| `tests/unit/test_frozen_arms.py` | the 23 X1/X2/X4 cells compose to their frozen regime; a tampered pre-registration is refused; one directory per cell; `torchrun` launcher |
+| `tests/smoke/test_s11_arms.py` | X1-, X4- and the three X2-type runs end to end through `train.py`: `run.json` provenance, `clean_fit.json`, `logits_*.npz`, the honest series |
+| `docs/research/evidence/S11_frozen_arms_execution/code/g_neutral.py` | **G-neutral**: pre- and post-S11 code, same miniature run in three regimes, identical per-step losses, checkpoint tensors and held-out predictions — and detects `clip_partition=model` / `aux_weight_schedule=fixed` as changes |
 
 | Gate | What it pins |
 |---|---|

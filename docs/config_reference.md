@@ -88,7 +88,8 @@ with it at all (`03_MODEL_ARCHITECTURE.md` §3.7).
 | `pairwise_penalty` | `false` | `true` | **IC-9 / A7** — the row-normalised confusion penalty, fitted on the selection split in the audited run |
 | `spatial_width_mult` | `1.0` | `1.0` | **A10** — scales the spatial path's ResBlock widths |
 | `spectral_hidden` | `256` | (unread) | **IC-10** — the spectral MLP's hidden width |
-| `aux_head_weight` | `0.2` | (unread) | **IC-5 / §7.1** — fixed weight on the single auxiliary head. Four heads under a saturating controller made the auxiliary term ≈7.8× the main loss at epoch 20 |
+| `aux_head_weight` | `0.2` | (unread) | **IC-5 / §7.1** — the fixed single-aux-head weight D07 describes. **Applied only under `single.aux_weight_schedule=fixed`**; under the default `legacy` the loop applies `stage1.aux_loss_weight_{init,final}`'s 0.65 → 0.25 decay, as every run up to S11 did (S10 F54) |
+| `pathways` | `[spatial, spectral]` | (unread) | **X2 / S11** — live pathways. `[spectral]` / `[spatial]` zero the other pathway in train and eval, freeze it and skip its forward; `[spectral]` also drops the aux term, `[spatial]` the morphometrics (`03` §3.0) |
 
 The keys below belong to branches `seed_net` does not have (`grid_size_a`, `grid_size_d`,
 `specf_*`, `fusion_rank`, `fusion_gate_hidden`). They remain in the shared schema because
@@ -138,7 +139,9 @@ Stage hyperparameter count 69 → 14. `pipeline=single` (the default) reads this
 | `dropout` | `0.15` | one rate throughout; removes an untested 0.15 / 0.25 / 0.10 schedule |
 | `label_smooth_hi` / `_lo` | `0.10` / `0.04` | linear decay |
 | `focal_gamma` | `0.0` | plain CE. Focal addresses 1000:1 foreground/background imbalance; here it is 96:91, so γ>0 was down-weighting easy examples, untested (§7.4) |
-| `aux_loss_weight` | `0.2` | fixed, on one head, with GradNorm off |
+| `aux_loss_weight` | `0.2` | **not read by any code path** (S10 F54); kept so archived configs compose |
+| `aux_weight_schedule` | `legacy` | **S10 P0.4 / D20.** The aux weight the loop applies: `legacy` = `max(stage1.aux_loss_weight_final, stage1.aux_loss_weight_init·(1 − 0.7·t/T))` = 0.65 → 0.25, what every run so far trained with; `fixed` = `model.aux_head_weight`. Logged per epoch as `sched/aux_weight_applied`. Stays `legacy` until X1/X2 report (D21) |
+| `clean_fit_kernels` / `clean_fit_seed` | `1000` / `0` | **S10 P0.2 / D18.** Clean-fit probe: a fixed class-stratified training subset of this size, drawn by a private RNG from this seed alone (identical across run seeds); eval mode, no aug, margin 0, plain CE; live + EMA → `fit/*`, `clean_fit.json`. `0` switches it off |
 | `mixup` / `mixup_epochs` | `0.35` / `110` | the one demonstrably load-bearing regulariser: switching it off moved training accuracy 42% → 96.6% in a single epoch while validation did not move (§5.5) |
 | `aug_profile` | `medium` | one profile throughout; the three-phase curriculum's profiles differed by 2–4 pp of trigger probability |
 | `arcface_m` / `arcface_s` | `0.30` / `32.0` | 48 is high for $d{=}256$ at 90 classes and was never tuned |
@@ -164,6 +167,7 @@ number from `val` (§4.4).
 | `tta` | `true` | `true` | score with and without the 12-view TTA, reported separately |
 | `bootstrap_samples` | `2000` | `2000` | percentile CI on macro-F1. Sampling noise on ~1,300 patches is ±0.020 at 95%, and the audited run's entire Stage-2 + Stage-3 gain was +0.005 |
 | `save_artifacts` | `true` | `true` | write the confusion matrix, per-class table and figures under `output_dir/results/` and `figures/` |
+| `save_logits` | `true` | `true` (dataclass default) | **D18 / S11.** Write the selected weights' float16 logits (+ targets, rows) for the reported split and for `calib`, ±TTA, as `results/logits_<split>_<variant>.npz` |
 
 ---
 
@@ -324,7 +328,8 @@ three being A8's arms.
 | `output_root` | base output directory |
 | `output_dir` | `${output_root}/${run_name}`, where every checkpoint/sidecar/log is written |
 | `weight_decay` | 2-D+ weight decay (§4.5) |
-| `grad_clip` | per-group gradient-clip norm (§4.5) |
+| `grad_clip` | per-group gradient-clip norm (§4.5): 5.0 shipped, 1.0 in the audited replica, 50.0 in X1/X4 |
+| `clip_partition` | **S10 P0.5 / S11 D22.** `legacy` (default) = `CLIP_GROUPS` (on SeedNet `fuse` and the aux head clip with the backbone); `model` = the model's `clip_groups()` (`fuse` joins `fusion`). They differ only on steps where a clip binds — at 5.0, ≥ 82 % of SeedNet's steps — so the default is the partition every run so far used (`04` §4.5) |
 | `ema_decay` | EMA decay ceiling $d_{\max}$ (§4.5) |
 | `aux_gradnorm_alpha` | GradNorm exponent for the per-branch auxiliary weights; `0.0` freezes them at the fixed $A/B{=}2\times$ vector (§4.4) |
 | `tta_spatial` | dihedral TTA views (§5.1) |

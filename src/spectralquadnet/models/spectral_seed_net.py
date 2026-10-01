@@ -118,6 +118,51 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: Width every pathway is projected to before the concatenation.
 EMBED_DIM: int = 256
 
+#: The two pathways, in fusion (and ``branch_mask``) order. ``model.pathways``
+#: names a non-empty subset of these (X2, S09 FW-16).
+PATHWAYS: tuple[str, ...] = ("spatial", "spectral")
+
+#: Parameter-name prefixes the per-module gradient norm is reported under
+#: (S10 P0.5, F53). Every parameter belongs to exactly one entry, in this order;
+#: ``tests/unit/test_s11_instrumentation.py`` pins the partition.
+GRAD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("gate", ("se.",)),
+    ("stem", ("spatial.stem.",)),
+    ("tail", ("spatial.stages.",)),
+    ("proj", ("spatial.proj.",)),
+    ("spectral", ("spectral.",)),
+    ("fuse", ("fuse.",)),
+    ("embed", ("embed_net.",)),
+    ("head", ("arcface_head.",)),
+    ("aux", ("aux_head_spatial.",)),
+)
+
+#: The model-declared clip partition (``clip_partition=model``, S10 P0.5):
+#: ``fuse`` joins ``embed_net`` as ``fusion``. The last entry is the catch-all.
+CLIP_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("head", ("arcface_head.",)),
+    ("fusion", ("fuse.", "embed_net.")),
+    ("backbone", ()),
+)
+
+
+def resolve_pathways(requested: Any) -> tuple[str, ...]:
+    """Validate ``model.pathways`` and return it in canonical (fusion) order.
+
+    Raises:
+        ValueError: An unknown name, a duplicate, or no pathway at all — each
+            would otherwise silently train a different network from the one the
+            run directory claims.
+    """
+    names = [str(p).lower() for p in (requested if requested is not None else PATHWAYS)]
+    unknown = sorted(set(names) - set(PATHWAYS))
+    if unknown or not names or len(set(names)) != len(names):
+        raise ValueError(
+            f"model.pathways={list(names)!r}: expected a non-empty, duplicate-free subset of "
+            f"{list(PATHWAYS)}"
+        )
+    return tuple(p for p in PATHWAYS if p in names)
+
 
 class SpectralPath(nn.Module):
     """Global chemometrics over the foreground mean spectrum.
@@ -239,6 +284,10 @@ class SpectralSeedNet(nn.Module):
         model_cfg = cfg.model
         self.n_morph = int(model_cfg.n_morphometrics)
         self.num_bands = int(num_bands)
+        #: Live pathways (X2). Read before construction so a bad value fails
+        #: before any weight is drawn; every module is still built below, in the
+        #: same order, so the live pathway's initial weights are the full model's.
+        self.pathways = resolve_pathways(getattr(model_cfg, "pathways", PATHWAYS))
 
         # ── Shared spectral attention — 6 parameters, free, kept ───────
         self.se = MaskedSpectralECA(num_bands)
@@ -296,6 +345,7 @@ class SpectralSeedNet(nn.Module):
             EMBED_DIM, int(model_cfg.aux_head_hidden), num_classes
         )
         self._init_weights()
+        self._freeze_disabled_pathways()
 
     # ── Construction from a composed config ───────────────────────────
 
@@ -322,6 +372,45 @@ class SpectralSeedNet(nn.Module):
                 nn.init.trunc_normal_(m.weight, std=0.02)
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
+
+    def _freeze_disabled_pathways(self) -> None:
+        """Take a disabled pathway out of training entirely (X2).
+
+        Its forward is skipped and its output replaced by zeros, so its
+        parameters would receive no gradient anyway; freezing them makes that
+        explicit to the optimiser (which skips ``requires_grad=False`` tensors),
+        to the clip partition, and to DDP, which raises on a parameter that
+        requires a gradient and never gets one. The spatial pathway takes its
+        auxiliary head with it: that head reads the spatial output, so with the
+        pathway off its term would be a constant-input classifier.
+        """
+        frozen: list[nn.Module] = []
+        if "spatial" not in self.pathways:
+            frozen += [self.spatial, self.aux_head_spatial]
+        if "spectral" not in self.pathways:
+            frozen.append(self.spectral)
+        for module in frozen:
+            module.requires_grad_(False)
+
+    # ── Declarations the engine reads (S10 P0.1, P0.5) ────────────────
+
+    def pathway_labels(self) -> tuple[str, ...]:
+        """The maskable pathways in ``branch_mask`` order: ``("SPATIAL", "SPECTRAL")``.
+
+        Read by the leave-one-pathway-out influence probe, so its log lines and
+        ``influence/branch_*`` series name the two pathways rather than the four
+        letters ``SpectralQuadNet`` uses (S09 §8, S10 B14). Always both: a
+        pathway the X2 switch disabled reports an influence of 0.
+        """
+        return tuple(p.upper() for p in PATHWAYS)
+
+    def grad_groups(self) -> tuple[tuple[str, tuple[str, ...]], ...]:
+        """``(label, prefixes)`` for the per-module ``grad_norm/<label>`` series."""
+        return GRAD_GROUPS
+
+    def clip_groups(self) -> tuple[tuple[str, tuple[str, ...]], ...]:
+        """The partition ``clip_partition=model`` clips by: ``fuse`` joins ``fusion``."""
+        return CLIP_GROUPS
 
     # ── Control API — the same surface the stages call ────────────────
 
@@ -383,8 +472,19 @@ class SpectralSeedNet(nn.Module):
         m = foreground_mask(x, mask)
         x = self.se(x, m)
 
-        b_spatial = self.spatial(x, m)
-        b_spectral = self.spectral(masked_mean_spectrum(x, m), morph)
+        # X2: a disabled pathway is not run; its output is exactly zero in train
+        # and eval alike, so the fusion sees the same input either way.
+        b_spatial: torch.Tensor | None = self.spatial(x, m) if "spatial" in self.pathways else None
+        b_spectral: torch.Tensor | None = (
+            self.spectral(masked_mean_spectrum(x, m), morph)
+            if "spectral" in self.pathways
+            else None
+        )
+        if b_spatial is None:
+            assert b_spectral is not None  # `resolve_pathways` refuses an empty set
+            b_spatial = b_spectral.new_zeros(b_spectral.shape)
+        if b_spectral is None:
+            b_spectral = b_spatial.new_zeros(b_spatial.shape)
 
         if branch_mask is not None:
             b_spatial = b_spatial * branch_mask[0]
@@ -397,12 +497,20 @@ class SpectralSeedNet(nn.Module):
         logits = self.arcface_head(emb_n, labels, global_m=arc_m)
 
         if self.training:
-            out = {
-                "main": logits,
+            out = {"main": logits}
+            if "spatial" in self.pathways:
                 # Named for the pathway it supervises. `_compute_aux_loss`
                 # discovers any `aux_*` key, so no per-architecture branch.
-                "aux_spatial": self.aux_head_spatial(b_spatial),
-            }
+                # Absent under X2's `spectral_only`, which makes the aux term 0.
+                out["aux_spatial"] = self.aux_head_spatial(b_spatial)
+            if labels is not None and (arc_m is None or arc_m > 0.0):
+                # The unpenalised logits, for `train/acc_plain` only (S10 P0.3):
+                # under a margin `main` scores the target at cos(θ_y + m), so
+                # its argmax is not the network's prediction. Detached and
+                # computed without labels — no margin, no pairwise penalty — so
+                # it adds nothing to the graph and moves no number.
+                with torch.no_grad():
+                    out["main_plain"] = self.arcface_head(emb_n.detach())
             if return_embed:
                 out["emb"] = emb_n
             return out

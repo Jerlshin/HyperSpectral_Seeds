@@ -726,6 +726,144 @@ def fig_s09() -> None:
     _save(fig, s, "s09_per_class.png", "evidence/S09_post_sweep_forensics/per_class.csv (TTA)")
 
 
+def fig_s10() -> None:
+    s = "S10_training_architecture_review"
+    ev = EVIDENCE / s
+    if not (ev / "dynamics_epochs.csv").exists():
+        print("  skip    s10 (no dynamics_epochs.csv — run the study's code/ scripts first)")
+        return
+    PCOL = {"grouped": BLUE, "stratified": ORANGE}
+
+    # 1 · The schedule against what was learned, on one epoch axis (three panels, one y-scale each).
+    dy = pd.read_csv(ev / "dynamics_epochs.csv")
+    bud = pd.read_csv(ev / "schedule_budget.csv")
+    bud = bud[bud.regime.str.startswith("shipped")].set_index("phase").share_of_cumulative_lr
+    mean = dy.groupby(["arm", "epoch"]).mean(numeric_only=True)
+    fig, axes = plt.subplots(3, 1, figsize=(8.6, 7.4), sharex=True,
+                             gridspec_kw={"height_ratios": [1, 1.25, 1.25]})
+    for ax in axes:
+        ax.axvspan(0.5, 110.5, color=GAP_FILL, zorder=0)
+        ax.axvspan(110.5, 130.5, color="#e6eefa", zorder=0)
+    lr = mean.loc["grouped"].lr / 5e-4
+    axes[0].plot(lr.index, lr.values, color=INK_2, lw=1.6)
+    axes[0].set_ylabel("LR / peak")
+    axes[0].set_ylim(0, 1.08)
+    axes[0].text(55, 0.5, f"mixup α 0.35 · epochs 1–110\n{bud['mixup']:.1%} of the cumulative LR",
+                 ha="center", fontsize=8, color=INK_2)
+    axes[0].text(120.5, 0.62, f"margin\nramp\n{bud['clean, margin ramp']:.1%}", ha="center", fontsize=8, color=INK_2)
+    axes[0].text(140.5, 0.62, f"m = 0.30\n{bud['clean, margin 0.30']:.1%}", ha="center", fontsize=8, color=INK_2)
+    for arm in ("grouped", "stratified"):
+        f1 = mean.loc[arm].calib_f1_live
+        axes[1].plot(f1.index, f1.values, color=PCOL[arm])
+        _label_end(axes[1], f1.index[-1], f1.values[-1], f"{arm} (6 runs)", PCOL[arm],
+                   dy={"grouped": -7, "stratified": 7}[arm])
+        acc = mean.loc[arm].train_acc
+        axes[2].plot(acc.index, acc.values, color=PCOL[arm])
+    axes[1].set_ylabel("calib macro-F1 (live)")
+    axes[1].annotate("mixup off: +0.02 in one epoch,\nat 18 % of the peak LR", (111, 0.668), xytext=(58, 0.18),
+                     fontsize=8, color=INK_2, arrowprops=dict(arrowstyle="-", color=MUTED, lw=0.8))
+    axes[2].axhline(0.506, color=MUTED, lw=1, ls="--")
+    axes[2].text(2, 0.53, "ceiling of the logged value under mixup (scored against one of the two labels)",
+                 fontsize=7.5, color=MUTED)
+    axes[2].text(112, 0.86, "clean labels,\nmargin 0", fontsize=7.5, color=INK_2)
+    axes[2].text(133, 0.38, "scored on margin-\npenalised logits", fontsize=7.5, color=INK_2)
+    axes[2].set_ylabel("train accuracy as logged")
+    axes[2].set_ylim(0, 1)
+    axes[2].set_xlabel("epoch")
+    axes[2].plot([], [], color=BLUE, label="grouped")
+    axes[2].plot([], [], color=ORANGE, label="stratified")
+    axes[2].legend(loc="upper left", bbox_to_anchor=(0, 0.92))
+    axes[0].set_title("The clean-label objective gets the last 3.6 % of the learning rate")
+    _save(fig, s, "s10_schedule_vs_learning.png",
+          "evidence/S10_training_architecture_review/{dynamics_epochs.csv, schedule_budget.csv} (means of 6 runs per arm)")
+
+    # 2 · Where the spatial pathway's parameters sit, and which of them can learn.
+    st = pd.read_csv(ev / "structure.csv")
+    sp = st[st.module.str.startswith("spatial")].reset_index(drop=True)
+    names = {"spatial.stem": "3-D stem", "spatial.proj": "pool + proj"}
+    labels = []
+    rb = cb = 0
+    for m, k in zip(sp.module, sp.kind, strict=True):
+        if m in names:
+            labels.append(names[m])
+        elif k == "ResBlock2D":
+            labels.append(f"ResBlock {rb}")
+            rb += 1
+        else:
+            labels.append(f"CBAM {cb}")
+            cb += 1
+    fig, ax = plt.subplots(figsize=(8.4, 3.6))
+    y = np.arange(len(sp))[::-1]
+    live = (sp.params - sp.dead_params) / 1e3
+    ax.barh(y, live, 0.62, color=BLUE, label="receives gradient")
+    ax.barh(y, sp.dead_params / 1e3, 0.62, left=live, color=ORANGE, label="never receives gradient (multiplies padding)")
+    for yi, (n, hw, dp) in enumerate(zip(sp.params[::-1], sp.out_hw[::-1], sp.dead_params[::-1], strict=True)):
+        txt = f"{n / 1e3:,.0f} k · out {hw.replace('x', ' × ')}" + (f"   ({dp / 1e3:,.0f} k dead)" if dp else "")
+        ax.text(n / 1e3 + 8, yi, txt, va="center", fontsize=8, color=INK_2)
+    ax.set_yticks(y, labels, fontsize=8.5)
+    ax.grid(axis="y", visible=False)
+    ax.set_xlim(0, 1080)
+    ax.set_xlabel("parameters (thousands)  ·  label: count · output feature map")
+    ax.legend(loc="upper right")
+    ax.set_title("Four stride-2 blocks after a ÷4 stem take a 64 × 64 kernel to 1 × 1; "
+                 "the last 3 × 3 conv sees a 2 × 2 map", fontsize=10)
+    _save(fig, s, "s10_spatial_tail.png", "evidence/S10_training_architecture_review/structure.csv (k = 32, 64 × 64 input)")
+
+    if not (ev / "ckpt_fit.csv").exists():
+        print("  skip    s10 checkpoint figures (no ckpt_fit.csv)")
+        return
+
+    # 3 · Clean fit vs what the margin asked for, per run (selected checkpoint, training kernels).
+    fit = pd.read_csv(ev / "ckpt_fit.csv")
+    sel = fit[(fit.weights == fit.best_source) & (fit.split == "train")].copy()
+    sel = sel.merge(dy.groupby(["arm", "fold", "seed"]).train_acc.last().rename("logged_end").reset_index(),
+                    on=["arm", "fold", "seed"])
+    sel = sel.sort_values(["arm", "acc"]).reset_index(drop=True)
+    fig, ax = plt.subplots(figsize=(8.2, 4.6))
+    y = np.arange(len(sel))
+    for _, r in sel.iterrows():
+        ax.plot([r.margin_satisfied, r.acc], [_, _], color=GRID, lw=2.2, zorder=1)
+    for col, key, lab in ((BLUE, "acc", "clean accuracy (eval, no augmentation, margin 0)"),
+                          (ORANGE, "margin_satisfied", "share satisfying the 0.30 rad margin"),
+                          (AQUA, "logged_end", "train accuracy as logged at the last epoch")):
+        ax.scatter(sel[key], y, s=46, color=col, edgecolor=SURFACE, linewidth=1.4, zorder=3, label=lab)
+    ax.set_yticks(y, [f"{r.arm[:5]} f{r.fold} s{r.seed} · ep {r.best_epoch}" for _, r in sel.iterrows()], fontsize=8)
+    ax.grid(axis="y", visible=False)
+    ax.set_xlim(-0.02, 1.0)
+    ax.set_xlabel("fraction of the run's own training kernels")
+    ax.legend(loc="lower left", bbox_to_anchor=(0, 1.0), ncol=1, fontsize=8)
+    ax.set_title("90 % of training kernels are classified correctly; a third satisfy the margin the loss is scored on",
+                 fontsize=10, y=1.25)
+    _save(fig, s, "s10_fit_vs_margin.png",
+          "evidence/S10_training_architecture_review/{ckpt_fit.csv, dynamics_epochs.csv} (selected checkpoint per run)")
+
+    # 4 · What each representation carries (linear probe, train → calib) and what the network leans on.
+    pr = pd.read_csv(ev / "ckpt_probes.csv")
+    m = pr.groupby(["probe", "representation", "arm"]).calib_macro_f1.mean().unstack()
+    lin = m.loc["linear (LDA train→calib)"].sort_values("grouped")
+    ko = m.loc["eval-time knock-out"]
+    ko.loc["full network"] = m.loc[("linear (LDA train→calib)", "network (argmax cos)")]
+    ko = ko.sort_values("grouped")
+    fig, axes = plt.subplots(1, 2, figsize=(11.2, 4.4), gridspec_kw={"width_ratios": [1.45, 1]})
+    for ax, tab, title in ((axes[0], lin, "Linear probe (shrinkage LDA, fit on train, scored on calib)"),
+                           (axes[1], ko, "Eval-time knock-outs of the trained network")):
+        yy = np.arange(len(tab))
+        for j, (arm, col) in enumerate((("grouped", BLUE), ("stratified", ORANGE))):
+            ax.barh(yy + (j - 0.5) * 0.36, tab[arm], 0.34, color=col, label=arm)
+        for yi, v in zip(yy, tab.max(axis=1), strict=True):
+            ax.text(v + 0.01, yi, f"{v:.2f}", va="center", fontsize=7.5, color=INK_2)
+        ax.set_yticks(yy, tab.index, fontsize=8)
+        ax.grid(axis="y", visible=False)
+        ax.set_xlim(0, 0.85)
+        ax.set_xlabel("calib macro-F1 (mean of 6 runs)")
+        ax.set_title(title, fontsize=9.5)
+    axes[0].legend(loc="lower right")
+    fig.suptitle("The spectral pathway's output carries less than its own input; the trained network leans on morphometrics",
+                 x=0.01, ha="left", fontsize=11, fontweight="bold", y=1.03)
+    _save(fig, s, "s10_representation_probes.png",
+          "evidence/S10_training_architecture_review/ckpt_probes.csv (calib only; knock-outs are not retrained ablations)")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--figures", action="store_true", help="skip the evidence snapshot")
@@ -733,7 +871,7 @@ def main() -> None:
     if not a.figures:
         snapshot_evidence()
     print("figures:")
-    for f in (fig_s01, fig_s04, fig_s05, fig_s06, fig_s07, fig_s09):
+    for f in (fig_s01, fig_s04, fig_s05, fig_s06, fig_s07, fig_s09, fig_s10):
         f()
 
 

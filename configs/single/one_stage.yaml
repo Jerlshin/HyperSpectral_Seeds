@@ -53,7 +53,22 @@ label_smooth_lo: 0.04
 # rather than correcting anything (CHANGES §7.4). Untested in the audited run,
 # so removed rather than kept.
 focal_gamma: 0.0
+# NOT READ by any code path (S10 F54) — kept so archived configs compose. The
+# weight actually applied is chosen by `aux_weight_schedule` below.
 aux_loss_weight: 0.2
+# S10 P0.4 / D20. `legacy` = what every run so far applied: the three-stage
+# curriculum's `max(stage1.aux_loss_weight_final, stage1.aux_loss_weight_init ·
+# (1 − 0.7·t/T))` = 0.65 → 0.25 (mean ≈ 0.42), NOT the 0.2 the docs described.
+# `fixed` = `model.aux_head_weight` (0.2) every epoch. Stays `legacy` until X1/X2
+# have run, so they reproduce the S08 sweep's regime (D21 guard 3). Logged per
+# epoch as `sched/aux_weight_applied`.
+aux_weight_schedule: legacy
+
+# ── Clean-fit telemetry (S10 P0.2 / D18) ──────────────────────────────
+# Fixed class-stratified training subset, eval mode, no augmentation, margin 0,
+# no label smoothing; live and EMA. `fit/*` scalars + `clean_fit.json`. 0 = off.
+clean_fit_kernels: 1000
+clean_fit_seed: 0
 
 # ── Regularisation ────────────────────────────────────────────────────
 # The one demonstrably load-bearing regulariser: switching it off at the Phase

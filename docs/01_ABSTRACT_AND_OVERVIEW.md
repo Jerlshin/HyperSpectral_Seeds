@@ -197,11 +197,13 @@ x (B,256,64,64) + mask (B,1,64,64) + morph (B,8)
 
 The spectral path is background-masked, so padded pixels never dilute the mean spectrum;
 the spatial path is the only component that ever sees the raw spatial cube. One auxiliary
-head provides deep supervision on the spatial path, at a **fixed** weight of 0.2 — four
-heads under a saturating GradNorm controller made the auxiliary term ≈7.8× the main
-classification loss at epoch 20, so the fused head, the only path that produces an
-evaluation logit, carried ≈11% of the gradient for the first third of training
-(`CHANGES.md` §7.1).
+head provides deep supervision on the spatial path — four heads under a saturating GradNorm
+controller made the auxiliary term ≈7.8× the main classification loss at epoch 20, so the
+fused head, the only path that produces an evaluation logit, carried ≈11% of the gradient for
+the first third of training (`CHANGES.md` §7.1). Its weight was designed as a **fixed 0.2**
+(`model.aux_head_weight`), but every run up to S11 actually applied the three-stage decay
+0.65 → 0.25 (S10 F54); `single.aux_weight_schedule` now names the two (`legacy`, the default,
+and `fixed`) — see `04_CURRICULUM_AND_LOSSES.md` §4.0.
 
 ### C2 · Native at 256 bands, and provably identical at 40
 

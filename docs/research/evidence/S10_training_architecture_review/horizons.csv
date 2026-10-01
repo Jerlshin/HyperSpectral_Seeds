@@ -1,0 +1,9 @@
+arm,steps_per_epoch,quantity,time_constant_steps,time_constant_epochs,half_life_epochs
+"grouped (3,683 train, batch 128, drop_last)",28,EMA decay 0.999,1000,35.7143,24.7553
+"grouped (3,683 train, batch 128, drop_last)",28,EMA decay 0.995,200,7.14286,4.95105
+"grouped (3,683 train, batch 128, drop_last)",28,EMA decay 0.998,500,17.8571,12.3776
+"grouped (3,683 train, batch 128, drop_last)",28,Adam β2 0.999,1000,35.7143,24.7553
+"stratified (5,130 train)",40,EMA decay 0.999,1000,25,17.3287
+"stratified (5,130 train)",40,EMA decay 0.995,200,5,3.46574
+"stratified (5,130 train)",40,EMA decay 0.998,500,12.5,8.66434
+"stratified (5,130 train)",40,Adam β2 0.999,1000,25,17.3287

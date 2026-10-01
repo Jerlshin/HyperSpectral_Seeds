@@ -337,14 +337,15 @@ samples of a 1,294-sample split, against a ±0.020 sampling CI.
 | | |
 |---|---|
 | Epochs | 150, early stop patience 25 on **calib** macro-F1 |
-| Loss | CE + label smoothing 0.10 → 0.04 (linear) + 0.2 × aux CE on the spatial path |
+| Loss | CE + label smoothing 0.10 → 0.04 (linear) + w_aux(t) × aux CE on the spatial path — **applied 0.65 → 0.25** (`single.aux_weight_schedule=legacy`, the default and what every run so far trained with), not the fixed 0.2 earlier versions of this table stated (S10 F54); `=fixed` applies `model.aux_head_weight` |
 | Mixup | α = 0.35, epochs 1–110 |
 | Head | ArcFace K=1, margin 0 → 0.30 warmed over epochs 111–130 — *after* mixup stops, because a margin and mixup are mutually exclusive by construction |
 | Sampler | plain shuffled, batch 128 (classes are already 91–96 each) |
 | Augmentation | one `medium` profile throughout + D₄ + same-class CutMix |
 | Optimiser | AdamW, lr 5e-4 → 5e-6 cosine, 5-epoch warm-up, wd 2e-4 |
-| Clipping | per-parameter-group, threshold 5.0, with clip-fraction telemetry |
-| Precision | bf16 autocast; **TF32 off**; evaluation forced to fp32 |
+| Clipping | per-parameter-group, threshold 5.0, with clip-fraction telemetry; groups per `clip_partition` (default `legacy` — on this model `fuse` clips with the backbone; S11 D22) |
+| Precision | bf16 autocast (fp16 + GradScaler under `runtime=kaggle_t4x2`); **TF32 off**; evaluation forced to fp32 |
+| Fit telemetry | clean fit on a fixed 1,000-kernel training subset (eval mode, no aug, margin 0, plain CE), live + EMA → `fit/*` and `clean_fit.json`; `train/acc_dominant`, `train/acc_plain`, `sched/aux_weight_applied` (S10 P0.2–P0.3) |
 | EMA | d_max 0.999, no re-initialisation |
 
 `pipeline=three_stage` still reaches the audited Stage 1 → 2 → 3 curriculum, because A8
@@ -365,8 +366,11 @@ Macro-F1 is the primary metric and the only one that gates a checkpoint save. Ev
 per-epoch evaluation scores both the live model and its EMA shadow and takes
 `max(F1_live, F1_ema)`. Final numbers are produced twice — once single-pass and once with
 the 12-view TTA (8 dihedral + 4 spectral-gain views about the foreground mean) — and both
-are written to disk with their predictions, so any reported metric is recomputable
-without re-running inference.
+are written to disk with their predictions **and float16 logits** (also for `calib`), so any
+reported metric, calibration or margin analysis is recomputable without re-running inference.
+Under DDP every evaluation is **de-duplicated**, so each kernel is scored exactly once.
+`results/run.json` records the git commit (+ dirty flag), the environment and the training
+regime as applied (`docs/05` §5.1).
 
 ### Checkpointing and resume
 
@@ -431,15 +435,18 @@ src/spectralquadnet/
     blocks/     attention (ECA/CBAM), conv_blocks, positional
   engine/       pipelines/ (context + single | three_stage dispatch)
                 stages/ (single_stage, stage1/2/3, final_eval)
-                train_epoch, evaluate, tta, checkpoint, resume, diagnostics, batch
+                train_epoch, evaluate, tta, checkpoint, resume, diagnostics, batch,
+                clean_fit (fixed-subset clean-fit probe, S11)
   losses/       focal, contrastive (SupCon/ProtoNCE), cdws, mixup, auxiliary
   optim/        param_groups, schedulers, sam
   reporting/    metrics + CIs, results tree, figures, tables
   experiments/  registry (the ablation grid), runner, protocol, baselines,
-                leakage, aggregate, analysis, cli
+                leakage, aggregate, analysis, cli,
+                frozen (S11: X1/X2/X4 expanded from the hashed pre-registrations)
   bandstudy/    ABLATION PATHWAY ONLY — how many bands, which, which method
   tracking/     console | jsonl | wandb | tensorboard | multi
-  utils/        device (runtime plan), distributed (DDP), seed, warning_filters
+  utils/        device (runtime plan), distributed (DDP), seed, warning_filters,
+                provenance (code revision, environment, applied regime → run.json)
 
 scripts/        thin CLI wrappers + validation gates
 tests/          unit/ (fast) · regression/ (goldens) · smoke/ (end-to-end)
@@ -450,7 +457,8 @@ tests/          unit/ (fast) · regression/ (goldens) · smoke/ (end-to-end)
 | Interface | Contract |
 |---|---|
 | `build_model(cfg, physical_wl) → nn.Module` | The only place `cfg.model.arch` becomes a network. |
-| model `forward` | dict with `main` + `aux_*` (+ `emb`, `balance`) in `.train()`; bare logits in `.eval()`. Everything downstream is written against this shape, never against a class. |
+| model `forward` | dict with `main` + `aux_*` (+ `emb`, `balance`; `main_plain` — telemetry only — under a margin) in `.train()`; bare logits in `.eval()`. Everything downstream is written against this shape, never against a class. |
+| model declarations | optional `pathway_labels()`, `grad_groups()`, `clip_groups()` — what the influence probe, per-module gradient norms and `clip_partition=model` read (SeedNet declares all three; S11). |
 | `RunContext` | Hardware, plan, store, splits, model, EMA, tracker, clock, calib loader, band geometry — built once, in the one order that is correct (`set_seed → DataStore → build_model → ModelEMA`). |
 | `Splits` / `SplitReport` | Four index arrays plus what the split *achieved*, not what was requested. |
 | `DataStore` | Process-wide singleton over read-only mmaps; `band_geometry(cfg, store)` is its contract check. |
@@ -471,12 +479,12 @@ config that never mentions them is not under-specified.
 |---|---|
 | `data` | paths, `num_bands`, `num_classes`, augmentation widths, the split protocol, `band_indices_path` |
 | `model` | `arch`, both architectures' widths, `stem_folded_depth`, `specf_tokens`, head elaborations |
-| `single` | the primary curriculum: 14 hyperparameters |
+| `single` | the primary curriculum: 14 hyperparameters, plus `aux_weight_schedule` (which aux weight is applied) and `clean_fit_*` (measurement) |
 | `stage1/2/3` | the audited curriculum, retained for A8 |
-| `evaluation` | `select_split`, `report_split`, `tta`, `bootstrap_samples` |
+| `evaluation` | `select_split`, `report_split`, `tta`, `bootstrap_samples`, `save_logits` |
 | `runtime` | throughput only — nothing here may change a reported number (a profile such as `runtime=kaggle_t4x2` also picks the AMP dtype, and says so) |
 | `tracking` | backend selection and diagnostics verbosity; `jsonl` writes `output_dir/metrics.jsonl` |
-| root | `pipeline`, `seed`, `device`, `weight_decay`, `grad_clip`, `ema_decay`, TTA counts |
+| root | `pipeline`, `seed`, `device`, `weight_decay`, `grad_clip`, `clip_partition`, `ema_decay`, TTA counts |
 
 Two config keys carry the 256-band design and are worth knowing:
 
@@ -542,7 +550,24 @@ failures that no component test could have caught.
 | `tests/unit/test_resume.py` | Training-state snapshot/restore continues exactly; interruption vs completion; the background writer; the DDP sampler reshuffles per epoch; the T4 profile composes |
 | `tests/smoke/test_kaggle_path.py` | Pre-slice → train → `metrics.jsonl` → simulated interruption → resume at the next epoch, and a two-rank `torchrun` run to the final evaluation |
 
-### Recorded result of this revision's validation
+### Recorded result of the S11 validation (2026-10-01, macOS CPU, torch 2.14)
+
+```
+pytest --run-all      1034 passed, 6 failed, 37 errors, 3 xfailed   (pre-S11 tree: 964 / 6 / 37)
+pytest                 711 passed, 1 failed                          (pre-S11: 645 / 1)
+ruff check .          13 findings, all pre-existing     mypy --strict   12 errors, the pre-existing set
+G-neutral gate        PASS — identical step losses, 222/222 tensors, predictions, 3 regimes
+```
+
+The failing set is **identical before and after S11** and none is new: 37 tests (and
+`capture_golden.py --verify`, `check_config_roundtrip.py`) need the pinned pre-refactor commit
+`886560fe…`, which is not in this checkout's history (FW-26); 2 are the Stage-1 golden drift below
+(FW-11); 2 smoke tests build a 256-band synthetic cube against the 215-band primary config (stale
+since S07); 1 is the W&B step-collision smoke test; 1 expects an fp16 NaN that torch 2.14 no longer
+produces. The 3 xfails are S10 F48's structural defect, `strict=True` until X5. Details:
+[`docs/research/studies/S11_frozen_arms_execution`](docs/research/studies/S11_frozen_arms_execution/README.md).
+
+### Recorded result of the earlier revision's validation
 
 ```
 pytest --run-all      918 passed, 2 failed, 29 skipped   (25:52)
@@ -668,6 +693,23 @@ baseline*: it reaches 0.5916 under the leaky protocol at k = 40, so ~59 points a
 available with no spatial information at all. The leakage probe fits a 10-feature linear
 model on **residual brightness alone** and reports how well it recovers the acquisition
 bundle — a model-free measurement of the nuisance.
+
+### The S11 frozen diagnostic arms — X1, X2, X4
+
+Pre-registered in S09 (`preregistration_next.json`, X1/X2) and S10 (`preregistration_s10.json`,
+X4); `scripts/run_frozen.py` builds the 23 cells **from those files after checking their
+SHA-256**, gives each its own directory under `outputs/experiments_u430k32/s11/`, and writes
+`frozen_cell.json` (source, hashes, exact command) before it runs. See
+[`docs/research/studies/S11_frozen_arms_execution`](docs/research/studies/S11_frozen_arms_execution/README.md)
+for what each arm decides and the exact Kaggle cells.
+
+```bash
+python scripts/run_frozen.py --list          # cells, overrides, frozen source — free
+python scripts/run_frozen.py --check         # compose every cell, assert its regime — free
+python scripts/run_frozen.py --cfg-job       # `train.py --cfg job` for every cell — free
+python scripts/run_frozen.py --arms X1 X4 --nproc-per-node 2 --stream   # 11 runs, T4 x2
+python scripts/run_frozen.py --arms X2    --nproc-per-node 2 --stream   # 12 runs, T4 x2
+```
 
 ### Multi-GPU
 

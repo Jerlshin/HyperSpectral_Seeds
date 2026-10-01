@@ -20,20 +20,24 @@ rule or an earlier plan said, the entry says so under *Deviation*.
 | D02 | Fit and select on a calibration split carved from train; score `val ∪ test` once | 2026-08-13 | F04, F21 | active |
 | D03 | Report mean ± range over 2 folds × 3 seeds with bootstrap CIs; never a maximum | 2026-08-13 | F04 | active |
 | D04 | The default input is the full acquired cube — no band selection on the primary path | 2026-08-14 | F03, F12 | active — **under review** (F17) |
-| D05 | SpectralSeedNet (two pathways, 3.0 M) replaces SpectralQuadNet (four branches, 5.2 M) as primary | 2026-08-13 | F06, F07 | active — A3 not yet run |
-| D06 | One training stage replaces three | 2026-08-13 | F05 | active — **under review** (F35: the margin phase pushes loss above chance) |
-| D07 | Objective & optimiser fixes: one aux head at fixed 0.2, GradNorm off, clip 5.0, K = 1, AMP kept on, TF32 off | 2026-08-13 | F07, F08 | active — **under review** (F36: clip 5.0 binds on every step) |
+| D05 | SpectralSeedNet (two pathways, 3.0 M) replaces SpectralQuadNet (four branches, 5.2 M) as primary | 2026-08-13 | F06, F07 | active — A3 not yet run; S10: 11.5 % of params untrainable (F48), spectral blocks inert (F49) |
+| D06 | One training stage replaces three | 2026-08-13 | F05 | active — **under review** (F35, F47: the margin is met by 0–52 % of training kernels at < 4 % of the LR) |
+| D07 | Objective & optimiser fixes: one aux head at fixed 0.2, GradNorm off, clip 5.0, K = 1, AMP kept on, TF32 off | 2026-08-13 | F07, F08 | active — **under review** (F36, F53); **not executed as written: aux weight was 0.65 → 0.25, not 0.2 (F54)** |
 | D08 | Band studies select inside the fold, decide on calib, include null methods and the full budget | 2026-08-13 | F03, F11 | active |
 | D09 | Held-out confirmations are pre-registered and frozen by SHA-256 before any held-out row is scored | 2026-09-29 | F21 | active |
 | D10 | Bands below 430 nm are excluded from candidate band sets | 2026-09-29 | F14, F19 | active |
 | D11 | Finalist band sets are `uniform430` (label-free even spacing), k ∈ {16, 24, 32, 48, 64} | 2026-09-30 | F17, F18 | active — **deviation recorded** |
-| D12 | The dataset is white-tile reflectance; the 41 unmeasurable bands are dropped, not filled | 2026-09-30 | F26, F27 | active — effect partly measured (F33, F40) |
+| D12 | The dataset is white-tile reflectance; the 41 unmeasurable bands are dropped, not filled | 2026-09-30 | F26, F27 | active — effect partly measured (F33, F40); the network sees level only via the ECA gate (F50) |
 | D13 | Band indices belong to one wavelength axis; sets are regenerated per axis, never transferred | 2026-09-30 | F27 | active |
 | D14 | Every final evaluation reports same- vs cross-session scores, session attraction and entropy | 2026-09-30 | F22–F24 | active |
 | D15 | Neural runs go to Kaggle T4 × 2 on a pre-sliced `uniform430_k32` float16 cube | 2026-10-01 | F17, F28 | active — **deviation recorded** |
 | D16 | Three reporting tiers: within-acquisition (80/20) · cross-bundle (grouped, primary) · cross-session; 80/20 is never the headline | 2026-10-01 | F31, F38, F43 | active |
 | D17 | Next investment: two diagnostic GPU experiments (fit-first, attribution) before any new architecture or tuning | 2026-10-01 | F32, F34, F35, F37 | active |
-| D18 | Instrumentation fixes before the next sweep: logits, git commit, DDP de-duplication, pathway labels, clean train accuracy | 2026-10-01 | F35, F36, S09 §8 | active — not yet implemented |
+| D18 | Instrumentation fixes before the next sweep: logits, git commit, DDP de-duplication, pathway labels, clean train accuracy | 2026-10-01 | F35, F36, S09 §8 | active — **implemented in S11** (D22); extended by D20 |
+| D19 | Repair training before architecture: X1, X2, X4 run on the unchanged SpectralSeedNet; component repairs (X5 tail stride, X6 reflectance level) are separate pre-registered arms after X1; no simplification or redesign before X1/X2 report | 2026-10-01 | F44–F50, F54 | active |
+| D20 | Instrumentation scope extended (S10 P0): clean-fit telemetry, applied-aux-weight logging with a `legacy` default, model-declared gradient/clip groups, structural regression tests, docs | 2026-10-01 | F48, F53, F54, S10 B14 | active — **implemented in S11** with one deviation (D22: the model-declared *clip* partition is opt-in) |
+| D21 | Interpretation guards on S09's frozen plan (file unchanged): H13's baseline is 0.90/0.91 under its own definition; an X1 gain is credited to mixup/margin/epochs, not the clip; the aux schedule stays `legacy` for X1/X2 | 2026-10-01 | F45, F53, F54 | active — guard 3 enforced by the code default and a test (S11) |
+| D22 | S10's P0 implemented as specified except: the model-declared clip partition is opt-in (`clip_partition=legacy` default); the frozen commands run under `torchrun` with one output directory per cell; X5/X6 not implemented (D19) | 2026-10-01 | F57, F58, S10 §6, §9 | active |
 
 ---
 
@@ -86,6 +90,10 @@ in `2a459ef` ("branch A and branch D drop due to analysis", 2026-08-14), on the 
 audit's single-run evidence. A3 has not run.
 **Reverse if** A3, run under grouped with *symmetric* branch dropout, shows the four-branch model
 beats {B, C} by more than 2σ.
+**Annotated (S10).** As trained, the two pathways are not what D05 describes: 327,680 of the spatial path's
+parameters never receive a gradient (F48), and the spectral path's chemometric blocks — the index bank and
+continuum depths kept "on theoretical grounds" — are inert, leaving SNV + morphometrics (F49). D05 stands; X2 and
+X5 test it, and S10 P3.1 repairs the descriptor only if X2 shows the spectral path matters.
 
 ### D06 · Single-stage curriculum
 **Context.** F05. Stage 2's only distinct ingredient was a non-zero angular margin, which is
@@ -93,6 +101,9 @@ incompatible with mixup. **Decision.** One stage: mixup to `single.mixup_epochs`
 global margin warmed in. 69 stage hyperparameters → 14. Stage 2/3 code kept for A8.
 **Deviation.** As D05 — adopted before A8 ran. **Reverse if** A8 shows S1+S2(+S3) beats S1 by > 2σ.
 **Under review (S09, F35).** The single stage's margin ramp (0 → 0.3, s = 32) lifts training loss from ≈ 1.6 to 3.7–6.1 — above ln 90 in 10/12 runs — while calib F1 moves by 0 to +0.03. X1 (FW-15) removes the margin; if it does not cost calib or held-out F1 beyond 2σ, the margin leaves the default.
+**S10 (F47).** On clean training kernels the selected checkpoints are 87–95 % accurate while their margin-penalised
+loss is 2.9–6.7: the margin was satisfied by 0–52 % of kernels, introduced at < 4 % of the cumulative LR. A margin
+returns only through A7 with ≥ 25 % of the LR budget and no label smoothing (S10 P1.4).
 
 ### D07 · Objective and optimiser fixes
 GradNorm off and one aux head at fixed weight 0.2 (F07); clip threshold 5.0 so it clips outliers
@@ -100,6 +111,11 @@ GradNorm off and one aux head at fixed weight 0.2 (F07); clip threshold 5.0 so i
 through contrastive terms with an fp32 cast only on the similarity matrix; `allow_tf32 = False`.
 **Reverse if** an A-series ablation shows any removed mechanism adds > 2σ.
 **Under review (S09, F36).** At clip 5.0 the backbone is still clipped on 100 % of steps (pre-clip median 8.9, ≈ 44 late) — the intent "clip outliers" is not realised. X1 raises the threshold to 50 as part of the fit-first arm; a clip-only dissection is run only if X1 moves.
+**S10 — the decision was not executed as written.** (i) The "one aux head at fixed 0.2" never ran: the loop applies
+`stage1.aux_loss_weight` 0.65 → 0.25 (F54). (ii) Clipping at 5.0 binds, but under AdamW it re-weights batches rather
+than shrinking steps (F53); its harm is likely small. (iii) wd 2e-4 is inert (F55). (iv) The clip groups are
+SpectralQuadNet's: `fuse` and the aux head are clipped with the backbone. D20 makes all four visible; the applied aux
+schedule is deliberately left at `legacy` until X1/X2 have run (D21).
 
 ### D08 · Band-study discipline
 Selectors see `train` only; budget and method are decided on `calib`; `val ∪ test` is reachable
@@ -146,6 +162,9 @@ lamp, not a measurement. The 256-band SNV cube in `./dataset` was replaced (it i
 **Not yet known.** Whether this helps — FW-01. **Reverse if** FW-01 shows reflectance does not move
 cross-session recall *and* costs same-session performance relative to SNV.
 **Partly measured (S09).** Spectrum-only LDA cross-session recall rose from 0.000 (SNV-256, S06) to 0.039 (k32) / 0.053 (215) — above chance, small (F33). The lamp-peak fingerprint is gone; a broad NIR offset remains (F40). The network's 0.15 is not yet attributable to the spectrum (X2). No SNV arm on identical rows has been run, so D12 is neither confirmed nor reversed.
+**S10 (F50).** The network cannot use reflectance level as a feature: its stem and every spectral feature except
+morph are scale-invariant by construction (a design carried over from the SNV cube), and level enters only through the
+6-parameter ECA gate. X6 tests giving the spectral path the level, with a session guard (H18b).
 
 ### D13 · Band indices are axis-specific
 The 256-axis index 128 and the 215-axis index 128 are different wavelengths. Finalist sets are cut
@@ -214,3 +233,76 @@ margin, so the fit that F34 depends on had to be read off one epoch (111).
 save held-out and calib logits (float16); add `pathway_labels() → ("SPATIAL", "SPECTRAL")`; log a clean
 training accuracy (eval-mode, no augmentation, no margin) on a fixed 1,000-kernel training subset every
 diagnostics interval. None of these changes a metric.
+**Extended by D20 (S10).** **Implemented in S11 (D22):** de-duplicated DDP evaluation everywhere (F58),
+`run.json → run.code` (commit + dirty flag) with the environment and the regime as applied, float16 logits for the
+reported split and calib ±TTA, `pathway_labels()`, and the clean-fit probe (`fit/*`, `clean_fit.json`), which
+reproduces S10's offline measurement (F57).
+
+### D19 · Repair training before architecture
+**Context.** F44: the clean-label objective gets 3.6 % of the cumulative LR; F47: most of that is spent on a margin
+the network cannot meet. F45/F46: fit is 0.87–0.95 and, within the acquisition, held-out moves with it one for one.
+F48–F50: two component defects (a 1 × 1 spatial tail with 327,680 untrainable parameters; a level-blind input
+path) and an inert chemometric block — none of which explains an under-fit of ≥ 2.5 M trainable parameters on 3,683
+kernels. F54: the regime that ran is not the documented one.
+**Decision.** Order of work: S10 P0 (D20) → X1, X2 (S09, frozen) and X4 (fit ceiling, S10) on the unchanged
+architecture → under the regime X1 selects, X5 (tail stride) and X6 (reflectance level), each one arm, frozen in
+`evidence/S10_training_architecture_review/preregistration_s10.json` → only then simplification (P3.1, P3.6) or
+redesign. Every architecture change lands behind a config key whose default reproduces today's model bit-for-bit.
+**Alternatives rejected.** Fixing the architecture first (every arm would be measured through a regime that cannot
+fit); a wholesale redesign (no evidence that the two-pathway idea fails — only that it is untrained, mis-weighted and
+mis-wired in two places); simplifying now (pre-empts H14b).
+**Reverse if** X4 cannot fit its training bundle with every softener off (H16 rejected) — then capacity/optimisation
+is the limit and P2.1/P3.6 move ahead of regime work.
+
+### D20 · Instrumentation scope, extended
+**Context.** D18 plus S10 B14: telemetry that misreports fit (train/acc under mixup has a 0.506 ceiling; under a
+margin it is penalised), the aux weight (F54), the clip groups (F53), and non-finite epoch means.
+**Decision.** S10 §6 P0.1–P0.7: clean-fit telemetry on a fixed subset (live and EMA); applied-aux-weight logging
+with `single.aux_weight_schedule ∈ {legacy, fixed}`, **default `legacy`**; model-declared gradient and clip groups
+(`fuse` joins `fusion`; neutral while no clip binds); structural tests for zero-gradient parameters, tail resolution
+and gain response (xfail until X5/X6); dry-run composition of every frozen command; docs fixes. Gate: a 2-epoch CPU
+run is bit-identical before and after.
+**Reverse if** — not reversible; it is measurement.
+**Implemented in S11 (D22).** P0.1–P0.4, P0.6, P0.7 as specified; P0.5's per-module gradient groups as specified,
+its clip partition as an opt-in (see D22). Gate G-neutral passed: identical per-step losses, checkpoint tensors and
+held-out predictions before and after, in three regimes (F57).
+
+### D21 · Interpretation guards on the frozen S09 plan
+**Context.** S10 found facts that change how three frozen outcomes read, without making the plan invalid.
+**Decision.** `preregistration_next.json` is not modified. (1) H13 is evaluated as frozen (≥ 0.95), but against a
+reference of 0.90 / 0.91 measured the same way (F45), and X4 (H16) — not H13 — answers whether capacity limits fit.
+(2) An X1 effect is credited to mixup duration, the margin and the extra epochs jointly; clip 50 is near-neutral
+under AdamW (F53). (3) The reference ran aux 0.65 → 0.25 (F54); X1 runs the same schedule as a function of
+progress (mean 0.425 vs 0.424) only if P0 keeps `legacy` as the default — so it must. (4) An X1 run that early-stops
+before epoch 160 is reported with that fact.
+**Deviation.** None from the frozen file; these are readings, recorded before X1 runs.
+**Reverse if** — superseded by S11's analysis.
+
+### D22 · S10's P0 as implemented — three recorded deviations (S11)
+**Context.** D18/D20 specify the instrumentation (S10 §6 P0.1–P0.7) and S10 §9 the checklist that precedes X1, X2
+and X4. Implementing it exposed one internal inconsistency in the plan and one gap in the frozen commands.
+**Decision.** Everything in P0.1–P0.4, P0.6, P0.7 and §9 steps 4–5 is implemented as written (S11 §4). Three
+deviations, each recorded in the code, the configs and the S11 page:
+1. **The model-declared clip partition is opt-in.** P0.5 asked for clip groups `head / fusion = fuse + embed_net /
+   backbone` and called the change neutral "where no clip binds". But at the shipped `grad_clip=5.0` the backbone group
+   binds on ≥ 82 % of steps (F36, F53), so moving `fuse` changes training — contradicting the same plan's gate
+   G-neutral (bit-identical before/after) and putting a second variable into X2, which runs the shipped regime and is
+   read against the S09 sweep. Measured: in a miniature run with a binding clip, `clip_partition=model` moves 213 of
+   222 checkpoint tensors (F57). So `clip_partition ∈ {legacy, model}` exists, defaults to **`legacy`** (every run so
+   far), and per-module gradient *telemetry* uses the model-declared groups unconditionally.
+2. **The frozen commands run under a launcher, in their own directories.** S09's nine X1 strings read
+   `python train.py … runtime=kaggle_t4x2`, which refuses to start without `torchrun` (`multi_gpu: ddp`), and name no
+   output directory, so X1 and X2/X4 cells would share `outputs/seednet_full256_f*_s*` and the pipeline's auto-resume
+   would re-score one arm's checkpoint as another's result. `scripts/run_frozen.py` reads the overrides **out of the
+   hashed files** (refusing to run if a hash moved), adds `torchrun` and one directory per cell, and records both
+   additions in every cell's `frozen_cell.json`. For X1 each cell is checked to compose to exactly the config its
+   literal frozen command composes.
+3. **X5 and X6 are not implemented.** D19 places them after X1 reports, under the regime X1 selects; S10 §9 step 10.
+Also, not a deviation but a change readers will meet: the single-stage scalar `sched/aux_weight` (which logged the
+configured 0.2 as if applied) is gone; `sched/aux_weight_applied` and `sched/aux_weight_configured` replace it.
+**Alternatives rejected.** `clip_partition=model` as the default (changes X2's regime relative to its reference and
+fails G-neutral); editing the frozen JSON files to add a launcher and output paths (would move their hashes for an
+execution detail that no hypothesis depends on).
+**Reverse if** an X1 or X4 run logs `grad_norm/clip_fraction > 0.01` — the partition then mattered at clip 50 and
+the run is a `legacy`-partition result, to be read as such (S10 P0.5's rollback condition, unchanged).
+

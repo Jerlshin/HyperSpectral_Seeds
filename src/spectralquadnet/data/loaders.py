@@ -808,6 +808,7 @@ def build_eval_loader(
     dist: DistContext | None = None,
     batch_size: int = EVAL_BATCH,
     persistent: bool = False,
+    generator: torch.Generator | None = None,
 ) -> DataLoader[Any]:
     """An unshuffled loader over an evaluation split, sharded across ranks under DDP.
 
@@ -826,8 +827,15 @@ def build_eval_loader(
             Nothing about the data changes either way: an evaluation dataset
             runs the ``none`` augmentation profile, so ``__getitem__`` draws no
             randomness and the worker count cannot move a single value.
+        generator: A private RNG for the loader's own bookkeeping. Starting
+            any ``DataLoader`` iterator draws its base seed from this generator,
+            or from the **global** torch RNG when there is none — so an extra
+            evaluation pass inserted into a training run (S10 P0.2's clean-fit
+            probe) would shift every later dropout mask and mixup pairing.
+            Passing a generator keeps the global stream untouched.
     """
     dist = dist or DistContext()
+    extra: dict[str, Any] = {"generator": generator} if generator is not None else {}
     sampler: Sampler[int] | None = (
         torch.utils.data.DistributedSampler(
             dataset, num_replicas=dist.world_size, rank=dist.rank, shuffle=False, drop_last=False
@@ -843,7 +851,56 @@ def build_eval_loader(
         batch_size=batch_size,
         shuffle=False,
         sampler=sampler,
+        **extra,
     )
+
+
+def gathered_positions(loader: DataLoader[Any]) -> npt.NDArray[np.int64] | None:
+    """The dataset position behind each prediction a DDP evaluation pass gathers.
+
+    ``DistributedSampler`` pads the position list with its own first entries
+    until it divides by the world size, deals it round-robin (rank ``r`` gets
+    ``r, r + W, …``), and :func:`~spectralquadnet.utils.distributed.gather_concat`
+    joins the shards in rank order — so a split of odd size scored on two ranks
+    returns ``n + 1`` predictions, one kernel twice (S09 §8: 4,312 for 4,311).
+
+    Returns:
+        ``(n_gathered,)`` positions into ``loader.dataset``, or ``None`` when no
+        reordering applies (single process, a non-distributed sampler) or it
+        cannot be established (a shuffling sampler).
+    """
+    sampler = loader.sampler
+    if not isinstance(sampler, torch.utils.data.DistributedSampler):
+        return None
+    n = len(loader.dataset)  # type: ignore[arg-type]
+    if sampler.shuffle or n == 0:
+        return None
+    world, total = int(sampler.num_replicas), int(sampler.total_size)
+    positions = list(range(n))
+    if sampler.drop_last:
+        positions = positions[:total]
+    elif total > n:
+        pad = total - n
+        positions += (positions * (pad // n + 1))[:pad]
+    order: npt.NDArray[np.int64] = np.concatenate(
+        [np.asarray(positions[r:total:world], dtype=np.int64) for r in range(world)]
+    )
+    return order
+
+
+def dedup_index(loader: DataLoader[Any]) -> npt.NDArray[np.int64] | None:
+    """Indices into a gathered DDP evaluation that keep each kernel **once**, in dataset order.
+
+    Apply it to every gathered array of one pass (predictions, targets,
+    logits): the result has exactly ``len(loader.dataset)`` entries, ordered as
+    ``dataset.indices``. ``None`` means the pass is already one-per-kernel in
+    dataset order (single process) — use the arrays as they are.
+    """
+    order = gathered_positions(loader)
+    if order is None:
+        return None
+    _, first = np.unique(order, return_index=True)
+    return first.astype(np.int64)
 
 
 def eval_row_order(loader: DataLoader[Any]) -> npt.NDArray[np.int64] | None:

@@ -281,6 +281,20 @@ class ModelConfig:
     #: ablated, aimed at hard classes that never moved. A7 arm 4.
     pairwise_penalty: bool = MISSING
 
+    # ── X2 attribution (S09 FW-16, S10 §9 step 4) ─────────────────────
+    #: SpectralSeedNet only. Which pathways are *live*: ``[spatial, spectral]``
+    #: is the shipped network. ``[spectral]`` (X2 ``spectral_only``) and
+    #: ``[spatial]`` (X2 ``spatial_only``) replace the other pathway's output
+    #: with zeros **in training and in evaluation**, freeze its parameters (so
+    #: they receive no gradient and DDP sees no unused parameter) and skip its
+    #: forward. ``spectral_only`` also drops the auxiliary term, whose head sits
+    #: on the spatial output; ``spatial_only`` removes the morphometrics, which
+    #: enter only through the spectral path. Every module is still constructed
+    #: in the same order, so the initial weights of the live pathway are the
+    #: full model's. Defaulted rather than ``MISSING`` so configs written before
+    #: S11 compose to the shipped network unchanged.
+    pathways: list[str] = field(default_factory=lambda: ["spatial", "spectral"])
+
 
 # ══════════════════════════════════════════════════════════════════════
 #  STAGE 1 — 3-phase progressive augmentation  (CONFIG: s1_*, aux_loss_weight_*)
@@ -487,7 +501,33 @@ class SingleStageConfig:
     #: down-weighting easy examples rather than correcting anything. Ablate
     #: (A11-adjacent) before re-adding.
     focal_gamma: float = MISSING
+    #: **Not read by any code path** (S10 F54). Kept so archived configs and
+    #: ``metrics.jsonl`` hyperparameter records still compose; the weight the
+    #: single-stage loop applies is chosen by :attr:`aux_weight_schedule`.
     aux_loss_weight: float = MISSING
+    #: Which auxiliary-loss weight the single-stage loop applies (S10 P0.4, D20).
+    #:
+    #: * ``legacy`` — what every SpectralSeedNet run up to and including the S08
+    #:   sweep actually applied: the three-stage curriculum's
+    #:   ``max(stage1.aux_loss_weight_final, stage1.aux_loss_weight_init ·
+    #:   (1 − 0.7 · t/T))``, i.e. 0.65 → 0.25 at the shipped values. **Default**,
+    #:   so X1/X2/X4 run the reference regime (D21 guard 3).
+    #: * ``fixed`` — ``model.aux_head_weight`` (0.2) on every epoch, the weight
+    #:   D07 and the docs always described. Tested as its own arm (S10 P1.3).
+    #:
+    #: Defaulted so a config written before this field existed composes to the
+    #: behaviour it was run under.
+    aux_weight_schedule: str = "legacy"
+    #: Size of the fixed, class-stratified training subset on which clean fit is
+    #: measured (S10 P0.2 / D18): eval mode, no augmentation, no margin, no label
+    #: smoothing; live and EMA weights. Logged as ``fit/*`` on every diagnostics
+    #: stride, every checkpoint improvement and the final epoch, and written to
+    #: ``output_dir/clean_fit.json`` with the subset's row ids. 0 disables.
+    clean_fit_kernels: int = 1000
+    #: Seed of the private RNG that draws the clean-fit subset. Independent of
+    #: :attr:`ExperimentConfig.seed` on purpose: every seed of one fold measures
+    #: fit on the *same* kernels, so their fit numbers are comparable.
+    clean_fit_seed: int = 0
 
     # ── Regularisation ────────────────────────────────────────────────
     #: Mixup α. The one demonstrably load-bearing regulariser in the audited
@@ -560,6 +600,12 @@ class EvaluationConfig:
     #: Write the 90×90 confusion matrix, the per-class table and the run's
     #: metric JSON under ``output_dir/results/``.
     save_artifacts: bool = True
+    #: Write the selected weights' logits (float16, with the patch row and
+    #: target of each) for the reported split **and** for ``calib``, with and
+    #: without TTA, under ``output_dir/results/logits_<split>_<variant>.npz``
+    #: (D18). Calibration, margin and probability analyses need them; argmax
+    #: predictions alone cannot supply them. No metric is computed from calib.
+    save_logits: bool = True
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -823,6 +869,19 @@ class ExperimentConfig:
     # ── Shared training knobs ─────────────────────────────────────────
     weight_decay: float = MISSING
     grad_clip: float = MISSING
+    #: How parameters are partitioned into independently clipped groups (S10
+    #: P0.5, S11 D22).
+    #:
+    #: * ``legacy`` — :data:`~spectralquadnet.optim.param_groups.CLIP_GROUPS`,
+    #:   ``SpectralQuadNet``'s prefixes. On ``SpectralSeedNet`` this puts
+    #:   ``fuse`` and the auxiliary head in ``backbone`` and only ``embed_net``
+    #:   in ``fusion`` (S10 F53). **Default**: every run so far clipped this way,
+    #:   and at ``grad_clip=5.0`` the clip binds on ≥ 82 % of steps, so changing
+    #:   the partition changes training (gate G-neutral, S11).
+    #: * ``model`` — the groups the model declares in ``clip_groups()``; for
+    #:   ``SpectralSeedNet``: ``head`` / ``fusion = fuse + embed_net`` /
+    #:   ``backbone``. Identical to ``legacy`` whenever no clip binds.
+    clip_partition: str = "legacy"
     ema_decay: float = MISSING
     #: GradNorm exponent for the per-branch auxiliary weights (OP-2 / T2-6):
     #: ``omega_b <- omega_b * (g_bar / g_b) ** aux_gradnorm_alpha``, applied

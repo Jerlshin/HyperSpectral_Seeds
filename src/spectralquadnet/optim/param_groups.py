@@ -57,6 +57,40 @@ CLIP_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("backbone", ()),
 )
 
+#: The values ``cfg.clip_partition`` accepts (S10 P0.5, S11 D22).
+#:
+#: ``legacy`` is :data:`CLIP_GROUPS` for every model. On ``SpectralSeedNet`` it
+#: matches ``embed_net`` as ``fusion`` but not ``fuse`` (``cross_interaction.``
+#: is ``SpectralQuadNet``'s name), so ``fuse`` and the auxiliary head are clipped
+#: with the backbone (S10 F53). ``model`` asks the model: a model that defines
+#: ``clip_groups()`` supplies its own ``(label, prefixes)`` table, and one that
+#: does not falls back to :data:`CLIP_GROUPS` — so for ``SpectralQuadNet`` the two
+#: partitions are the same thing.
+CLIP_PARTITIONS: tuple[str, ...] = ("legacy", "model")
+
+
+def clip_group_table(
+    model: nn.Module, partition: str = "legacy"
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """The ``(label, prefixes)`` table :func:`split_by_clip_group` matches against.
+
+    Raises:
+        ValueError: ``partition`` is not one of :data:`CLIP_PARTITIONS`.
+    """
+    if partition not in CLIP_PARTITIONS:
+        raise ValueError(f"clip_partition={partition!r}; expected one of {CLIP_PARTITIONS}")
+    if partition == "model":
+        declared = getattr(model, "clip_groups", None)
+        if callable(declared):
+            table = tuple((str(label), tuple(prefixes)) for label, prefixes in declared())
+            if not table or table[-1][1]:
+                raise ValueError(
+                    f"{type(model).__name__}.clip_groups() must end with a catch-all "
+                    "(label, ()) entry, so every parameter lands in a group"
+                )
+            return table
+    return CLIP_GROUPS
+
 
 def _wd_groups(
     cfg: ExperimentConfig | Any,
@@ -92,35 +126,40 @@ def _wd_groups(
 #: is a function of the parameter names, which do not change, but
 #: :func:`clip_grad_norm_by_group` is on the inner loop and was re-deriving it
 #: every step.
-_CLIP_GROUP_CACHE: weakref.WeakKeyDictionary[nn.Module, dict[str, list[torch.nn.Parameter]]] = (
-    weakref.WeakKeyDictionary()
-)
+_CLIP_GROUP_CACHE: weakref.WeakKeyDictionary[
+    nn.Module, dict[str, dict[str, list[torch.nn.Parameter]]]
+] = weakref.WeakKeyDictionary()
 
 
-def split_by_clip_group(model: nn.Module) -> dict[str, list[torch.nn.Parameter]]:
-    """Partition a model's trainable parameters into the :data:`CLIP_GROUPS`.
+def split_by_clip_group(
+    model: nn.Module, partition: str = "legacy"
+) -> dict[str, list[torch.nn.Parameter]]:
+    """Partition a model's trainable parameters into its clip groups.
 
-    Every trainable parameter lands in exactly one group, so the three
-    per-group clips together cover the same set the one global clip did.
-    Groups that own no parameter are omitted rather than returned empty.
+    Every trainable parameter lands in exactly one group, so the per-group
+    clips together cover the same set the one global clip did. Groups that own
+    no parameter are omitted rather than returned empty. ``partition`` selects
+    the table — see :data:`CLIP_PARTITIONS` and :func:`clip_group_table`.
 
-    The result is memoised per model. ``requires_grad`` is read at partition
-    time, as it always was — nothing in the three stages toggles it after
-    construction since HD-1 removed the frozen-head phase, and a caller that
-    starts doing so must invalidate this cache.
+    The result is memoised per model and partition. ``requires_grad`` is read at
+    partition time, as it always was: the X2 pathway switch freezes a pathway at
+    *construction*, before the first call, and nothing toggles it afterwards. A
+    caller that starts doing so must invalidate this cache.
     """
-    cached = _CLIP_GROUP_CACHE.get(model)
+    per_model = _CLIP_GROUP_CACHE.setdefault(model, {})
+    cached = per_model.get(partition)
     if cached is not None:
         return cached
+    table = clip_group_table(model, partition)
     groups: dict[str, list[torch.nn.Parameter]] = {}
     for name, param in model.named_parameters():
         if not param.requires_grad:
             continue
-        for label, prefixes in CLIP_GROUPS:
+        for label, prefixes in table:
             if not prefixes or name.startswith(prefixes):
                 groups.setdefault(label, []).append(param)
                 break
-    _CLIP_GROUP_CACHE[model] = groups
+    per_model[partition] = groups
     return groups
 
 
@@ -173,7 +212,9 @@ class ClipReport(Mapping[str, torch.Tensor]):
         return tags
 
 
-def clip_grad_norm_by_group(model: nn.Module, max_norm: float) -> ClipReport:
+def clip_grad_norm_by_group(
+    model: nn.Module, max_norm: float, partition: str = "legacy"
+) -> ClipReport:
     """Clip head, fusion and backbone gradients independently (OP-3 / T2-5).
 
     Call it exactly where the single global ``clip_grad_norm_`` used to be:
@@ -183,6 +224,9 @@ def clip_grad_norm_by_group(model: nn.Module, max_norm: float) -> ClipReport:
         model: The live model, with gradients populated.
         max_norm: Per-group maximum L2 norm — the same ``cfg.grad_clip`` the
             global clip used, now applied three times rather than once.
+        partition: ``cfg.clip_partition`` — which parameters form each group
+            (:data:`CLIP_PARTITIONS`). ``legacy``, the default, is the partition
+            every run before S11 clipped with.
 
     Returns:
         A :class:`ClipReport` over ``head``/``fusion``/``backbone``. Indexing it
@@ -193,7 +237,7 @@ def clip_grad_norm_by_group(model: nn.Module, max_norm: float) -> ClipReport:
     preclip: dict[str, torch.Tensor] = {}
     postclip: dict[str, torch.Tensor] = {}
     clipped: dict[str, torch.Tensor] = {}
-    for label, params in split_by_clip_group(model).items():
+    for label, params in split_by_clip_group(model, partition).items():
         norm = nn.utils.clip_grad_norm_(params, max_norm)
         preclip[label] = norm
         # Derived from the returned pre-clip norm rather than re-measured: a

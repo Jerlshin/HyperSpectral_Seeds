@@ -36,17 +36,64 @@ three-stage curriculum, which A8 exists to test against it.
 epochs 1-150, early stop patience 25 on CALIB macro-F1
 
   loss     CE(label smoothing 0.10 → 0.04, linear)
-           + model.aux_head_weight (0.2) × aux CE on the spatial path
+           + w_aux(t) × aux CE on the spatial path          (see "The auxiliary weight" below:
+             legacy default = max(0.25, 0.65·(1 − 0.7·t/T)) = 0.65 → 0.25, NOT a fixed 0.2)
            + mixup(α = 0.35)  while  ep ≤ single.mixup_epochs (110)
   margin   0 until margin_warmup_start (111), cosine to single.arcface_m (0.30) by _end (130)
   sampler  plain shuffled, batch 128     (classes are already 91-96 each)
   aug      one `medium` profile throughout + D₄ + same-class CutMix
   optim    AdamW, 5-epoch warm-up then one cosine decay 5e-4 → 5e-6, wd 2e-4
-  clip     per-parameter-group, threshold 5.0, with clip-fraction telemetry
-  amp      bf16 throughout; fp32 confined to the head and any similarity matrix
+  clip     per-parameter-group, threshold 5.0, groups per `clip_partition` (default `legacy`)
+  amp      bf16 by default; fp16 + GradScaler under runtime=kaggle_t4x2 (the S08 sweep, S11 arms);
+           fp32 confined to the head and any similarity matrix
   ema      d_max 0.999, never re-initialised
   select   max(F1_live, F1_ema) on the split cfg.evaluation.select_split names
+  measure  clean fit on a fixed 1,000-kernel training subset (eval mode, no aug, m = 0, no LS),
+           live + EMA: every diagnostics stride, every new best, the final epoch (S10 P0.2)
 ```
+
+### The auxiliary weight — what is applied, and what was documented (S10 F54)
+
+Until S11 this page, the config banner and `sched/aux_weight` all said the single aux head
+carried a **fixed 0.2** (`model.aux_head_weight`, also `single.aux_loss_weight`). Neither key was
+read: the epoch loop called the three-stage curriculum's `_aux_loss_weight`, so every
+SpectralSeedNet run — including the whole S08 sweep — applied
+
+$$
+w_{\text{aux}}(t) = \max\big(\texttt{stage1.aux\_loss\_weight\_final},\; \texttt{stage1.aux\_loss\_weight\_init}\cdot(1 - 0.7\,t/T)\big)
+= 0.647 \;(t{=}1) \to 0.316 \;(t{=}110) \to 0.25 \;(t \ge 132)
+$$
+
+(mean 0.42 over 150 epochs; $T$ is the stage's epoch budget). S11 names both behaviours with
+`single.aux_weight_schedule`:
+
+| value | applied weight | role |
+|---|---|---|
+| `legacy` (**default**) | the decay above — bit-identical to every earlier run | X1, X2 and X4 run it, so they share the S08 regime as a function of training progress (X1: mean 0.425 vs 0.424; D21 guard 3) |
+| `fixed` | `model.aux_head_weight` (0.2) every epoch | the documented design (D07), tested as its own arm after X1 (S10 P1.3) |
+
+The weight actually applied is logged every epoch as `sched/aux_weight_applied`; the configured
+key as `sched/aux_weight_configured`; `results/run.json → run.regime.aux_weight_applied` records
+its first/last/mean. X4 turns the term off through the keys the loop reads
+(`stage1.aux_loss_weight_{init,final}=0`).
+
+### Training telemetry that measures fit (S10 P0.2–P0.3)
+
+`train/acc` is kept for continuity but is **not a fit measure**: under mixup it is scored against
+the first of two labels (ceiling ≈ 0.5) and under a margin against margin-penalised logits. Since
+S11 the loop also logs, over the steps that trained:
+
+| series | definition |
+|---|---|
+| `train/loss_main` | the main-head term alone (mixup-interpolated, label-smoothed), without the aux term |
+| `train/acc_dominant` | accuracy against the label with mixup weight $\lambda \ge 0.5$ |
+| `train/acc_plain` | accuracy of the **unpenalised** cosine logits (the model's `main_plain`) under a margin |
+| `fit/clean_train_{acc,ce}_{live,ema}` | the D18 definition: fixed class-stratified 1,000-kernel training subset (`single.clean_fit_kernels`, drawn by `single.clean_fit_seed` alone, so every seed of a fold uses the same kernels), eval mode, no augmentation, margin 0, plain CE (no LS). Also written to `output_dir/clean_fit.json` (subset rows, final epoch, at-best-checkpoint value) and to `stage1_meta.json → clean_fit` |
+
+The probe draws nothing from the global RNG (its loader has a private `torch.Generator`), so a
+run with it is bit-identical to a run without it — gate G-neutral, S11. On the shipped S08
+checkpoints it reproduces S10's offline clean fit (`ckpt_fit.csv`) exactly on the full training
+set and within sampling error (≤ 0.02) on the subset (S11 §5).
 
 ### Why one stage
 
@@ -639,25 +686,52 @@ $$
 \texttt{CLIP\_GROUPS} = \big\{\text{head}: \{\texttt{arcface\_head.}\},\;\; \text{fusion}: \{\texttt{cross\_interaction.},\,\texttt{embed\_net.}\},\;\; \text{backbone}: \text{everything else}\big\}
 $$
 
-Each group is clipped independently to `grad_clip = 1.0` via `nn.utils.clip_grad_norm_`, applied
-at the accumulation boundary (Stages 1–2) or before both SAM steps (Stage 3); pre-clip per-group
-norms are what the diagnostic channel reports (§5.2).
+Each group is clipped independently to `grad_clip` via `nn.utils.clip_grad_norm_`, applied at
+the accumulation boundary (Stages 1–2, single stage) or before both SAM steps (Stage 3). The
+threshold is **5.0** in every shipped composition except the frozen audited replica (1.0); X1 and
+X4 run 50.0, which does not bind at the observed norms (IC-6, S10 B5).
+
+**Which parameters form each group** is `clip_partition` (S11 D22):
+
+| `clip_partition` | `SpectralQuadNet` | `SpectralSeedNet` |
+|---|---|---|
+| `legacy` (**default**) | as above | `head` = `arcface_head.` · `fusion` = `embed_net.` only · `backbone` = everything else **including `fuse` and the aux head** — the prefixes are QuadNet's, and `cross_interaction.` matches nothing here (S10 F53) |
+| `model` | identical (the model declares nothing) | the model's `clip_groups()`: `fusion` = `fuse.` + `embed_net.` |
+
+The two partitions differ only on a step where a group's norm exceeds the threshold. At 5.0 the
+SeedNet backbone group binds on ≥ 82 % of steps (S10 B5), so `model` would change every shipped
+and X2 run (G-neutral's sensitivity control: 213 of 222 tensors move in a miniature run); it is
+therefore opt-in and the default stays `legacy`. Under Adam a constant clip factor re-weights
+batches rather than shrinking steps, so its effect is expected to be small (S10 F53) — but it is
+not zero, and changing it would add a variable to X2.
+
+**Telemetry.** `grad_norm/{preclip,postclip,clipped}_{head,fusion,backbone}` and
+`grad_norm/clip_fraction` per group; for a model that declares `grad_groups()` (SeedNet) the
+per-module pre-clip norms `grad_norm/{gate,stem,tail,proj,spectral,fuse,embed,head,aux}`. Every
+`grad_norm/*` epoch mean is over **finite** steps: an fp16 GradScaler overflow step (skipped by
+the scaler) used to make 2–6 epoch means per run `inf`/`nan` (S10 B14); it is now excluded and
+counted in `grad_norm/nonfinite_steps`. GradNorm (three-stage only) still reads the unfiltered
+sums, as before.
 
 ### Mixed precision
 
 $$
-\texttt{use\_amp} = (\texttt{supcon is None}) \land (\texttt{scaler is not None})
+\texttt{use\_amp} = (\texttt{scaler is not None})
 $$
 
-AMP is silently disabled whenever a SupCon module is passed — Stage 1 Phase 3 and all of Stage 2
-always pass one, so both run in full fp32; only Stage 1 Phases 1–2 (no SupCon) train under
-`autocast` with a `GradScaler` **explicitly bound to the active device**
-(`GradScaler(device=device.type)` — a bare `GradScaler()` binds to CUDA and silently becomes a
-no-op pass-through on any other accelerator, disabling loss scaling without an error). Stage 3
-passes no scaler at all and is fp32 by construction (SAM's two-pass ascent/descent contract is
-fundamentally incompatible with per-step loss rescaling). `engine/evaluate.py` and `engine/tta.py`
-both force `autocast(enabled=False)` unconditionally, so a reported metric never depends on the
-caller's AMP state.
+**IC-7.** A SupCon module no longer vetoes autocast for the epoch (it used to:
+`use_amp = (supcon is None) ∧ (scaler is not None)` dropped Stage 1 Phase 3 and all of Stage 2
+into fp32 and cost 5–10× per epoch). The contrastive terms re-enter fp32 for their similarity
+matrix only (`train_epoch._contrastive_terms`); the head's margin algebra is fp32 regardless.
+The autocast dtype is `runtime.amp_dtype`: **bf16** by default; **fp16 + an enabled
+`GradScaler`** under `runtime=kaggle_t4x2` (Turing has no bf16 Tensor Cores) — which is what
+the S08 sweep and every S11 arm ran. A non-finite batch is skipped and counted in
+`train/skipped_batches`; a scaler overflow step is counted in `grad_norm/nonfinite_steps`. The
+scaler is bound to the active device (`GradScaler(device=device.type)`). Stage 3 passes no
+scaler and is fp32 by construction (SAM's two-pass contract is incompatible with per-step loss
+rescaling). `engine/evaluate.py`, `engine/tta.py` and the clean-fit probe force
+`autocast(enabled=False)` unconditionally, so a reported metric never depends on the caller's
+AMP state.
 
 ### EMA
 
