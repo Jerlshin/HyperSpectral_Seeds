@@ -223,7 +223,8 @@ power. F69 annotated by F81.
 
 H21c–H21e and H22 are motivated by Y3's seed-0 results; H21c–H21e are therefore read on the **fresh seeds only**.
 
-**What the next session does (in order):**
+**Done in [S15](../S15_y3_replication/README.md) part 1** (runner, tests, validation; D34) — the run is one Kaggle
+command. The original plan:
 1. Commit and push this study (Kaggle clones `main`).
 2. Runner only — no model/training code: `experiments/s15.py` + `scripts/run_s15.py` reusing `experiments/s13.py`'s cell
    builder with a per-cell seed (`cells.gpu[*].seed`) and this file's hash; `--check`, `--cfg-job`; the code-identity

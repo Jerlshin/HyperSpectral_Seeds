@@ -1,0 +1,48 @@
+{
+ "source": "S13 cells' own wall clock on Kaggle T4 x 2 (evidence/S14_screen_reading/cells.csv); desc_only \u2248 X1 grouped (7.9 s/epoch, S13 runtime_estimate)",
+ "per_cell": [
+  {
+   "cell": "Y3/lean_grouped__f0_s1",
+   "minutes": 25.241149999999998
+  },
+  {
+   "cell": "Y3/lean_grouped__f0_s2",
+   "minutes": 25.241149999999998
+  },
+  {
+   "cell": "Y3/lean_grouped__f1_s1",
+   "minutes": 25.241149999999998
+  },
+  {
+   "cell": "Y3/lean_grouped__f1_s2",
+   "minutes": 25.241149999999998
+  },
+  {
+   "cell": "Y3/lean_stratified__f0_s1",
+   "minutes": 31.6664
+  },
+  {
+   "cell": "Y3/lean_stratified__f0_s2",
+   "minutes": 31.6664
+  },
+  {
+   "cell": "Y5/desc_only__f0_s0",
+   "minutes": 25.7
+  },
+  {
+   "cell": "Y5/desc_only__f1_s0",
+   "minutes": 25.7
+  },
+  {
+   "cell": "Y5/spatial_repair__f0_s0",
+   "minutes": 25.241149999999998
+  },
+  {
+   "cell": "Y5/spatial_repair__f1_s0",
+   "minutes": 25.241149999999998
+  }
+ ],
+ "total_minutes": 266.17969999999997,
+ "total_hours": 4.436328333333333,
+ "cap_hours_if_every_cell_runs_200_epochs": 4.929253703703703
+}

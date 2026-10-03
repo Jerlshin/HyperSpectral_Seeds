@@ -146,7 +146,8 @@ rejections (D30).
 `9e182670755e13a6ead29a761123841094a9b9fb6fae18392553893d65c1f3da`, frozen 2026-10-03 before any S15 cell or runner
 exists. H21a/H21b are the parent's and are read on seeds 0–2 as frozen there. **H21c–H21e and H22a/H22b are motivated by
 Y3's seed-0 results** (F74, F75); H21c–H21e are read on the fresh seeds (1, 2) only, against X1's cells at the same folds
-and seeds (grouped 0.528496, stratified 0.728593).
+and seeds (grouped 0.528496, stratified 0.728593). **Implemented in S15 part 1** (`scripts/run_s15.py`, D34); the
+reading map is S15 §8.
 
 | ID | Hypothesis (as frozen) | Experiment | Decision it drives | Status |
 |---|---|---|---|---|

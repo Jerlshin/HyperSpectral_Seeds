@@ -9,6 +9,8 @@ python train.py
 ```
 
 Training on Kaggle's two T4s: [§10 · Kaggle — GPU T4 x2](#kaggle--gpu-t4-x2).
+**Next run — S15** (replicate the lean network Y3 at seeds 1–2 and dissect it; 10 runs ≈ 4.4 h, one session):
+`python scripts/run_s15.py --nproc-per-node 2 --stream` — the Kaggle cells are in [§10](#kaggle--gpu-t4-x2) under *S15 in one session*.
 
 ---
 
@@ -553,6 +555,18 @@ failures that no component test could have caught.
 | `tests/unit/test_resume.py` | Training-state snapshot/restore continues exactly; interruption vs completion; the background writer; the DDP sampler reshuffles per epoch; the T4 profile composes |
 | `tests/smoke/test_kaggle_path.py` | Pre-slice → train → `metrics.jsonl` → simulated interruption → resume at the next epoch, and a two-rank `torchrun` run to the final evaluation |
 
+### Recorded result of the S15 validation (2026-10-03, macOS CPU, torch 2.13)
+
+```
+pytest                787 passed, 403 skipped, 2 xfailed, 0 failed     (S13 + S15 plan tests 28/28)
+run_s15.py --check    hashes S12/S13/S14 verify; code identity OK (129 files = aed5257); 10/10 cells compose
+run_s15.py --cfg-job  10/10 compose through train.py
+2-rank torchrun       R1, Y3 (seed 1), Y5 desc_only, Y5 spatial_repair finish; each held-out kernel once
+```
+
+S15 changes no model, training, data or config code (content digest equal to `aed5257`'s). Details:
+[`docs/research/studies/S15_y3_replication`](docs/research/studies/S15_y3_replication/README.md).
+
 ### Recorded result of the S13 validation (2026-10-02, macOS CPU, torch 2.13)
 
 ```
@@ -749,6 +763,32 @@ The arms' model keys default to the shipped network (bit-identical, S13's G-neut
 `model.spatial_mixstyle` (Y2), `model.spectral_descriptor`, `model.spatial_tail_strides`, `model.cbam_min_hw` (Y3).
 Every single-stage run now also reports the training-rows session κ (`evaluation.session_probe`, D26).
 
+### S15 — replicate the lean network (Y3) and dissect it (Y5)
+
+S14 read the S13 screen: only Y3, the lean network (`model.spectral_descriptor=snv_morph
+model.spatial_tail_strides=[2,2,2,1] model.cbam_min_hw=3`), passed — grouped 0.562, stratified 0.746, above every X1 run.
+S14 froze the next round in `docs/research/evidence/S14_screen_reading/preregistration_s14.json` (`9e182670…`):
+**exactly 10 GPU runs and nothing else** — Y3 at seeds 1 and 2 (grouped folds 0/1 + stratified, 6 runs; S13 already
+ran seed 0) and Y5, Y3's changes split in two at seed 0 (`desc_only`, `spatial_repair`; grouped folds 0/1, 4 runs).
+`scripts/run_s15.py` builds the cells from the three hashed files (S12 → R1, S13, S14 → cells with their own seeds),
+refuses to run if any moved, refuses if the model/training/data/config code differs from `aed5257` (the code the S13
+cells ran — a content digest, so it works in Kaggle's shallow clone), and never re-runs an S13 cell. Replication cells
+run first. See [`docs/research/studies/S15_y3_replication`](docs/research/studies/S15_y3_replication/README.md).
+
+```bash
+python scripts/run_s15.py --list                          # the 10 cells, their seeds and frozen sources — free
+python scripts/run_s15.py --check                         # hashes, code identity, R1, every cell's composition — free
+python scripts/run_s15.py --cfg-job                       # `train.py --cfg job` for every cell — free
+python scripts/run_s15.py --nproc-per-node 2 --dry-run    # the exact torchrun commands — free
+python scripts/run_s15.py --nproc-per-node 2 --stream     # all 10 runs — T4 x2, ≈ 4.4 h (≤ 4.8 h)
+python scripts/run_s15.py --summary                       # what is scored so far
+python scripts/run_s15.py --cells Y5/desc_only__f0_s0 --nproc-per-node 2 --stream   # one cell
+```
+
+No new model key: S15 uses only keys S13 added. The cells write to
+`outputs/experiments_u430k32/s15/{Y3,Y5}/<variant>__f<fold>_s<seed>/`; the reading (H21a–H21e, H22a/H22b) belongs to
+the next analysis study (S16).
+
 ### Multi-GPU
 
 ```bash
@@ -874,18 +914,25 @@ the next version, and restore it before Cell 3:
 !cp -rn /kaggle/input/<this-notebook-slug>/HyperSpectral_Seeds/outputs /kaggle/working/HyperSpectral_Seeds/
 ```
 
-**S13 in one session** (after Cell 1 and the 2-epoch smoke run): the code must be on GitHub `main` (Cell 2 prints
-the commit).
+**S15 in one session — the next run** (after Cell 1; the 2-epoch smoke run is optional). The code must be on GitHub
+`main` (Cell 2 prints the commit). Only the 10 frozen S15 cells run; nothing from S11/S13 is repeated and no S11/S13
+output needs to be attached.
 
 ```bash
-# Cell 2 — the S13 code and its frozen plan
-!cd /kaggle/working/HyperSpectral_Seeds && git log --oneline -1 && python scripts/run_s13.py --check
-# Cell 3 — all 10 S13 runs on both GPUs, then Y1's fusion and a summary (≈ 4.4 h)
-!cd /kaggle/working/HyperSpectral_Seeds && python scripts/run_s13.py --nproc-per-node 2 --stream
+# Cell 2 — the S15 code, its frozen plan, the code-identity guard (must print "code identity: OK" and "10/10 cells OK")
+!cd /kaggle/working/HyperSpectral_Seeds && git log --oneline -1 && python scripts/run_s15.py --check
+# Cell 3 — the 10 S15 runs on both GPUs: Y3 seeds 1–2 first (6), then the Y5 dissection (4), then a summary (≈ 4.4 h)
+!cd /kaggle/working/HyperSpectral_Seeds && python scripts/run_s15.py --nproc-per-node 2 --stream
+# Cell 4 — one archive to download (≈ 0.25 GB with checkpoints), for the S16 reading on your machine
+!cd /kaggle/working/HyperSpectral_Seeds && tar czf /kaggle/working/s15_outputs.tar.gz outputs/experiments_u430k32/s15 && ls -lh /kaggle/working/s15_outputs.tar.gz
 ```
 
-The P0 re-score of `X2/spatial_only__f1_s0` needs the S11 notebook's output restored (as below) and is one more line,
-`python scripts/run_frozen.py --cells X2/spatial_only__f1_s0 --nproc-per-node 2 --stream` (final evaluation only).
+Back on your machine, unpack it at the repository root (`tar xzf s15_outputs.tar.gz`) so the cells land in
+`outputs/experiments_u430k32/s15/`. If the session is cut short, restore `outputs/` as below and re-run Cell 3: finished
+cells are skipped and an interrupted one resumes from its last epoch.
+
+*S13 (done, 2026-10-03):* `python scripts/run_s13.py --nproc-per-node 2 --stream` ran the 10 screening cells and Y1's
+fusion; it skips finished cells if re-run.
 
 When every cell is done (or to re-tabulate what is there):
 

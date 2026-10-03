@@ -261,8 +261,8 @@ ARM_INTENT: dict[tuple[str, str], dict[str, Any]] = {
 }
 
 
-def expected_values(cell: S13Cell) -> dict[str, Any]:
-    """The resolved values ``cell`` must compose to."""
+def base_expected_values() -> dict[str, Any]:
+    """What every R1 cell resolves to before its arm, protocol, fold and seed (shared with S15)."""
     values: dict[str, Any] = dict(frozen._INVARIANT)
     values.update(frozen._X1)  # R1 — `check_regime_is_r1` ties it to the parent file
     values.update(
@@ -277,6 +277,12 @@ def expected_values(cell: S13Cell) -> dict[str, Any]:
         }
     )
     values.update(_ARM_KEY_DEFAULTS)
+    return values
+
+
+def expected_values(cell: S13Cell) -> dict[str, Any]:
+    """The resolved values ``cell`` must compose to."""
+    values = base_expected_values()
     if (cell.arm, cell.variant) not in ARM_INTENT:
         raise PreregistrationError(f"{cell.name}: no frozen intent for arm {cell.arm}/{cell.variant}")
     values.update(ARM_INTENT[(cell.arm, cell.variant)])
@@ -304,13 +310,21 @@ def compose_cell(cell: S13Cell, output_root: str | Path = DEFAULT_OUTPUT_ROOT) -
     return load_experiment_config(CONFIG, overrides=list(argv[3:]))
 
 
-def check_cell(cell: S13Cell, output_root: str | Path = DEFAULT_OUTPUT_ROOT) -> list[str]:
-    """Problems with ``cell``'s composition, as strings; empty when it is right."""
+def check_cell(
+    cell: S13Cell,
+    output_root: str | Path = DEFAULT_OUTPUT_ROOT,
+    expected: dict[str, Any] | None = None,
+) -> list[str]:
+    """Problems with ``cell``'s composition, as strings; empty when it is right.
+
+    ``expected`` defaults to this module's :func:`expected_values`; a later study
+    whose cells reuse :class:`S13Cell` (S15) passes its own.
+    """
     from omegaconf import OmegaConf
 
     problems: list[str] = []
     cfg = compose_cell(cell, output_root)
-    for key, want in expected_values(cell).items():
+    for key, want in (expected if expected is not None else expected_values(cell)).items():
         got = frozen._get(cfg, key)
         if OmegaConf.is_list(got):
             got = list(got)

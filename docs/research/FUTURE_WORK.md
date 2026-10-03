@@ -15,9 +15,10 @@ ID and leave the row in place.
 S13's single-seed screen (read in S14): the lean network Y3 passed and beat every X1 run (F74, F75); decoupled fusion (Y1)
 and masked MixStyle (Y2) are screening rejections (F76–F79); the 80/20 tier equals 70/30 (F80). Frozen in
 `evidence/S14_screen_reading/preregistration_s14.json` (`9e182670…`). **10 GPU runs ≈ 4.4 h on Kaggle T4 × 2 (one
-session).** Needs a runner with per-cell seeds first (no model code; S14 §9.1).
+session).** Implemented and validated ([S15](studies/S15_y3_replication/README.md) part 1, F82, D34):
+`python scripts/run_s15.py --nproc-per-node 2 --stream` (README §10, *S15 in one session*).
 
-### FW-35 · Replicate Y3 at seeds 1, 2 (H21a–H21e) — **frozen for S15**
+### FW-35 · Replicate Y3 at seeds 1, 2 (H21a–H21e) — **→ [S15](studies/S15_y3_replication/README.md), run pending**
 - **Builds on** D28, F74. Y3 grouped f0/f1 × seeds 1, 2 and stratified seeds 1, 2 (6 runs). H21a/H21b on seeds 0–2 as the
   parent froze them; H21c (grouped superiority ≥ +0.020, CI excluding 0), H21d (cross ≥ 0.1666 and attraction ≤ 0.4240),
   H21e (stratified superiority ≥ +0.018) on the fresh seeds only.
@@ -25,7 +26,7 @@ session).** Needs a runner with per-cell seeds first (no model code; S14 §9.1).
   D29 deviation 1); FW-37 next. **If not:** F74 was a false screening pass; X1 stays the reference. Y1/Y2/Y4 are not
   replicated (D30).
 
-### FW-36 · Dissect Y3 (H22a, H22b) — **frozen for S15**
+### FW-36 · Dissect Y3 (H22a, H22b) — **→ [S15](studies/S15_y3_replication/README.md), run pending**
 - **Builds on** F75 (three removals at once; attribution unknown). `desc_only` (SNV + morph descriptor alone) and
   `spatial_repair` (tail [2,2,2,1] + no CBAM on 2 × 2 alone), grouped f0/f1, seed 0 (4 runs, screen).
 - **Reading:** exactly one passes (≥ 0.5508) → that change carries the gain; both → either suffices; neither → interaction or

@@ -1,0 +1,404 @@
+{
+ "preregistration_sha256": {
+  "S12": "88b377c5bc32f31a9ccb95356a88eb0be35e8cb51216b035c88f1761919ae7f4",
+  "S13": "ef5982131df48c2ba8105c751fcf21f527a01ea2c0addf4ad59380f1a0989460",
+  "S14": "9e182670755e13a6ead29a761123841094a9b9fb6fae18392553893d65c1f3da"
+ },
+ "regime_r1": [
+  "single.mixup_epochs=30",
+  "single.arcface_m=0.0",
+  "single.margin_warmup_start=31",
+  "single.margin_warmup_end=31",
+  "grad_clip=50.0",
+  "single.epochs=200",
+  "single.patience=40"
+ ],
+ "regime_check": "ok",
+ "repeats_an_s13_cell": "none",
+ "gpu_cells": [
+  {
+   "cell": "Y3/lean_grouped__f0_s1",
+   "source": "S14 preregistration_s14.json#cells.gpu[0]; regime: S12 preregistration_s12.json#regime.overrides",
+   "data": "ablation/u430k32_grouped",
+   "seed": 1,
+   "arm_overrides": [
+    "model.spectral_descriptor=snv_morph",
+    "model.spatial_tail_strides=[2,2,2,1]",
+    "model.cbam_min_hw=3"
+   ],
+   "resolved": {
+    "single.mixup_epochs": 30,
+    "single.arcface_m": 0.0,
+    "grad_clip": 50.0,
+    "single.epochs": 200,
+    "single.patience": 40,
+    "model.pathways": [
+     "spatial",
+     "spectral"
+    ],
+    "model.spatial_mixstyle": false,
+    "model.spectral_descriptor": "snv_morph",
+    "model.spatial_tail_strides": [
+     2,
+     2,
+     2,
+     1
+    ],
+    "model.cbam_min_hw": 3,
+    "data.split_scheme": "grouped",
+    "data.split_fold": 0,
+    "data.split_eval_frac": 0.3,
+    "seed": 1,
+    "evaluation.session_probe": true,
+    "evaluation.save_logits": true
+   },
+   "check": "ok",
+   "command": "torchrun --standalone --nproc_per_node=2 train.py --config-name=experiment/seednet_full256 data=ablation/u430k32_grouped runtime=kaggle_t4x2 tracking=console_jsonl single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0 single.epochs=200 single.patience=40 model.spectral_descriptor=snv_morph 'model.spatial_tail_strides=[2,2,2,1]' model.cbam_min_hw=3 run_name=s15/Y3/lean_grouped__f0_s1 output_dir=outputs/experiments_u430k32/s15/Y3/lean_grouped__f0_s1 data.split_fold=0 seed=1"
+  },
+  {
+   "cell": "Y3/lean_grouped__f0_s2",
+   "source": "S14 preregistration_s14.json#cells.gpu[1]; regime: S12 preregistration_s12.json#regime.overrides",
+   "data": "ablation/u430k32_grouped",
+   "seed": 2,
+   "arm_overrides": [
+    "model.spectral_descriptor=snv_morph",
+    "model.spatial_tail_strides=[2,2,2,1]",
+    "model.cbam_min_hw=3"
+   ],
+   "resolved": {
+    "single.mixup_epochs": 30,
+    "single.arcface_m": 0.0,
+    "grad_clip": 50.0,
+    "single.epochs": 200,
+    "single.patience": 40,
+    "model.pathways": [
+     "spatial",
+     "spectral"
+    ],
+    "model.spatial_mixstyle": false,
+    "model.spectral_descriptor": "snv_morph",
+    "model.spatial_tail_strides": [
+     2,
+     2,
+     2,
+     1
+    ],
+    "model.cbam_min_hw": 3,
+    "data.split_scheme": "grouped",
+    "data.split_fold": 0,
+    "data.split_eval_frac": 0.3,
+    "seed": 2,
+    "evaluation.session_probe": true,
+    "evaluation.save_logits": true
+   },
+   "check": "ok",
+   "command": "torchrun --standalone --nproc_per_node=2 train.py --config-name=experiment/seednet_full256 data=ablation/u430k32_grouped runtime=kaggle_t4x2 tracking=console_jsonl single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0 single.epochs=200 single.patience=40 model.spectral_descriptor=snv_morph 'model.spatial_tail_strides=[2,2,2,1]' model.cbam_min_hw=3 run_name=s15/Y3/lean_grouped__f0_s2 output_dir=outputs/experiments_u430k32/s15/Y3/lean_grouped__f0_s2 data.split_fold=0 seed=2"
+  },
+  {
+   "cell": "Y3/lean_grouped__f1_s1",
+   "source": "S14 preregistration_s14.json#cells.gpu[2]; regime: S12 preregistration_s12.json#regime.overrides",
+   "data": "ablation/u430k32_grouped",
+   "seed": 1,
+   "arm_overrides": [
+    "model.spectral_descriptor=snv_morph",
+    "model.spatial_tail_strides=[2,2,2,1]",
+    "model.cbam_min_hw=3"
+   ],
+   "resolved": {
+    "single.mixup_epochs": 30,
+    "single.arcface_m": 0.0,
+    "grad_clip": 50.0,
+    "single.epochs": 200,
+    "single.patience": 40,
+    "model.pathways": [
+     "spatial",
+     "spectral"
+    ],
+    "model.spatial_mixstyle": false,
+    "model.spectral_descriptor": "snv_morph",
+    "model.spatial_tail_strides": [
+     2,
+     2,
+     2,
+     1
+    ],
+    "model.cbam_min_hw": 3,
+    "data.split_scheme": "grouped",
+    "data.split_fold": 1,
+    "data.split_eval_frac": 0.3,
+    "seed": 1,
+    "evaluation.session_probe": true,
+    "evaluation.save_logits": true
+   },
+   "check": "ok",
+   "command": "torchrun --standalone --nproc_per_node=2 train.py --config-name=experiment/seednet_full256 data=ablation/u430k32_grouped runtime=kaggle_t4x2 tracking=console_jsonl single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0 single.epochs=200 single.patience=40 model.spectral_descriptor=snv_morph 'model.spatial_tail_strides=[2,2,2,1]' model.cbam_min_hw=3 run_name=s15/Y3/lean_grouped__f1_s1 output_dir=outputs/experiments_u430k32/s15/Y3/lean_grouped__f1_s1 data.split_fold=1 seed=1"
+  },
+  {
+   "cell": "Y3/lean_grouped__f1_s2",
+   "source": "S14 preregistration_s14.json#cells.gpu[3]; regime: S12 preregistration_s12.json#regime.overrides",
+   "data": "ablation/u430k32_grouped",
+   "seed": 2,
+   "arm_overrides": [
+    "model.spectral_descriptor=snv_morph",
+    "model.spatial_tail_strides=[2,2,2,1]",
+    "model.cbam_min_hw=3"
+   ],
+   "resolved": {
+    "single.mixup_epochs": 30,
+    "single.arcface_m": 0.0,
+    "grad_clip": 50.0,
+    "single.epochs": 200,
+    "single.patience": 40,
+    "model.pathways": [
+     "spatial",
+     "spectral"
+    ],
+    "model.spatial_mixstyle": false,
+    "model.spectral_descriptor": "snv_morph",
+    "model.spatial_tail_strides": [
+     2,
+     2,
+     2,
+     1
+    ],
+    "model.cbam_min_hw": 3,
+    "data.split_scheme": "grouped",
+    "data.split_fold": 1,
+    "data.split_eval_frac": 0.3,
+    "seed": 2,
+    "evaluation.session_probe": true,
+    "evaluation.save_logits": true
+   },
+   "check": "ok",
+   "command": "torchrun --standalone --nproc_per_node=2 train.py --config-name=experiment/seednet_full256 data=ablation/u430k32_grouped runtime=kaggle_t4x2 tracking=console_jsonl single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0 single.epochs=200 single.patience=40 model.spectral_descriptor=snv_morph 'model.spatial_tail_strides=[2,2,2,1]' model.cbam_min_hw=3 run_name=s15/Y3/lean_grouped__f1_s2 output_dir=outputs/experiments_u430k32/s15/Y3/lean_grouped__f1_s2 data.split_fold=1 seed=2"
+  },
+  {
+   "cell": "Y3/lean_stratified__f0_s1",
+   "source": "S14 preregistration_s14.json#cells.gpu[4]; regime: S12 preregistration_s12.json#regime.overrides",
+   "data": "ablation/u430k32_stratified",
+   "seed": 1,
+   "arm_overrides": [
+    "model.spectral_descriptor=snv_morph",
+    "model.spatial_tail_strides=[2,2,2,1]",
+    "model.cbam_min_hw=3"
+   ],
+   "resolved": {
+    "single.mixup_epochs": 30,
+    "single.arcface_m": 0.0,
+    "grad_clip": 50.0,
+    "single.epochs": 200,
+    "single.patience": 40,
+    "model.pathways": [
+     "spatial",
+     "spectral"
+    ],
+    "model.spatial_mixstyle": false,
+    "model.spectral_descriptor": "snv_morph",
+    "model.spatial_tail_strides": [
+     2,
+     2,
+     2,
+     1
+    ],
+    "model.cbam_min_hw": 3,
+    "data.split_scheme": "stratified",
+    "data.split_fold": 0,
+    "data.split_eval_frac": 0.3,
+    "seed": 1,
+    "evaluation.session_probe": true,
+    "evaluation.save_logits": true
+   },
+   "check": "ok",
+   "command": "torchrun --standalone --nproc_per_node=2 train.py --config-name=experiment/seednet_full256 data=ablation/u430k32_stratified runtime=kaggle_t4x2 tracking=console_jsonl single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0 single.epochs=200 single.patience=40 model.spectral_descriptor=snv_morph 'model.spatial_tail_strides=[2,2,2,1]' model.cbam_min_hw=3 run_name=s15/Y3/lean_stratified__f0_s1 output_dir=outputs/experiments_u430k32/s15/Y3/lean_stratified__f0_s1 data.split_fold=0 seed=1"
+  },
+  {
+   "cell": "Y3/lean_stratified__f0_s2",
+   "source": "S14 preregistration_s14.json#cells.gpu[5]; regime: S12 preregistration_s12.json#regime.overrides",
+   "data": "ablation/u430k32_stratified",
+   "seed": 2,
+   "arm_overrides": [
+    "model.spectral_descriptor=snv_morph",
+    "model.spatial_tail_strides=[2,2,2,1]",
+    "model.cbam_min_hw=3"
+   ],
+   "resolved": {
+    "single.mixup_epochs": 30,
+    "single.arcface_m": 0.0,
+    "grad_clip": 50.0,
+    "single.epochs": 200,
+    "single.patience": 40,
+    "model.pathways": [
+     "spatial",
+     "spectral"
+    ],
+    "model.spatial_mixstyle": false,
+    "model.spectral_descriptor": "snv_morph",
+    "model.spatial_tail_strides": [
+     2,
+     2,
+     2,
+     1
+    ],
+    "model.cbam_min_hw": 3,
+    "data.split_scheme": "stratified",
+    "data.split_fold": 0,
+    "data.split_eval_frac": 0.3,
+    "seed": 2,
+    "evaluation.session_probe": true,
+    "evaluation.save_logits": true
+   },
+   "check": "ok",
+   "command": "torchrun --standalone --nproc_per_node=2 train.py --config-name=experiment/seednet_full256 data=ablation/u430k32_stratified runtime=kaggle_t4x2 tracking=console_jsonl single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0 single.epochs=200 single.patience=40 model.spectral_descriptor=snv_morph 'model.spatial_tail_strides=[2,2,2,1]' model.cbam_min_hw=3 run_name=s15/Y3/lean_stratified__f0_s2 output_dir=outputs/experiments_u430k32/s15/Y3/lean_stratified__f0_s2 data.split_fold=0 seed=2"
+  },
+  {
+   "cell": "Y5/desc_only__f0_s0",
+   "source": "S14 preregistration_s14.json#cells.gpu[6]; regime: S12 preregistration_s12.json#regime.overrides",
+   "data": "ablation/u430k32_grouped",
+   "seed": 0,
+   "arm_overrides": [
+    "model.spectral_descriptor=snv_morph"
+   ],
+   "resolved": {
+    "single.mixup_epochs": 30,
+    "single.arcface_m": 0.0,
+    "grad_clip": 50.0,
+    "single.epochs": 200,
+    "single.patience": 40,
+    "model.pathways": [
+     "spatial",
+     "spectral"
+    ],
+    "model.spatial_mixstyle": false,
+    "model.spectral_descriptor": "snv_morph",
+    "model.spatial_tail_strides": [
+     2,
+     2,
+     2,
+     2
+    ],
+    "model.cbam_min_hw": 0,
+    "data.split_scheme": "grouped",
+    "data.split_fold": 0,
+    "data.split_eval_frac": 0.3,
+    "seed": 0,
+    "evaluation.session_probe": true,
+    "evaluation.save_logits": true
+   },
+   "check": "ok",
+   "command": "torchrun --standalone --nproc_per_node=2 train.py --config-name=experiment/seednet_full256 data=ablation/u430k32_grouped runtime=kaggle_t4x2 tracking=console_jsonl single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0 single.epochs=200 single.patience=40 model.spectral_descriptor=snv_morph run_name=s15/Y5/desc_only__f0_s0 output_dir=outputs/experiments_u430k32/s15/Y5/desc_only__f0_s0 data.split_fold=0 seed=0"
+  },
+  {
+   "cell": "Y5/desc_only__f1_s0",
+   "source": "S14 preregistration_s14.json#cells.gpu[7]; regime: S12 preregistration_s12.json#regime.overrides",
+   "data": "ablation/u430k32_grouped",
+   "seed": 0,
+   "arm_overrides": [
+    "model.spectral_descriptor=snv_morph"
+   ],
+   "resolved": {
+    "single.mixup_epochs": 30,
+    "single.arcface_m": 0.0,
+    "grad_clip": 50.0,
+    "single.epochs": 200,
+    "single.patience": 40,
+    "model.pathways": [
+     "spatial",
+     "spectral"
+    ],
+    "model.spatial_mixstyle": false,
+    "model.spectral_descriptor": "snv_morph",
+    "model.spatial_tail_strides": [
+     2,
+     2,
+     2,
+     2
+    ],
+    "model.cbam_min_hw": 0,
+    "data.split_scheme": "grouped",
+    "data.split_fold": 1,
+    "data.split_eval_frac": 0.3,
+    "seed": 0,
+    "evaluation.session_probe": true,
+    "evaluation.save_logits": true
+   },
+   "check": "ok",
+   "command": "torchrun --standalone --nproc_per_node=2 train.py --config-name=experiment/seednet_full256 data=ablation/u430k32_grouped runtime=kaggle_t4x2 tracking=console_jsonl single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0 single.epochs=200 single.patience=40 model.spectral_descriptor=snv_morph run_name=s15/Y5/desc_only__f1_s0 output_dir=outputs/experiments_u430k32/s15/Y5/desc_only__f1_s0 data.split_fold=1 seed=0"
+  },
+  {
+   "cell": "Y5/spatial_repair__f0_s0",
+   "source": "S14 preregistration_s14.json#cells.gpu[8]; regime: S12 preregistration_s12.json#regime.overrides",
+   "data": "ablation/u430k32_grouped",
+   "seed": 0,
+   "arm_overrides": [
+    "model.spatial_tail_strides=[2,2,2,1]",
+    "model.cbam_min_hw=3"
+   ],
+   "resolved": {
+    "single.mixup_epochs": 30,
+    "single.arcface_m": 0.0,
+    "grad_clip": 50.0,
+    "single.epochs": 200,
+    "single.patience": 40,
+    "model.pathways": [
+     "spatial",
+     "spectral"
+    ],
+    "model.spatial_mixstyle": false,
+    "model.spectral_descriptor": "full",
+    "model.spatial_tail_strides": [
+     2,
+     2,
+     2,
+     1
+    ],
+    "model.cbam_min_hw": 3,
+    "data.split_scheme": "grouped",
+    "data.split_fold": 0,
+    "data.split_eval_frac": 0.3,
+    "seed": 0,
+    "evaluation.session_probe": true,
+    "evaluation.save_logits": true
+   },
+   "check": "ok",
+   "command": "torchrun --standalone --nproc_per_node=2 train.py --config-name=experiment/seednet_full256 data=ablation/u430k32_grouped runtime=kaggle_t4x2 tracking=console_jsonl single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0 single.epochs=200 single.patience=40 'model.spatial_tail_strides=[2,2,2,1]' model.cbam_min_hw=3 run_name=s15/Y5/spatial_repair__f0_s0 output_dir=outputs/experiments_u430k32/s15/Y5/spatial_repair__f0_s0 data.split_fold=0 seed=0"
+  },
+  {
+   "cell": "Y5/spatial_repair__f1_s0",
+   "source": "S14 preregistration_s14.json#cells.gpu[9]; regime: S12 preregistration_s12.json#regime.overrides",
+   "data": "ablation/u430k32_grouped",
+   "seed": 0,
+   "arm_overrides": [
+    "model.spatial_tail_strides=[2,2,2,1]",
+    "model.cbam_min_hw=3"
+   ],
+   "resolved": {
+    "single.mixup_epochs": 30,
+    "single.arcface_m": 0.0,
+    "grad_clip": 50.0,
+    "single.epochs": 200,
+    "single.patience": 40,
+    "model.pathways": [
+     "spatial",
+     "spectral"
+    ],
+    "model.spatial_mixstyle": false,
+    "model.spectral_descriptor": "full",
+    "model.spatial_tail_strides": [
+     2,
+     2,
+     2,
+     1
+    ],
+    "model.cbam_min_hw": 3,
+    "data.split_scheme": "grouped",
+    "data.split_fold": 1,
+    "data.split_eval_frac": 0.3,
+    "seed": 0,
+    "evaluation.session_probe": true,
+    "evaluation.save_logits": true
+   },
+   "check": "ok",
+   "command": "torchrun --standalone --nproc_per_node=2 train.py --config-name=experiment/seednet_full256 data=ablation/u430k32_grouped runtime=kaggle_t4x2 tracking=console_jsonl single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0 single.epochs=200 single.patience=40 'model.spatial_tail_strides=[2,2,2,1]' model.cbam_min_hw=3 run_name=s15/Y5/spatial_repair__f1_s0 output_dir=outputs/experiments_u430k32/s15/Y5/spatial_repair__f1_s0 data.split_fold=1 seed=0"
+  }
+ ]
+}

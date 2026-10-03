@@ -14,7 +14,7 @@ describes *what we have learned and why the code is the way it is*.
 
 ## 1 · Where the research stands today
 
-*Last revised 2026-10-03 (after S14). Update this section whenever a finding or decision changes status.*
+*Last revised 2026-10-03 (after S15 part 1). Update this section whenever a finding or decision changes status.*
 
 **The question.** 90 rice varieties, 8,624 single-kernel hyperspectral patches (Zenodo 3241923).
 Can a model identify the *variety* of a kernel — and how much of what a model scores on this
@@ -74,7 +74,7 @@ dataset is variety recognition rather than recognition of *how and when the kern
     2 × 2 map) gave grouped **0.562** and stratified **0.746**, above every run of the current reference in all three
     cells, with same- *and* cross-session recall up (0.678 / 0.186) and session attraction down — off the trade-off
     frontier S12 thought only new data could leave. It is a screening result (one seed); replication and a dissection
-    of which removal carries it are frozen (S15). [F74, F75](FINDINGS.md) · [D30, D33](DECISIONS.md) ·
+    of which removal carries it are frozen and ready to run — 10 runs, one Kaggle command (S15, F82). [F74, F75](FINDINGS.md) · [D30, D33](DECISIONS.md) ·
     [S14](studies/S14_screen_reading/README.md)
 13. **The two session-robustness ideas failed the screen, for informative reasons.** Training the pathways separately
     and fusing them keeps the score but loses its robustness under the fit-first regime: fitting more moves each single
@@ -116,7 +116,7 @@ docs/research/
 ├── GLOSSARY.md        the project's vocabulary (bundle, session, grouped, calib, uniform430 …)
 ├── studies/
 │   ├── _TEMPLATE.md   copy this to start a new study
-│   └── S00 … S14/     one folder per study, each with its own README.md
+│   └── S00 … S15/     one folder per study, each with its own README.md
 ├── figures/<study>/   every figure the log shows (generated or copied — never hand-edited)
 ├── evidence/<study>/  snapshot of the raw results each claim rests on (outputs/ is git-ignored)
 └── tools/build_assets.py   regenerates evidence/ and figures/ from outputs/ and dataset/
@@ -146,6 +146,7 @@ study stays *modular* (it can be read, revised or superseded on its own).
 | [S12](studies/S12_frozen_arms_reading/README.md) | Reading X1, X2, X4: what binds now that the network fits | 2026-10-02 | complete (analysis); S13 arms frozen | fit solved, held-out unmoved; the 3-D pathway is the session channel; route A |
 | [S13](studies/S13_representation_screening/README.md) | Route-A arms Y1–Y4 as a single-seed screen | 2026-10-02 → | complete — run 2026-10-03 (10 + 2 cells), read in S14 | one seed, all arms/folds/contrasts (D28); P0 fixed (F72) |
 | [S14](studies/S14_screen_reading/README.md) | Reading the S13 screen: what passed, what failed and why | 2026-10-03 | complete (analysis); S15 frozen | lean network passes (grouped 0.562, stratified 0.746, cross 0.186); decoupling and MixStyle rejected; Y3 replication + dissection frozen |
+| [S15](studies/S15_y3_replication/README.md) | Replicating the lean network (Y3) and dissecting it (Y5) | 2026-10-03 → | part 1 complete (runner, tests, validation); GPU run pending | 10 runs ≈ 4.4 h, one command; training code = `aed5257` (digest guard, F82) |
 
 ## 4 · Conventions
 

@@ -1,0 +1,32 @@
+{
+ "reference_commit": "aed5257d71603edf4021e7763e325dd146c84170",
+ "scope": {
+  "globs": [
+   [
+    "src/spectralquadnet",
+    "*.py"
+   ],
+   [
+    "src/spectralquadnet",
+    "*.yaml"
+   ],
+   [
+    "configs",
+    "*.yaml"
+   ]
+  ],
+  "files": [
+   "train.py"
+  ],
+  "excluded": [
+   "src/spectralquadnet/experiments/"
+  ]
+ },
+ "digest_at_reference": "fade41e5764c4d3313dcc8e9ab9e270f3ccfda591ea81423bd2ead42a650462f",
+ "n_files_at_reference": 129,
+ "digest_pinned_in_s15": "fade41e5764c4d3313dcc8e9ab9e270f3ccfda591ea81423bd2ead42a650462f",
+ "digest_worktree": "fade41e5764c4d3313dcc8e9ab9e270f3ccfda591ea81423bd2ead42a650462f",
+ "n_files_worktree": 129,
+ "identical": true,
+ "git_diff_stat_vs_reference_on_scope": "(empty)"
+}

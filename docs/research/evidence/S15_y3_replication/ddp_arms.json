@@ -1,0 +1,140 @@
+{
+ "launcher": "torchrun --nproc_per_node=2 (gloo, CPU)",
+ "harness": "S13 ddp_arms.py (_build_dataset, BASE, _torchrun, _report)",
+ "arms": {
+  "R1": {
+   "world_size": 2,
+   "held_out_kernels": 91,
+   "predictions_written": 91,
+   "each_kernel_once": true,
+   "regime": {
+    "pathways": [
+     "spatial",
+     "spectral"
+    ],
+    "spatial_mixstyle": false,
+    "spectral_descriptor": "full",
+    "spatial_tail_strides": [
+     2,
+     2,
+     2,
+     2
+    ],
+    "cbam_min_hw": 0,
+    "split_eval_frac": 0.3,
+    "grad_clip": 50.0,
+    "arcface_m": 0.0
+   },
+   "parameters": 917787,
+   "session_probe_rows": 77,
+   "train_rows": 77,
+   "probe_every_training_row_once": true,
+   "kappa": {
+    "embedding": -0.303921568627451,
+    "spatial": -0.21333333333333315,
+    "spectral": -0.027972027972028135
+   }
+  },
+  "Y3_lean_s1": {
+   "world_size": 2,
+   "held_out_kernels": 91,
+   "predictions_written": 91,
+   "each_kernel_once": true,
+   "regime": {
+    "pathways": [
+     "spatial",
+     "spectral"
+    ],
+    "spatial_mixstyle": false,
+    "spectral_descriptor": "snv_morph",
+    "spatial_tail_strides": [
+     2,
+     2,
+     2,
+     1
+    ],
+    "cbam_min_hw": 3,
+    "split_eval_frac": 0.3,
+    "grad_clip": 50.0,
+    "arcface_m": 0.0
+   },
+   "parameters": 914109,
+   "session_probe_rows": 77,
+   "train_rows": 77,
+   "probe_every_training_row_once": true,
+   "kappa": {
+    "embedding": 0.11920529801324498,
+    "spatial": 0.010869565217391353,
+    "spectral": 0.2432432432432431
+   }
+  },
+  "Y5_desc_only": {
+   "world_size": 2,
+   "held_out_kernels": 91,
+   "predictions_written": 91,
+   "each_kernel_once": true,
+   "regime": {
+    "pathways": [
+     "spatial",
+     "spectral"
+    ],
+    "spatial_mixstyle": false,
+    "spectral_descriptor": "snv_morph",
+    "spatial_tail_strides": [
+     2,
+     2,
+     2,
+     2
+    ],
+    "cbam_min_hw": 0,
+    "split_eval_frac": 0.3,
+    "grad_clip": 50.0,
+    "arcface_m": 0.0
+   },
+   "parameters": 916707,
+   "session_probe_rows": 77,
+   "train_rows": 77,
+   "probe_every_training_row_once": true,
+   "kappa": {
+    "embedding": -0.5457413249211356,
+    "spatial": -0.14754098360655754,
+    "spectral": -0.3908794788273615
+   }
+  },
+  "Y5_spatial_repair": {
+   "world_size": 2,
+   "held_out_kernels": 91,
+   "predictions_written": 91,
+   "each_kernel_once": true,
+   "regime": {
+    "pathways": [
+     "spatial",
+     "spectral"
+    ],
+    "spatial_mixstyle": false,
+    "spectral_descriptor": "full",
+    "spatial_tail_strides": [
+     2,
+     2,
+     2,
+     1
+    ],
+    "cbam_min_hw": 3,
+    "split_eval_frac": 0.3,
+    "grad_clip": 50.0,
+    "arcface_m": 0.0
+   },
+   "parameters": 915189,
+   "session_probe_rows": 77,
+   "train_rows": 77,
+   "probe_every_training_row_once": true,
+   "kappa": {
+    "embedding": -0.12903225806451624,
+    "spatial": -0.24342105263157898,
+    "spectral": -0.16666666666666674
+   }
+  }
+ },
+ "dissection_partitions_y3": true,
+ "all_ok": true
+}

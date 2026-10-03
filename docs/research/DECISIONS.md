@@ -48,7 +48,8 @@ rule or an earlier plan said, the entry says so under *Deviation*.
 | D30 | The S13 screen read as frozen: Y3 passes → replicated (S15) and the provisional base of later *screening* arms only; Y1 and Y2 are screening rejections (not replicated); the joint network stays; Y4's 0.728 is the provisional tier-1 number for the X1 architecture | 2026-10-03 | F74–F80 | active |
 | D31 | D24's trigger fired on the cross-session axis only; R1 stays the reference regime; every session-robustness claim names its regime | 2026-10-03 | F77, F78 | active |
 | D32 | The training-rows κ is reported, never used to select among networks that share the spatial pathway; it guards only against large moves (≥ 0.1) | 2026-10-03 | F81 | active |
-| D33 | S15 frozen (`preregistration_s14.json`, `9e182670…`): Y3 at seeds 1–2 (H21a/b as parent; H21c–e on fresh seeds) + a 4-run dissection (Y5, H22a/b); runner-only code change; one Kaggle session | 2026-10-03 | F74, F75 | active |
+| D33 | S15 frozen (`preregistration_s14.json`, `9e182670…`): Y3 at seeds 1–2 (H21a/b as parent; H21c–e on fresh seeds) + a 4-run dissection (Y5, H22a/b); runner-only code change; one Kaggle session | 2026-10-03 | F74, F75 | active — **implemented in S15 part 1** (D34); Kaggle run pending |
+| D34 | S15 as implemented: per-cell seeds from the frozen file; the code-identity guard as a content digest of the training code pinned at `aed5257` (works in Kaggle's shallow clone; wider scope than frozen); replication cells first; the old X2 re-score not part of the session; an output-archive Kaggle cell | 2026-10-03 | F82 | active — **no deviation** from `preregistration_s14.json` |
 
 ---
 
@@ -473,3 +474,19 @@ engine, data and config code must be identical to `aed5257` (or G-neutral re-run
 dissection at 3 seeds (the attribution question is coarse — ≈ 0.026 to split — and a screen answers "roughly which");
 adding the lean 80/20 tier now (it is wasted if Y3 fails).
 **Reverse if** — not applicable (a design; its outcomes are read in S16).
+
+### D34 · S15 as implemented (S15) — no deviation
+**Context.** `preregistration_s14.json` lists 10 cells with per-cell seeds and requires the model, engine, data and
+config code to be `aed5257`'s ("`git diff` empty, or G-neutral"). Kaggle clones `main --depth 1`, so `aed5257` is not in
+its history and a `git diff` cannot run there.
+**Decision.** (1) `experiments/s15.py` builds the cells from S14's `cells.gpu` (each with its seed), R1 from the S12
+parent, and refuses if any of the three hashes moved or a cell repeats one S13 ran. (2) The code guard is a SHA-256
+over the path and content of every training-relevant file — the package's `*.py`/`*.yaml` except `experiments/`,
+`configs/**/*.yaml`, `train.py` — pinned at `aed5257` and recomputed before any cell runs; the runner refuses on a
+mismatch. Its scope is wider than the frozen one (stricter), and `code_identity.json` shows it agrees with `git diff`
+locally. (3) Cells run in the frozen order — the six replication cells first. (4) The X2 re-score (P0.3) is not in the
+session: it decides nothing and would need the S11 output attached. (5) A Kaggle cell archives `s15/` for download.
+**Alternatives rejected.** `git fetch` of `aed5257` on Kaggle (depends on network and server-side SHA fetch); a G-neutral
+run on Kaggle (costs GPU time for a question a digest answers exactly).
+**Reverse if** a training-code change is ever needed before S15 runs — then the frozen alternative applies: G-neutral on
+the default and the Y3 keys against `aed5257`, and a new pinned digest recorded with it.

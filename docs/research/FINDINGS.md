@@ -96,6 +96,7 @@ training bundle · `held-out` = the other acquisition bundle (`val ∪ test`), s
 | F79 | Masked MixStyle lowers the spatial pathway's usefulness (influence 62 → 43 %, calib F1 −0.03) without lowering its session content (κ 0.31–0.32 unchanged): H20 rejected, no frontier move | S14 | train / held-out | E3 (screen) | standing |
 | F80 | The 80/20 within-acquisition tier equals the 70/30 stratified level (0.728 F1 / 0.730 acc vs 0.727; H15 supported): 14 % more same-acquisition training kernels add nothing | S14 | strat | E3 (screen) | standing |
 | F81 | The training-rows session κ is reproducible (|Δ| ≤ 0.021) but varies by up to 0.049 between seeds and does not rank held-out attraction among 16 spatial-pathway networks (ρ 0.05) | S14 | train (validated on held-out) | E3 | standing |
+| F82 | The S15 runner composes exactly the 10 frozen cells (none repeats S13) on training code byte-identical to `aed5257` (129 files, digest `fade41e5…`); the dissection arms partition Y3's parameter reduction exactly (41,248 + 82,530 = 123,778); every arm finishes a 2-rank job with each held-out kernel scored once | S15 | synthetic / structural | E4 | standing |
 
 ---
 
@@ -646,4 +647,15 @@ vs spatial split); among the 16 with a spatial pathway: Spearman 0.05, Pearson 0
 0.358, X2 spectral-only f1 s0 0.197, X2 spatial-only f1 s0 0.298. Y3 f0 raised κ (+0.036) while lowering attraction
 (−0.025) — opposite directions, each within its noise (D26's trigger does not fire).
 → `session_kappa.csv`, `session_kappa_offline.csv`, `session_kappa_validation.json`
+
+### F82 · The S15 runner runs exactly the frozen round, on the S13 code
+`scripts/run_s15.py` builds 10 cells from `preregistration_s14.json` after verifying it and its two parents; their layout
+and seeds are the frozen ones, replication first, and none is a cell S13 ran. All 10 compose to R1 plus their arm's
+intent (stated independently of the override strings) and through `train.py --cfg job`. The training code — every
+`*.py`/`*.yaml` of the package except `experiments/`, `configs/`, `train.py`, 129 files — digests to `fade41e5…` at
+`aed5257` (from `git archive`) and in the S15 tree; `git diff aed5257` on that scope is empty. Built at the real shape,
+Y3 has 2,725,700 parameters (S13's `run.json`), `desc_only` 2,808,230 and `spatial_repair` 2,766,948: the shipped
+2,849,478 minus 41,248 and minus 82,530, which sum to Y3's reduction. On a 2-rank gloo `torchrun` job every arm finishes,
+scores each held-out kernel once and probes every training row once. Fast test tier: 787 passed, 0 failed.
+→ `evidence/S15_y3_replication/frozen_plan.json`, `code_identity.json`, `ddp_arms.json`, `tests/unit/test_s15_plan.py`
 

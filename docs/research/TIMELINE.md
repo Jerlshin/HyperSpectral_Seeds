@@ -242,3 +242,14 @@ spatial-pathway networks (F81).
 for the cross-session claim, not the score); D32 (κ reported, not used to select); D33 (S15 frozen: Y3 at seeds 1–2 with
 fresh-seed superiority/robustness hypotheses, plus a 4-run dissection; `preregistration_s14.json`). F65 challenged; F67,
 F69 annotated.
+
+### S15 part 1 · The replication and dissection, ready to run — 2026-10-03
+**Triggered by:** S14's frozen round (`preregistration_s14.json`, D33) — 10 cells with per-cell seeds, on the code the S13
+cells ran.
+**Did:** a runner that builds the cells from the three hashed files (S12 → R1, S13, S14 → cells and seeds), refuses to
+repeat an S13 cell, and checks the training code against `aed5257` with a content digest that works in Kaggle's shallow
+clone; tests; every arm on a 2-rank `torchrun` job; the README's Kaggle cells (check, run, archive). No model, training,
+data or config code changed.
+**Found:** the 10 cells compose exactly as frozen on byte-identical training code; the two dissection arms partition
+Y3's parameter reduction exactly (F82).
+**Changed:** D34 (S15 as implemented, no deviation). The Kaggle run is one command, ≈ 4.4 h.
