@@ -51,15 +51,15 @@ would confirm or reverse.
 | A12 | Run-to-run σ (identical config, 5 seeds) | prerequisite for reading every other delta | all | **measured (S09, F30)** — σ = 0.009 grouped (6 runs, 2 folds), 0.033 stratified (6 seeds) |
 | A1 | Leakage gap: same model, `stratified` vs `grouped`, 3 seeds each | the gap *is* the Q1 headline | D01 | **run (S09)** — +0.182; confounded with +39 % training data (F38 bounds that at ≈ 0.01, linear) |
 | A2 | Band selection on all data vs within-fold, grouped | gap > 2σ ⇒ published numbers on this dataset need the caveat | D04, D08 | **not run** (proxy evidence: S03, S05) |
-| A3 | {A,B,C,D} vs {B,C} vs {C} vs {B}, symmetric branch dropout | 4-branch − {B,C} < 2σ ⇒ removal confirmed | **D05** | **not run** — FW-07 |
+| A3 | {A,B,C,D} vs {B,C} vs {C} vs {B}, symmetric branch dropout | 4-branch − {B,C} < 2σ ⇒ removal confirmed | **D05** | **not run** — FW-07; for SpectralSeedNet's two pathways X2 is the analogue: spectral-only −0.099, spatial-only −0.081, late fusion ≈ joint (S12, F64, F65) |
 | A4 | Branch A `grid_size_a` ∈ {8, 4, 2} | only if A3 keeps A | D05 | not run |
 | A5 | bilinear+gate vs gate-only vs concat+MLP | only if A3 keeps ≥ 3 modalities | D05 | not run |
 | A6 | CE vs CE + SupCon, balanced sampler both arms | SupCon earns a Phase B only if > 2σ | D06 | not run |
-| A7 | margin 0 / global 0.30 / + per-class / + Ω penalty | one variable per arm | D07 | not run — S10 (F47): only with ≥ 25 % of the LR budget and ε = 0 (S10 P1.4) |
+| A7 | margin 0 / global 0.30 / + per-class / + Ω penalty | one variable per arm | D07 | not run — S10 (F47): only with ≥ 25 % of the LR budget and ε = 0 (S10 P1.4); S12: m = 0 is non-inferior (X1, F59), margin dropped with R1 (D24) |
 | A8 | S1 vs S1+S2 vs S1+S2+S3, grouped, 3 seeds | falsification test for the single stage | **D06** | **not run** — FW-07 |
 | A9 | What are classes {41, 49, 51, 52, 70}? (no training: embeddings, overlays, confusion, segmentation audit) | genetic vs segmentation vs acquisition | — | **partly answered (S09, F42)** — 70 is acquisition; {0, 30, 41, 49, 51, 52} a mutual-confusion cluster; segmentation audit not run |
-| A10 | Spatial-path width × {0.5, 0.75, 1, 1.5} | is capacity harmful? | D05 | not run — S10: after X4 (H16) and X5; 11.5 % of the width is untrainable today (F48) |
-| A11 | mixup on/off × augmentation profile | is mixup the load-bearing regulariser? | D07 | not run — partly answered by X1 (mixup 110 → 30) and X4 (all softeners off) |
+| A10 | Spatial-path width × {0.5, 0.75, 1, 1.5} | is capacity harmful? | D05 | not run — S12: H16 supported (capacity ample); width is not a lever under D23 |
+| A11 | mixup on/off × augmentation profile | is mixup the load-bearing regulariser? | D07 | **answered in part (S12)** — mixup 110 → 30 with no margin is neutral on held-out (F59); all softeners off costs −0.06…−0.17 (F61); the single-factor split is still unmeasured |
 
 ## 4 · S08 drafts (never frozen) — what the sweep showed, and the frozen S09 → S10 set
 
@@ -79,12 +79,12 @@ of these arms ran. Reference values: grouped 0.530 (σ 0.009), stratified 0.712 
 
 | ID | Hypothesis (as frozen) | Experiment | Decision it drives | Status |
 |---|---|---|---|---|
-| H12a | Fit-first raises stratified macro-F1 by ≥ +0.05 | X1 (FW-15) | is the regime the limit? | not run |
-| H12b | …and grouped by ≥ +0.02 with Δgrouped / Δstratified ≥ 0.37 | X1 | **route A vs B (D17)** | not run |
-| H13 | Fit-first reaches clean training accuracy ≥ 0.95 | X1 | did the regime cause F35? | not run |
-| H14a | Morphometrics-zeroed cross-session recall ≤ 0.07 | X2 (FW-16) | is cross-session recall shape-driven? (D12, D14) | not run |
-| H14b | full − spectral-only grouped ≤ +0.02 | X2 | is the spatial pathway dead weight? (D05) | not run |
-| H15 | 80/20 − 59 %-stratified (same regime) ≤ +0.03 | X3 (FW-17) | is training share the literature gap? (D16) | not run |
+| H12a | Fit-first raises stratified macro-F1 by ≥ +0.05 | X1 (FW-15) | is the regime the limit? | **rejected** (S12) — 0.727, Δ +0.015 (CI −0.012…+0.041) |
+| H12b | …and grouped by ≥ +0.02 with Δgrouped / Δstratified ≥ 0.37 | X1 | **route A vs B (D17)** | **rejected** (S12) — 0.531, Δ +0.001 (CI −0.010…+0.011); ratio 0.05 |
+| H13 | Fit-first reaches clean training accuracy ≥ 0.95 | X1 | did the regime cause F35? | **supported** (S12) — 0.980 grouped / 0.992 stratified at the selected checkpoint; 8/9 cells ≥ 0.95 |
+| H14a | Morphometrics-zeroed cross-session recall ≤ 0.07 | X2 (FW-16) | is cross-session recall shape-driven? (D12, D14) | **rejected** (S12) — 0.144 |
+| H14b | full − spectral-only grouped ≤ +0.02 | X2 | is the spatial pathway dead weight? (D05) | **rejected** (S12) — +0.099 (CI +0.087…+0.112) under either definition of "full" |
+| H15 | 80/20 − 59 %-stratified (same regime) ≤ +0.03 | X3 (FW-17) | is training share the literature gap? (D16) | not run — scheduled as S13 Y4 under R1 |
 
 **S10 interpretation guards (D21), recorded before X1 runs; the frozen file is unchanged.** H13's reference,
 measured as H13 defines it (eval mode, no augmentation, margin 0), is 0.90 grouped / 0.91 stratified (F45), not
@@ -101,16 +101,41 @@ H12a is supported, else the S09 sweep, 0.530); σ_ref = max(observed sd, 0.009).
 
 | ID | Hypothesis (as frozen) | Experiment | Decision it drives | Status |
 |---|---|---|---|---|
-| H16 | With every softener off (mixup 0, ε 0, aux 0, dropout 0, no augmentation) under X1's schedule, clean training accuracy ≥ 0.98 at the final epoch (grouped fold 0) | X4 (FW-20) | capacity vs regime (D19's reversal trigger) | not run |
-| H17 | Last spatial-tail block at stride 1 (no untrainable parameters) is non-inferior: grouped ≥ reference − max(2σ_ref, 0.018) | X5 (FW-21) | adopt the stride fix as default | not run |
-| H18a | Log-reflectance level block in the spectral descriptor raises grouped by ≥ max(2σ_ref, 0.02) | X6 (FW-22) | adopt level (with H18b) | not run |
-| H18b | …without losing > 0.03 cross-session recall or adding > 0.05 cross-session attraction | X6 | the gain is not session recognition | not run |
+| H16 | With every softener off (mixup 0, ε 0, aux 0, dropout 0, no augmentation) under X1's schedule, clean training accuracy ≥ 0.98 at the final epoch (grouped fold 0) | X4 (FW-20) | capacity vs regime (D19's reversal trigger) | **supported** (S12) — 1.000 (stratified companion 1.000) |
+| H17 | Last spatial-tail block at stride 1 (no untrainable parameters) is non-inferior: grouped ≥ reference − max(2σ_ref, 0.018) | X5 (FW-21) | adopt the stride fix as default | not run — the change joins S13 Y3 (D25) |
+| H18a | Log-reflectance level block in the spectral descriptor raises grouped by ≥ max(2σ_ref, 0.02) | X6 (FW-22) | adopt level (with H18b) | not run — deferred (D25; linear proxy F70) |
+| H18b | …without losing > 0.03 cross-session recall or adding > 0.05 cross-session attraction | X6 | the gain is not session recognition | not run — deferred (D25) |
 
 **S11 (part 1).** The measurement for every hypothesis above now exists, and where each will be read from — file
 and key, fixed before any arm runs — is S11 §6.1. One reading question is flagged there rather than resolved: H14b's
 "full" (the four matching S08 cells or the six-run mean). Statuses stay `not run`.
 
-## 6 · Adding a hypothesis
+**S12 (reading).** All six run hypotheses read from saved evidence (`evidence/S12_frozen_arms_reading/hypotheses.json`).
+Routes as frozen: S09 → **route A** (D23); S10 → capacity ample, X5/X6 not run standalone (D25). H14b's "full" was not
+fixed before X2 was read (S11 risk 6); both definitions give +0.099.
+
+## 6 · S12 → S13: frozen arms
+
+`evidence/S12_frozen_arms_reading/preregistration_s12.json`, SHA-256
+`88b377c5bc32f31a9ccb95356a88eb0be35e8cb51216b035c88f1761919ae7f4`, frozen 2026-10-02 before any of these arms or their
+code exist. Reference = X1 (R1, D24): grouped 0.530786 (σ 0.0099), same-session 0.648 (σ 0.014), cross-session 0.147
+(σ 0.0098), attraction 0.464 (σ 0.020), stratified 0.727 (σ 0.0058). Margins are 2·max(sd, 0.009).
+
+**Amended before any arm ran (D28):** S13 runs every cell at seed 0 only —
+`evidence/S13_representation_screening/preregistration_s13.json` (hashed; the parent file is unchanged). Thresholds,
+reference and decision logic are as frozen; outcomes are **screening verdicts** — an arm that passes is replicated at
+seeds 1–2 (FW-35) before its decision rule is read as confirmatory.
+
+| ID | Hypothesis (as frozen) | Experiment | Decision it drives | Status |
+|---|---|---|---|---|
+| H19a | Decoupled pathways fused on calib: grouped F1 ≥ 0.5108 | Y1 (FW-31) | retire joint fusion (with H19b) | not run — S13 screen, 2 fused cells, seed 0 (D28) |
+| H19b | …and cross-session recall ≥ 0.1666 and attraction ≤ 0.4240 | Y1 | decoupling buys session robustness | not run — S13 screen (D28) |
+| H20 | Masked MixStyle in the 3-D stem: cross-session ≥ 0.1666 and same-session ≥ 0.6285 | Y2 (FW-32) | a move off the frontier, not along it | not run — S13 screen, 2 runs (D28) |
+| H21a | Lean architecture (SNV + morph descriptor, tail [2,2,2,1], no CBAM on ≤ 2 × 2): grouped ≥ 0.5108 | Y3 (FW-33) | adopt SeedNet v5 (with H21b) | not run — S13 screen, 2 runs (D28) |
+| H21b | …and stratified ≥ 0.7090 | Y3 | non-inferior within acquisition | not run — S13 screen, 1 run (D28) |
+| H15 | (S09, unchanged) 80/20 − R1 stratified ≤ +0.03 | Y4 | D16 tier 1 | not run — S13 screen, 1 run (D28) |
+
+## 7 · Adding a hypothesis
 
 Write it here *before* the run, with: the exact claim, the metric and split, the threshold, what
 outcome supports it, and which decision or finding it would change. If held-out data will be

@@ -1,0 +1,7 @@
+family,fold,balanced_acc,kappa,heldout_f1_with_morph,same_recall,cross_recall,attraction_cross
+high-frequency residual sd,0,0.339581,0.333487,0.267915,0.328668,0.0406046,0.553506
+low-frequency spread sd,0,0.285288,0.276044,0.327781,0.389257,0.100572,0.410824
+relative HF noise (sd / mean),0,0.256189,0.209581,0.30444,0.352814,0.134641,0.353014
+high-frequency residual sd,1,0.34555,0.374654,0.268695,0.339635,0.0367647,0.507975
+low-frequency spread sd,1,0.297301,0.303341,0.326179,0.393961,0.0931373,0.419632
+relative HF noise (sd / mean),1,0.267863,0.237553,0.303155,0.359661,0.122575,0.327607

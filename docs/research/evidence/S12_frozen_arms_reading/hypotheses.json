@@ -1,0 +1,113 @@
+{
+ "H12a": {
+  "frozen": "X1 raises stratified macro-F1 by \u2265 +0.05 over 0.712 (3-seed mean)",
+  "value": 0.726984,
+  "reference": 0.7123676427318898,
+  "delta": 0.01461635726811017,
+  "delta_ci": [
+   -0.011971215555648642,
+   0.041342414815536674
+  ],
+  "threshold": 0.05,
+  "outcome": "rejected"
+ },
+ "H12b": {
+  "frozen": "X1 raises grouped macro-F1 by \u2265 +0.02 AND \u0394grouped/\u0394stratified \u2265 0.37",
+  "value": 0.5307864999999999,
+  "reference": 0.5300333460397801,
+  "delta": 0.000753153960219799,
+  "delta_ci": [
+   -0.010492959065116967,
+   0.01101756868218143
+  ],
+  "threshold": 0.02,
+  "ratio": 0.05152815755694637,
+  "ratio_ci": [
+   -2.7284292516605086,
+   3.0021215498847487
+  ],
+  "outcome": "rejected"
+ },
+ "H13": {
+  "frozen": "X1 reaches clean training accuracy \u2265 0.95 on the D18 subset",
+  "reading": "S11 \u00a76.1: at_best_checkpoint[best_source].acc per protocol; final-epoch live beside",
+  "value": {
+   "grouped": 0.98,
+   "stratified": 0.9923333333333333
+  },
+  "final_live": {
+   "grouped": 0.992,
+   "stratified": 0.9983333333333334
+  },
+  "reference_F45": {
+   "grouped": 0.9,
+   "stratified": 0.911
+  },
+  "per_cell": {
+   "X1/grouped__f0_s0": 0.982,
+   "X1/grouped__f0_s1": 0.916,
+   "X1/grouped__f0_s2": 0.994,
+   "X1/grouped__f1_s0": 0.997,
+   "X1/grouped__f1_s1": 0.997,
+   "X1/grouped__f1_s2": 0.994,
+   "X1/stratified__f0_s0": 0.994,
+   "X1/stratified__f0_s1": 0.995,
+   "X1/stratified__f0_s2": 0.988
+  },
+  "threshold": 0.95,
+  "outcome": "supported",
+  "note": "8 of 9 cells \u2265 0.95 at their selected checkpoint; grouped f0 s1 (0.916) early-stopped at epoch 131 with its checkpoint at epoch 91 (D21 guard 4) and reaches 0.968/0.974 at its last epoch"
+ },
+ "H14a": {
+  "frozen": "no_morph cross-session recall \u2264 0.07 (mean of 4 runs, TTA)",
+  "value": 0.14381125,
+  "per_run": [
+   0.1634,
+   0.1386,
+   0.1324,
+   0.1409
+  ],
+  "reference_full": 0.15205610021786492,
+  "threshold": 0.07,
+  "delta_vs_matched_full": [
+   -0.015931372549019607,
+   -0.03932000461899157,
+   0.0073204745389029765
+  ],
+  "outcome": "rejected"
+ },
+ "H14b": {
+  "frozen": "full \u2212 spectral_only grouped macro-F1 \u2264 +0.02",
+  "full_definitions": {
+   "matched four S08 cells (f0,f1 \u00d7 s0,s1)": 0.5299402499999999,
+   "six-run S08 mean": 0.5300333460397801
+  },
+  "spectral_only": 0.43052,
+  "value": {
+   "matched": 0.09942024999999988,
+   "six_run": 0.09951334603978013
+  },
+  "delta_ci_matched": [
+   0.08713296698641766,
+   0.11242217868901885
+  ],
+  "threshold": 0.02,
+  "outcome": "rejected",
+  "note": "S11 \u00a78 risk 6 asked for the choice of 'full' to be recorded before reading X2; it was not. Both definitions are reported; the outcome is the same under either (\u0394 \u2248 +0.10 \u226b 0.02)."
+ },
+ "H16": {
+  "frozen": "X4 (grouped f0 s0) clean training accuracy \u2265 0.98, live, final epoch",
+  "value": 1.0,
+  "ema": 1.0,
+  "threshold": 0.98,
+  "stratified_companion": 1.0,
+  "outcome": "supported"
+ },
+ "decision_routes": {
+  "S09 rule": "H12a rejected \u2192 'the regime is not the limit; read X2: if H14b supported, redesign the spatial-spectral pathway; else the representation binds (route A)'. H14b rejected \u2192 ROUTE A (stop capacity work; next = representation/data: FW-03, FW-18, FW-12)",
+  "S09 H14a": "rejected \u2192 the network's cross-session recall is NOT carried by the 8 morphometric scalars (the clause 'claims must be stated as shape-driven' is not triggered by H14a; see S12 \u00a75.4 for what does carry it)",
+  "S10 H16": "supported \u2192 'the architecture can fit; the shipped under-fit is the regime and its softeners'",
+  "S10 regime_rule": "H12a rejected \u2192 X5 and X6, if run, use the SHIPPED regime and the S09 sweep (0.530, \u03c3_ref = 0.009) as reference",
+  "S10 R2": "H12a rejected \u2192 'the regime is not the limit; X2 decides (D17)'"
+ }
+}

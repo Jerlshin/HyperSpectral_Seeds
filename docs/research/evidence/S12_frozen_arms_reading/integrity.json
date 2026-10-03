@@ -1,0 +1,338 @@
+{
+ "preregistration_hashes": "both match (f896d0e5\u2026, 1c8ae693\u2026)",
+ "cells": {
+  "X1/grouped__f0_s0": {
+   "frozen_overrides": [
+    "single.mixup_epochs=30",
+    "single.arcface_m=0.0",
+    "single.margin_warmup_start=31",
+    "single.margin_warmup_end=31",
+    "grad_clip=50.0",
+    "single.epochs=200",
+    "single.patience=40"
+   ],
+   "commit_is_s11": true,
+   "dirty": true,
+   "regime_deviations": [],
+   "n_eval": 4311,
+   "d22_reversal_clip_fraction_gt_0.01": 3,
+   "d21_guard4_stop_before_160": false
+  },
+  "X1/grouped__f0_s1": {
+   "frozen_overrides": [
+    "single.mixup_epochs=30",
+    "single.arcface_m=0.0",
+    "single.margin_warmup_start=31",
+    "single.margin_warmup_end=31",
+    "grad_clip=50.0",
+    "single.epochs=200",
+    "single.patience=40"
+   ],
+   "commit_is_s11": true,
+   "dirty": true,
+   "regime_deviations": [],
+   "n_eval": 4311,
+   "d22_reversal_clip_fraction_gt_0.01": 1,
+   "d21_guard4_stop_before_160": true
+  },
+  "X1/grouped__f0_s2": {
+   "frozen_overrides": [
+    "single.mixup_epochs=30",
+    "single.arcface_m=0.0",
+    "single.margin_warmup_start=31",
+    "single.margin_warmup_end=31",
+    "grad_clip=50.0",
+    "single.epochs=200",
+    "single.patience=40"
+   ],
+   "commit_is_s11": true,
+   "dirty": true,
+   "regime_deviations": [],
+   "n_eval": 4311,
+   "d22_reversal_clip_fraction_gt_0.01": 3,
+   "d21_guard4_stop_before_160": false
+  },
+  "X1/grouped__f1_s0": {
+   "frozen_overrides": [
+    "single.mixup_epochs=30",
+    "single.arcface_m=0.0",
+    "single.margin_warmup_start=31",
+    "single.margin_warmup_end=31",
+    "grad_clip=50.0",
+    "single.epochs=200",
+    "single.patience=40"
+   ],
+   "commit_is_s11": true,
+   "dirty": true,
+   "regime_deviations": [],
+   "n_eval": 4309,
+   "d22_reversal_clip_fraction_gt_0.01": 2,
+   "d21_guard4_stop_before_160": false
+  },
+  "X1/grouped__f1_s1": {
+   "frozen_overrides": [
+    "single.mixup_epochs=30",
+    "single.arcface_m=0.0",
+    "single.margin_warmup_start=31",
+    "single.margin_warmup_end=31",
+    "grad_clip=50.0",
+    "single.epochs=200",
+    "single.patience=40"
+   ],
+   "commit_is_s11": true,
+   "dirty": true,
+   "regime_deviations": [],
+   "n_eval": 4309,
+   "d22_reversal_clip_fraction_gt_0.01": 3,
+   "d21_guard4_stop_before_160": false
+  },
+  "X1/grouped__f1_s2": {
+   "frozen_overrides": [
+    "single.mixup_epochs=30",
+    "single.arcface_m=0.0",
+    "single.margin_warmup_start=31",
+    "single.margin_warmup_end=31",
+    "grad_clip=50.0",
+    "single.epochs=200",
+    "single.patience=40"
+   ],
+   "commit_is_s11": true,
+   "dirty": true,
+   "regime_deviations": [],
+   "n_eval": 4309,
+   "d22_reversal_clip_fraction_gt_0.01": 2,
+   "d21_guard4_stop_before_160": false
+  },
+  "X1/stratified__f0_s0": {
+   "frozen_overrides": [
+    "single.mixup_epochs=30",
+    "single.arcface_m=0.0",
+    "single.margin_warmup_start=31",
+    "single.margin_warmup_end=31",
+    "grad_clip=50.0",
+    "single.epochs=200",
+    "single.patience=40"
+   ],
+   "commit_is_s11": true,
+   "dirty": true,
+   "regime_deviations": [],
+   "n_eval": 2588,
+   "d22_reversal_clip_fraction_gt_0.01": 1,
+   "d21_guard4_stop_before_160": false
+  },
+  "X1/stratified__f0_s1": {
+   "frozen_overrides": [
+    "single.mixup_epochs=30",
+    "single.arcface_m=0.0",
+    "single.margin_warmup_start=31",
+    "single.margin_warmup_end=31",
+    "grad_clip=50.0",
+    "single.epochs=200",
+    "single.patience=40"
+   ],
+   "commit_is_s11": true,
+   "dirty": true,
+   "regime_deviations": [],
+   "n_eval": 2588,
+   "d22_reversal_clip_fraction_gt_0.01": 1,
+   "d21_guard4_stop_before_160": false
+  },
+  "X1/stratified__f0_s2": {
+   "frozen_overrides": [
+    "single.mixup_epochs=30",
+    "single.arcface_m=0.0",
+    "single.margin_warmup_start=31",
+    "single.margin_warmup_end=31",
+    "grad_clip=50.0",
+    "single.epochs=200",
+    "single.patience=40"
+   ],
+   "commit_is_s11": true,
+   "dirty": true,
+   "regime_deviations": [],
+   "n_eval": 2588,
+   "d22_reversal_clip_fraction_gt_0.01": 1,
+   "d21_guard4_stop_before_160": false
+  },
+  "X2/no_morph__f0_s0": {
+   "frozen_overrides": [
+    "data.morphology_path=''"
+   ],
+   "commit_is_s11": true,
+   "dirty": true,
+   "regime_deviations": [],
+   "n_eval": 4311,
+   "d22_reversal_clip_fraction_gt_0.01": null,
+   "d21_guard4_stop_before_160": false
+  },
+  "X2/no_morph__f0_s1": {
+   "frozen_overrides": [
+    "data.morphology_path=''"
+   ],
+   "commit_is_s11": true,
+   "dirty": true,
+   "regime_deviations": [],
+   "n_eval": 4311,
+   "d22_reversal_clip_fraction_gt_0.01": null,
+   "d21_guard4_stop_before_160": false
+  },
+  "X2/no_morph__f1_s0": {
+   "frozen_overrides": [
+    "data.morphology_path=''"
+   ],
+   "commit_is_s11": true,
+   "dirty": true,
+   "regime_deviations": [],
+   "n_eval": 4309,
+   "d22_reversal_clip_fraction_gt_0.01": null,
+   "d21_guard4_stop_before_160": false
+  },
+  "X2/no_morph__f1_s1": {
+   "frozen_overrides": [
+    "data.morphology_path=''"
+   ],
+   "commit_is_s11": true,
+   "dirty": true,
+   "regime_deviations": [],
+   "n_eval": 4309,
+   "d22_reversal_clip_fraction_gt_0.01": null,
+   "d21_guard4_stop_before_160": false
+  },
+  "X2/spatial_only__f0_s0": {
+   "frozen_overrides": [
+    "model.pathways=[spatial]"
+   ],
+   "commit_is_s11": true,
+   "dirty": true,
+   "regime_deviations": [],
+   "n_eval": 4311,
+   "d22_reversal_clip_fraction_gt_0.01": null,
+   "d21_guard4_stop_before_160": false
+  },
+  "X2/spatial_only__f0_s1": {
+   "frozen_overrides": [
+    "model.pathways=[spatial]"
+   ],
+   "commit_is_s11": true,
+   "dirty": true,
+   "regime_deviations": [],
+   "n_eval": 4311,
+   "d22_reversal_clip_fraction_gt_0.01": null,
+   "d21_guard4_stop_before_160": false
+  },
+  "X2/spatial_only__f1_s0": {
+   "frozen_overrides": [
+    "model.pathways=[spatial]"
+   ],
+   "unscored_reason": {
+    "rank1": "EOFError: Ran out of input",
+    "rank0": "RuntimeError: Storage size calculation overflowed with sizes=[4575657221408423936]",
+    "best_epoch_equals_last": true
+   },
+   "d22_reversal_clip_fraction_gt_0.01": null,
+   "d21_guard4_stop_before_160": false
+  },
+  "X2/spatial_only__f1_s1": {
+   "frozen_overrides": [
+    "model.pathways=[spatial]"
+   ],
+   "commit_is_s11": true,
+   "dirty": true,
+   "regime_deviations": [],
+   "n_eval": 4309,
+   "d22_reversal_clip_fraction_gt_0.01": null,
+   "d21_guard4_stop_before_160": false
+  },
+  "X2/spectral_only__f0_s0": {
+   "frozen_overrides": [
+    "model.pathways=[spectral]"
+   ],
+   "commit_is_s11": true,
+   "dirty": true,
+   "regime_deviations": [],
+   "n_eval": 4311,
+   "d22_reversal_clip_fraction_gt_0.01": null,
+   "d21_guard4_stop_before_160": false
+  },
+  "X2/spectral_only__f0_s1": {
+   "frozen_overrides": [
+    "model.pathways=[spectral]"
+   ],
+   "commit_is_s11": true,
+   "dirty": true,
+   "regime_deviations": [],
+   "n_eval": 4311,
+   "d22_reversal_clip_fraction_gt_0.01": null,
+   "d21_guard4_stop_before_160": false
+  },
+  "X2/spectral_only__f1_s0": {
+   "frozen_overrides": [
+    "model.pathways=[spectral]"
+   ],
+   "commit_is_s11": true,
+   "dirty": true,
+   "regime_deviations": [],
+   "n_eval": 4309,
+   "d22_reversal_clip_fraction_gt_0.01": null,
+   "d21_guard4_stop_before_160": false
+  },
+  "X2/spectral_only__f1_s1": {
+   "frozen_overrides": [
+    "model.pathways=[spectral]"
+   ],
+   "commit_is_s11": true,
+   "dirty": true,
+   "regime_deviations": [],
+   "n_eval": 4309,
+   "d22_reversal_clip_fraction_gt_0.01": null,
+   "d21_guard4_stop_before_160": false
+  },
+  "X4/grouped__f0_s0": {
+   "frozen_overrides": [
+    "single.mixup_epochs=0",
+    "single.arcface_m=0.0",
+    "single.margin_warmup_start=31",
+    "single.margin_warmup_end=31",
+    "grad_clip=50.0",
+    "single.epochs=200",
+    "single.patience=200",
+    "single.label_smooth_hi=0.0",
+    "single.label_smooth_lo=0.0",
+    "stage1.aux_loss_weight_init=0.0",
+    "stage1.aux_loss_weight_final=0.0",
+    "single.dropout=0.0",
+    "single.aug_profile=none"
+   ],
+   "commit_is_s11": true,
+   "dirty": true,
+   "regime_deviations": [],
+   "n_eval": 4311,
+   "d22_reversal_clip_fraction_gt_0.01": 2,
+   "d21_guard4_stop_before_160": false
+  },
+  "X4/stratified__f0_s0": {
+   "frozen_overrides": [
+    "single.mixup_epochs=0",
+    "single.arcface_m=0.0",
+    "single.margin_warmup_start=31",
+    "single.margin_warmup_end=31",
+    "grad_clip=50.0",
+    "single.epochs=200",
+    "single.patience=200",
+    "single.label_smooth_hi=0.0",
+    "single.label_smooth_lo=0.0",
+    "stage1.aux_loss_weight_init=0.0",
+    "stage1.aux_loss_weight_final=0.0",
+    "single.dropout=0.0",
+    "single.aug_profile=none"
+   ],
+   "commit_is_s11": true,
+   "dirty": true,
+   "regime_deviations": [],
+   "n_eval": 2588,
+   "d22_reversal_clip_fraction_gt_0.01": 1,
+   "d21_guard4_stop_before_160": false
+  }
+ },
+ "dirty_cause": "Every scored cell records commit 413a11e (the S11 commit) with dirty=true. provenance.code_revision sets dirty from `git status --porcelain`, which includes untracked files; README \u00a710's Kaggle cell 1 runs `ln -sfn /kaggle/input/rice-hsi-u430k32 dataset_u430k32`, and .gitignore's `dataset_*/` (trailing slash) matches directories only, so the symlink is untracked. Reproduced in a scratch repository with this .gitignore: `?? dataset_u430k32` is the only porcelain line. The flag is therefore expected on every Kaggle run and does not by itself indicate modified code."
+}

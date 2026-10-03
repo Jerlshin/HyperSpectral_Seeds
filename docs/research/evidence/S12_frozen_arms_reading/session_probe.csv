@@ -1,0 +1,33 @@
+representation,fold,n_features,balanced_acc,kappa
+raw reflectance,0,32,0.246486,0.221519
+SNV,0,32,0.308326,0.293251
+morphometrics,0,8,0.151936,0.0598683
+raw + morph (S09 best linear),0,40,0.280021,0.256868
+SNV + morph (spectral-path analogue),0,40,0.312071,0.285152
+SNV + level + morph,0,41,0.332788,0.321054
+level + morph,0,9,0.187166,0.119373
+mean + sd + morph,0,72,0.363435,0.362193
+quantiles 10/50/90 + morph,0,104,0.376935,0.369583
+core + rim + morph,0,72,0.332711,0.317462
+pixel-SNV mean + sd + morph,0,72,0.42681,0.416059
+mean + log-cov + morph,0,568,0.454965,0.440085
+all pixel statistics + morph,0,824,0.458863,0.446188
+pixel sd only,0,32,0.293934,0.286861
+pixel-SNV sd only,0,32,0.326928,0.297983
+log-cov only,0,528,0.415698,0.393325
+raw reflectance,1,32,0.248376,0.247297
+SNV,1,32,0.293826,0.301975
+morphometrics,1,8,0.125537,0.0299103
+raw + morph (S09 best linear),1,40,0.257902,0.248416
+SNV + morph (spectral-path analogue),1,40,0.289511,0.286065
+SNV + level + morph,1,41,0.318484,0.324068
+level + morph,1,9,0.165008,0.1029
+mean + sd + morph,1,72,0.366842,0.376408
+quantiles 10/50/90 + morph,1,104,0.379115,0.386101
+core + rim + morph,1,72,0.320595,0.321824
+pixel-SNV mean + sd + morph,1,72,0.419376,0.425983
+mean + log-cov + morph,1,568,0.434721,0.443379
+all pixel statistics + morph,1,824,0.45018,0.455813
+pixel sd only,1,32,0.307577,0.311827
+pixel-SNV sd only,1,32,0.369733,0.357767
+log-cov only,1,528,0.394413,0.397607

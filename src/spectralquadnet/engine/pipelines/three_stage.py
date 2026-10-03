@@ -217,6 +217,9 @@ def _stage1(ctx: RunContext, model: SpectralQuadNet, ckpt: str, done_stage: int)
         dist=ctx.dist,
         train_module=ctx.train_module,
     )
+    # Rank 0 may still be writing the stage's best checkpoint (S12 F71a): nobody
+    # reads it, or its sidecar, before the write has finished.
+    ctx.dist.barrier()
     ctx.clock.advance(int(load_stage_meta(cfg, 1).get("epoch", cfg.stage1.epochs)))
     trk.log_message("Reloading best Stage 1 checkpoint ...")
     load_ckpt(ckpt, model, ctx.ema, ctx.device)
@@ -305,6 +308,7 @@ def _stage2(
         dist=ctx.dist,
         train_module=ctx.train_module,
     )
+    ctx.dist.barrier()  # as after Stage 1 (S12 F71a)
     ctx.clock.advance(int(load_stage_meta(cfg, 2).get("epoch", cfg.stage2.epochs)))
     trk.log_message("Reloading best Stage 2 checkpoint ...")
     load_ckpt(ckpt, model, ctx.ema, ctx.device)
@@ -365,6 +369,7 @@ def _stage3(
         dist=ctx.dist,
         train_module=ctx.train_module,
     )
+    ctx.dist.barrier()  # as after Stage 1 (S12 F71a)
     ctx.clock.advance(int(load_stage_meta(cfg, 3).get("epoch", cfg.stage3.epochs)))
     del tr3, select_ldr
     release_memory(ctx.device)

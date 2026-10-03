@@ -1,0 +1,48 @@
+{
+ "x1_stratified_recall": {
+  "same": 0.7394929682364733,
+  "cross": 0.6812276634791848
+ },
+ "x1_grouped_recall": {
+  "same": 0.6484928333333333,
+  "cross": 0.14663666666666667
+ },
+ "shortfall_total": 0.44630222037037043,
+ "parts": {
+  "same-session \u00b7 already lost in-distribution": {
+   "value": 0.2113001479859717,
+   "share": 0.47344632928471914
+  },
+  "same-session \u00b7 lost to the bundle shift": {
+   "value": 0.07381122053254686,
+   "share": 0.1653839420097295
+  },
+  "cross-session \u00b7 already lost in-distribution": {
+   "value": 0.06021255245393175,
+   "share": 0.13491430180195715
+  },
+  "cross-session \u00b7 lost to the session shift": {
+   "value": 0.10097829939792011,
+   "share": 0.22625542690359413
+  }
+ },
+ "in_distribution_share": 0.6083606310866764,
+ "s08_for_comparison": {
+  "same-session \u00b7 already lost in-distribution": {
+   "value": 0.21860025740740738,
+   "share": 0.4908592071878828
+  },
+  "same-session \u00b7 lost to the bundle shift": {
+   "value": 0.06657464814814817,
+   "share": 0.14949103627041258
+  },
+  "cross-session \u00b7 already lost in-distribution": {
+   "value": 0.06360383148148148,
+   "share": 0.14282017169323688
+  },
+  "cross-session \u00b7 lost to the session shift": {
+   "value": 0.09656333703703704,
+   "share": 0.2168295848484677
+  }
+ }
+}

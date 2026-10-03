@@ -90,6 +90,10 @@ with it at all (`03_MODEL_ARCHITECTURE.md` §3.7).
 | `spectral_hidden` | `256` | (unread) | **IC-10** — the spectral MLP's hidden width |
 | `aux_head_weight` | `0.2` | (unread) | **IC-5 / §7.1** — the fixed single-aux-head weight D07 describes. **Applied only under `single.aux_weight_schedule=fixed`**; under the default `legacy` the loop applies `stage1.aux_loss_weight_{init,final}`'s 0.65 → 0.25 decay, as every run up to S11 did (S10 F54) |
 | `pathways` | `[spatial, spectral]` | (unread) | **X2 / S11** — live pathways. `[spectral]` / `[spatial]` zero the other pathway in train and eval, freeze it and skip its forward; `[spectral]` also drops the aux term, `[spatial]` the morphometrics (`03` §3.0) |
+| `spectral_descriptor` | `full` | (unread) | **S13 Y3.** `full` = `[index bank ‖ continuum depths ‖ SNV ‖ D₁ ‖ D₂ ‖ morph]`; `snv_morph` = `[SNV ‖ morph]` — the blocks S10 F49 found inert are not built |
+| `spatial_tail_strides` | `[2, 2, 2, 2]` | (unread) | **S13 Y3.** Strides of the four spatial-tail ResBlocks, each 1 or 2. The default ends at 1 × 1 (327,680 untrainable parameters, F48); `[2, 2, 2, 1]` ends at 2 × 2 |
+| `cbam_min_hw` | `0` | (unread) | **S13 Y3.** A tail CBAM is kept only after a block whose output side ≥ this (else `nn.Identity`); `0` keeps all three, `3` drops the gate on the 2 × 2 map. Placement is computed for the patch side the pipeline passes to `build_model(…, input_side=…)` |
+| `spatial_mixstyle` | `false` | (unread) | **S13 Y2.** Masked MixStyle after 3-D stem blocks 1 and 2 (p 0.5, Beta(0.1, 0.1), per-(channel, spectral-slice) foreground statistics, training only). Off builds nothing and draws no random number |
 
 The keys below belong to branches `seed_net` does not have (`grid_size_a`, `grid_size_d`,
 `specf_*`, `fusion_rank`, `fusion_gate_hidden`). They remain in the shared schema because
@@ -168,6 +172,7 @@ number from `val` (§4.4).
 | `bootstrap_samples` | `2000` | `2000` | percentile CI on macro-F1. Sampling noise on ~1,300 patches is ±0.020 at 95%, and the audited run's entire Stage-2 + Stage-3 gain was +0.005 |
 | `save_artifacts` | `true` | `true` | write the confusion matrix, per-class table and figures under `output_dir/results/` and `figures/` |
 | `save_logits` | `true` | `true` (dataclass default) | **D18 / S11.** Write the selected weights' float16 logits (+ targets, rows) for the reported split and for `calib`, ±TTA, as `results/logits_<split>_<variant>.npz` |
+| `session_probe` | `true` | `true` (dataclass default) | **D26 / S13.** After the held-out scoring, the training-rows class-disjoint session κ of the selected weights' embedding and each live pathway → `results/session_probe.json`, `run.json → session_probe`, `session_probe/kappa_*`. Reads no held-out row; needs `data.scan_table_path`; single-stage pipeline |
 
 ---
 

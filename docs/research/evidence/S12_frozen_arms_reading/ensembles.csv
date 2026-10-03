@@ -1,0 +1,31 @@
+protocol,fold,view,k,members,ensemble_f1,mean_single_f1,note_all_wrong_over_single_error,pairwise_agreement
+grouped,0,tta,2,"(0, 1)",0.537745,0.526506,,
+grouped,0,tta,2,"(0, 2)",0.5478,0.540246,,
+grouped,0,tta,2,"(1, 2)",0.546197,0.531628,,
+grouped,0,tta,3,"(0, 1, 2)",0.547867,0.532793,,
+grouped,0,tta,0,error sharing,0.662656,0.532793,0.799654,0.759375
+grouped,0,no_tta,2,"(0, 1)",0.532261,0.515961,,
+grouped,0,no_tta,2,"(0, 2)",0.548195,0.532691,,
+grouped,0,no_tta,2,"(1, 2)",0.539058,0.523454,,
+grouped,0,no_tta,3,"(0, 1, 2)",0.544982,0.524035,,
+grouped,0,no_tta,0,error sharing,0.620591,0.524035,0.766982,0.718704
+grouped,1,tta,2,"(0, 1)",0.540153,0.530911,,
+grouped,1,tta,2,"(0, 2)",0.532012,0.529553,,
+grouped,1,tta,2,"(1, 2)",0.535264,0.525059,,
+grouped,1,tta,3,"(0, 1, 2)",0.540464,0.528508,,
+grouped,1,tta,0,error sharing,0.674469,0.528508,0.809012,0.77079
+grouped,1,no_tta,2,"(0, 1)",0.541576,0.524999,,
+grouped,1,no_tta,2,"(0, 2)",0.537478,0.523711,,
+grouped,1,no_tta,2,"(1, 2)",0.534481,0.519427,,
+grouped,1,no_tta,3,"(0, 1, 2)",0.543896,0.522712,,
+grouped,1,no_tta,0,error sharing,0.62613,0.522712,0.77689,0.727934
+stratified,0,tta,2,"(0, 1)",0.737519,0.728733,,
+stratified,0,tta,2,"(0, 2)",0.737222,0.723655,,
+stratified,0,tta,2,"(1, 2)",0.741688,0.728608,,
+stratified,0,tta,3,"(0, 1, 2)",0.741645,0.726999,,
+stratified,0,tta,0,error sharing,0.492616,0.726999,0.664926,0.808604
+stratified,0,no_tta,2,"(0, 1)",0.731313,0.709312,,
+stratified,0,no_tta,2,"(0, 2)",0.730594,0.7139,,
+stratified,0,no_tta,2,"(1, 2)",0.735429,0.713671,,
+stratified,0,no_tta,3,"(0, 1, 2)",0.741272,0.712294,,
+stratified,0,no_tta,0,error sharing,0.438884,0.712294,0.616494,0.772798

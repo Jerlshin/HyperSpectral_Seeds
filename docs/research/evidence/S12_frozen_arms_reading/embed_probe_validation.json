@@ -1,0 +1,6 @@
+{
+ "n": 11,
+ "spearman_kappa_vs_attraction": 0.22727272727272727,
+ "pearson_kappa_vs_attraction": 0.7987554438826178,
+ "spearman_kappa_vs_cross_recall": -0.46363636363636374
+}

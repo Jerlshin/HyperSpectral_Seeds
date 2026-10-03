@@ -15,7 +15,10 @@ venv/
 
 # ── Large binaries & run artifacts (REFACTOR_PLAN.md §2) ─────────────
 dataset/
-dataset_*/
+# No trailing slash: also matches the *symlink* README §10 creates on Kaggle
+# (`ln -sfn /kaggle/input/... dataset_u430k32`), which `dataset_*/` did not, so
+# every Kaggle run recorded `dirty: true` (S12 F71b).
+dataset_*
 outputs/
 *.pth
 

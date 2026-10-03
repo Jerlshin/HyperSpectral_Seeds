@@ -111,6 +111,22 @@ n_morphometrics: 8
 # [spatial] also loses the morphometrics (they enter only via the spectral path).
 pathways: [spatial, spectral]
 
+# ── S13 arms (frozen in preregistration_s12.json; S13 amendment D28) ──
+# Every default below is the shipped network, bit for bit (S13 G-neutral gate).
+# Y3, the lean architecture: `spectral_descriptor: snv_morph`,
+# `spatial_tail_strides: [2, 2, 2, 1]`, `cbam_min_hw: 3`.
+#   snv_morph — the spectral descriptor is [SNV | morph]; the index bank,
+#               continuum depths and D1/D2 (inert, S10 F49) are not built.
+#   [2,2,2,1] — the tail stops at 2x2 instead of 1x1, so no 3x3 tap multiplies
+#               only padding (327,680 untrainable parameters, S10 F48).
+#   3         — no CBAM gate after a block whose output map is <= 2x2 (S10 B8).
+spectral_descriptor: full
+spatial_tail_strides: [2, 2, 2, 2]
+cbam_min_hw: 0
+# Y2: masked MixStyle after 3-D stem blocks 1 and 2 (p 0.5, Beta(0.1, 0.1),
+# per-(channel, spectral-slice) foreground statistics, training only).
+spatial_mixstyle: false
+
 # ── Shared front end ──────────────────────────────────────────────────
 # MaskedSpectralECA is 6 parameters. Free. Kept.
 wl_embed_dim: 16

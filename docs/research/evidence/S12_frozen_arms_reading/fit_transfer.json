@@ -1,0 +1,29 @@
+{
+ "stratified": {
+  "s08_slope": 1.0090872763886376,
+  "s08_r": 0.9917999008831759,
+  "s08_fit_mean": 0.911111,
+  "s08_f1_mean": 0.7123678333333334,
+  "x1_fit_mean": 0.9923333333333333,
+  "x1_f1_mean": 0.726984,
+  "predicted_x1_f1_from_s08_line": 0.7943282564585967,
+  "observed_minus_predicted": -0.06734425645859676,
+  "realised_slope": 0.17995255820443332,
+  "pooled_r": 0.7369850399400143,
+  "x1_within_r": 0.6279872705735264
+ },
+ "grouped": {
+  "s08_slope": 0.1992262432020166,
+  "s08_r": 0.36300900741318354,
+  "s08_fit_mean": 0.9002878333333334,
+  "s08_f1_mean": 0.5300331666666667,
+  "x1_fit_mean": 0.98,
+  "x1_f1_mean": 0.5307864999999999,
+  "predicted_x1_f1_from_s08_line": 0.5459139221691596,
+  "observed_minus_predicted": -0.015127422169159632,
+  "realised_slope": 0.009450669387566599,
+  "pooled_r": 0.2938438699261993,
+  "x1_within_r": 0.6038631198742355
+ },
+ "note": "S08 within-regime slope is the F46 relationship (seeds that happened to fit better). X1 raised fit by intervention; 'realised_slope' is \u0394held-out / \u0394fit between the regimes' means."
+}

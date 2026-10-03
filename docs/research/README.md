@@ -14,7 +14,7 @@ describes *what we have learned and why the code is the way it is*.
 
 ## 1 · Where the research stands today
 
-*Last revised 2026-10-01 (after S11 part 1). Update this section whenever a finding or decision changes status.*
+*Last revised 2026-10-02 (after S13 part 1). Update this section whenever a finding or decision changes status.*
 
 **The question.** 90 rice varieties, 8,624 single-kernel hyperspectral patches (Zenodo 3241923).
 Can a model identify the *variety* of a kernel — and how much of what a model scores on this
@@ -44,33 +44,51 @@ dataset is variety recognition rather than recognition of *how and when the kern
    [F30, F33](FINDINGS.md) · [S09](studies/S09_post_sweep_forensics/README.md)
 7. **What limits it is split.** The network adds only ≈ 0.05 over LDA on its own 40 scalar inputs. Within
    the acquisition it scores as well as it fits, and it under-fits; 63 % of the grouped shortfall is
-   already there in-distribution. **Score → model/training. Claim → data/protocol:** nothing measured
-   transfers spectral variety recognition across sessions. [F31–F38](FINDINGS.md) · [D16, D17](DECISIONS.md)
+   already there in-distribution. S09 read this as **score → model/training, claim → data/protocol**; S12 tested the
+   first half and revised it (item 10): fitting better did not move the score. [F31–F38](FINDINGS.md) · [D16, D17](DECISIONS.md)
 8. **Why it under-fits: the regime, demonstrably; the architecture, in specific places.** The clean-label objective
    gets 3.6 % of the learning rate, most of it spent on a margin few training kernels can meet; measured cleanly the
    network fits 0.87–0.95 of its training kernels, and within the acquisition held-out moves with fit one for one. The
    regime that ran is not the documented one (aux weight 0.65 → 0.25, not 0.2). The spatial tail collapses to 1 × 1
    (11.5 % of parameters never train), the spectral path's chemometric blocks are inert, and the network cannot see
-   reflectance level. **Training is repaired first, on the unchanged architecture; component repairs follow as
-   separate frozen arms.** [F44–F56](FINDINGS.md) · [D19–D21](DECISIONS.md) · [S10](studies/S10_training_architecture_review/README.md)
+   reflectance level. Training was repaired first (X1, X4) — and fit is no longer the limit (item 10).
+   [F44–F56](FINDINGS.md) · [D19–D21](DECISIONS.md) · [S10](studies/S10_training_architecture_review/README.md)
 9. **The code now measures what the next experiments need, without changing what they are compared against.** Clean
    fit on a fixed training subset, the aux weight actually applied, per-module gradients, logits, the code revision, and
-   every kernel scored once; a before/after gate shows none of it moves a training number, and the frozen reference
-   already counted each kernel once. X1, X2 and X4 are built from the hashed pre-registrations and ready to run.
-   [F57, F58](FINDINGS.md) · [D22](DECISIONS.md) · [S11](studies/S11_frozen_arms_execution/README.md)
+   every kernel scored once; a before/after gate shows none of it moves a training number. [F57, F58](FINDINGS.md) ·
+   [D22](DECISIONS.md) · [S11](studies/S11_frozen_arms_execution/README.md)
+10. **Fitting was not the bottleneck after all.** A fit-first regime makes the network classify 0.98–0.99 of its training
+    kernels, and every held-out number stays where it was (grouped 0.531, stratified 0.727); the extra fit is
+    memorisation, and with every regulariser removed the network fits 1.000 and generalises worse. Capacity is ample;
+    the remaining errors are systematic. [F59–F62](FINDINGS.md) · [S12](studies/S12_frozen_arms_reading/README.md)
+11. **The 3-D spatial pathway is where the network's extra accuracy comes from — and where the session lives.** Without
+    it the network has the best cross-session recall measured on this dataset (0.214) and much less session attraction;
+    the morphometric scalars are not what carries cross-session recall; training the two pathways jointly adds nothing
+    over fusing them afterwards. Across bundles the network is no better than a linear model on within-kernel pixel
+    statistics. **The bottleneck is representation under acquisition shift (route A):** no more capacity or regime
+    work; the next round tests decoupled pathways, style randomisation and a leaner architecture, and the larger
+    headroom is in new information (RGB shape, more bands, transfer standards). [F63–F71](FINDINGS.md) ·
+    [D23–D27](DECISIONS.md)
+12. **The next round is ready to run, as a single-seed screen.** The four route-A arms (decoupled pathways, style
+    randomisation in the 3-D stem, a lean architecture, the 80/20 tier) run at one seed — 10 GPU runs, ≈ 4.4 h, one
+    Kaggle command — with every arm, control, protocol contrast and grouped fold of the frozen design; a pass sends an
+    arm to multi-seed replication, not into the paper. The code that runs them is bit-identical to the S11 network at
+    its defaults, and the checkpoint race that lost an S11 cell is fixed. [F72](FINDINGS.md) · [D28, D29](DECISIONS.md)
+    · [S13](studies/S13_representation_screening/README.md)
 
-**What we do not know yet** (ordered by how much the answer would change the project; frozen in
-`evidence/S09_post_sweep_forensics/preregistration_next.json` and `evidence/S10_training_architecture_review/preregistration_s10.json`):
+**What we do not know yet** (frozen in `evidence/S12_frozen_arms_reading/preregistration_s12.json`, run as S13's
+single-seed screen per `evidence/S13_representation_screening/preregistration_s13.json`, unless marked CPU):
 
-- Does a fit-first training regime raise the within-acquisition score, and does the gain carry to grouped?
-  This decides whether to invest in model/training or in data/representation. → [FW-15](FUTURE_WORK.md)
-- What does the network actually use — is its cross-session recall shape, and does the spatial pathway
-  (80 % of parameters) add anything? → [FW-16](FUTURE_WORK.md)
-- What is the within-acquisition (80/20, literature-comparable) tier? → [FW-17](FUTURE_WORK.md)
-- Can the architecture fit its training bundle at all once the softeners are off? This decides whether capacity or the
-  regime limits fit (`preregistration_s10.json`). → [FW-20](FUTURE_WORK.md)
-- Do the two component repairs — a spatial tail with no untrainable parameters, reflectance level in the spectral
-  path — help, and does level help through variety or through session? → [FW-21, FW-22](FUTURE_WORK.md)
+- Do decoupled single-pathway networks, fused on calib, keep the joint network's score while buying cross-session
+  robustness? → [FW-31](FUTURE_WORK.md)
+- Can randomising the 3-D pathway's early feature statistics move a model *off* the same/cross-session frontier rather
+  than along it? → [FW-32](FUTURE_WORK.md)
+- Is a lean SpectralSeedNet (SNV + morph descriptor, no dead taps) non-inferior? → [FW-33](FUTURE_WORK.md)
+- Can a per-pixel set encoder extract the within-kernel information with less session than the 3-D CNN (CPU)?
+  → [FW-27](FUTURE_WORK.md)
+- What do high-resolution RGB shape and the 215-band cube add — the levers with the most headroom? → [FW-18,
+  FW-03](FUTURE_WORK.md)
+- What is the within-acquisition (80/20) tier? → [FW-17](FUTURE_WORK.md)
 
 **The two most important figures so far** — the session confound, and how little the network adds:
 
@@ -94,7 +112,7 @@ docs/research/
 ├── GLOSSARY.md        the project's vocabulary (bundle, session, grouped, calib, uniform430 …)
 ├── studies/
 │   ├── _TEMPLATE.md   copy this to start a new study
-│   └── S00 … S11/     one folder per study, each with its own README.md
+│   └── S00 … S13/     one folder per study, each with its own README.md
 ├── figures/<study>/   every figure the log shows (generated or copied — never hand-edited)
 ├── evidence/<study>/  snapshot of the raw results each claim rests on (outputs/ is git-ignored)
 └── tools/build_assets.py   regenerates evidence/ and figures/ from outputs/ and dataset/
@@ -120,7 +138,9 @@ study stays *modular* (it can be read, revised or superseded on its own).
 | [S08](studies/S08_neural_confirmation/README.md) | Neural confirmation on the reflectance cube | 2026-10-01 → | protocol sweep run (u430k32); budget arms open | grouped 0.530 · stratified 0.712 |
 | [S09](studies/S09_post_sweep_forensics/README.md) | Post-sweep forensics: data/protocol or model/training? | 2026-10-01 | complete (analysis); next arms frozen | +0.05 over LDA; fit-limited; 3 reporting tiers |
 | [S10](studies/S10_training_architecture_review/README.md) | Training & architecture review: why it under-fits, what to change first | 2026-10-01 | complete (specification); X4–X6 frozen | 3.6 % of the LR on clean labels; aux weight not as documented; dead tail; level-blind |
-| [S11](studies/S11_frozen_arms_execution/README.md) | Executing the frozen diagnostics (X1, X2, X4) | 2026-10-01 → | **running** — instrumentation done and validated; GPU arms ready, not run | neutral instrumentation (G-neutral); clean-fit probe; pathway switch; `run_frozen.py` |
+| [S11](studies/S11_frozen_arms_execution/README.md) | Executing the frozen diagnostics (X1, X2, X4) | 2026-10-01 → 10-02 | complete — instrumentation validated; 22/23 cells run and scored (read in S12) | neutral instrumentation (G-neutral); clean-fit probe; pathway switch; `run_frozen.py` |
+| [S12](studies/S12_frozen_arms_reading/README.md) | Reading X1, X2, X4: what binds now that the network fits | 2026-10-02 | complete (analysis); S13 arms frozen | fit solved, held-out unmoved; the 3-D pathway is the session channel; route A |
+| [S13](studies/S13_representation_screening/README.md) | Route-A arms Y1–Y4 as a single-seed screen | 2026-10-02 → | part 1 complete (code, amendment, validation); GPU run pending | one seed, all arms/folds/contrasts (D28); P0 fixed (F72); 10 runs ≈ 4.4 h, one command |
 
 ## 4 · Conventions
 

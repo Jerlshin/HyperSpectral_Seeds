@@ -1,0 +1,7 @@
+cells,n_runs,analogue,adjustment,s_per_epoch,minutes_per_run_typical,minutes_per_run_cap,minutes_total_typical,minutes_total_cap
+Y1/spectral_only,2,"X2 spectral_only (shipped, ≤150)",1.0,6.29,20.4,22.0,40.8,44.1
+Y1/spatial_only,2,"X2 spatial_only (shipped, ≤150)",1.0,8.02,25.9,28.0,51.9,56.0
+Y2/mixstyle,2,"X1 grouped (full, R1)",1.03,8.15,26.5,28.6,52.9,57.1
+Y3/lean_grouped,2,"X1 grouped (full, R1)",1.0,7.91,25.7,27.8,51.4,55.5
+Y3/lean_stratified,1,"X1 stratified (full, R1)",1.0,10.05,32.1,34.7,32.1,34.7
+Y4/within_8020,1,"X1 stratified (full, R1)",1.14,11.45,36.5,39.4,36.5,39.4

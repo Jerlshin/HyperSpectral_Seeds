@@ -69,6 +69,9 @@ supports exactly two folds; report both, never their maximum (D01, D03).
    (`preregistration2.json` does this).
 4. If what ships departs from the frozen rule, record the deviation in `DECISIONS.md` (D11 is the
    model).
+5. A change to a frozen design approved **before any of its arms has run** is an *amendment*: its own frozen,
+   hashed file naming the parent's hash, the single change, why, and what is unchanged — never an edit of the parent.
+   The runner verifies both hashes (`evidence/S13_representation_screening/preregistration_s13.json`, D28).
 
 ### 3.3 Mandatory controls
 

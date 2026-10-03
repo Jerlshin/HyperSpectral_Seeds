@@ -1,0 +1,82 @@
+{
+ "frozen_at": "2026-10-02",
+ "study": "S12 (reading of X1/X2/X4) → S13 (route-A representation arms)",
+ "parent_commit": "413a11e (S11 code; the S12 analysis, its evidence and this file were uncommitted when it was frozen). The P0 items below must land first; their commit is recorded in the S13 page.",
+ "depends_on": {
+  "S09": {"file": "evidence/S09_post_sweep_forensics/preregistration_next.json", "sha256": "f896d0e569e0c071f85fb1c7e2fbce23cd3266da1ef317204fa329af9bb542e7",
+          "role": "H12a rejected and H14b rejected route the project to A (representation/data). H15 (X3) is re-used unchanged."},
+  "S10": {"file": "evidence/S10_training_architecture_review/preregistration_s10.json", "sha256": "1c8ae6937796cd7867f58ae901c1630671869f949ef8067cfefd72b2d4922739",
+          "role": "H16 supported (capacity ample). X5/X6 are not run as standalone arms (S12 D25); X5's change is part of arm Y3 here."}
+ },
+ "motivating_evidence": "S12 findings F59–F71 (evidence/S12_frozen_arms_reading/). Held-out rows of the S11 cells were read once by their own final evaluation and, in S12, aggregated diagnostically (late fusion with equal or calib-chosen weights; linear controls). Nothing in this file was tuned on them beyond what S12 reports openly: Y1 is motivated by the diagnostic late fusion (F65), Y2 by the session channel located in within-kernel statistics (F67, F69), Y3 by structural defects (F48, F49) and the linear equivalence of the spectral pathway (F66).",
+ "regime": {
+  "name": "R1 (= X1, S12 D24)",
+  "overrides": "single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0 single.epochs=200 single.patience=40",
+  "unchanged": "aux_weight_schedule=legacy, clip_partition=legacy, label smoothing 0.10→0.04, dropout 0.15, aug medium, EMA 0.999, AdamW 5e-4 cosine, k32 u430 reflectance (dataset_u430k32)"
+ },
+ "reference": {
+  "source": "evidence/S12_frozen_arms_reading/cells.csv — the S11 X1 cells (commit 413a11e)",
+  "grouped_runs": "X1 grouped folds 0,1 × seeds 0,1,2",
+  "grouped_f1_tta_mean": 0.530786, "grouped_f1_tta_sd": 0.009933,
+  "grouped_same_recall_tta_mean": 0.648493, "grouped_same_recall_tta_sd": 0.013873,
+  "grouped_cross_recall_tta_mean": 0.146637, "grouped_cross_recall_tta_sd": 0.009823,
+  "grouped_attraction_cross_tta_mean": 0.463958, "grouped_attraction_cross_tta_sd": 0.020362,
+  "stratified_f1_tta_mean": 0.726984, "stratified_f1_tta_sd": 0.005806,
+  "margins": "non-inferiority and gain margins are 2·max(observed sd, floor): F1 2·max(0.0099, 0.009) = 0.020; cross recall 2·max(0.0098, 0.009) = 0.020; attraction 2·max(0.0204, 0.009) = 0.040; same-session recall 2·max(0.0139, 0.009) = 0.028 → 0.020 used where it guards a gain elsewhere (stricter); stratified F1 2·max(0.0058, 0.009) = 0.018"
+ },
+ "metric": "macro-F1 on val ∪ test, TTA, mean over runs (no-TTA reported beside); same/cross-session macro-recall and cross-session attraction from reporting/session.py; checkpoint chosen on calib only; every held-out kernel scored once (S11 de-dup). Reported but not decisive: the training-rows class-disjoint session κ (S12 session_probe.probe) of the embedding and of each pathway output.",
+ "p0_before_any_arm": [
+  "Checkpoint race (S12 F71a): barrier after the stage and atomic (tmp + os.replace) save of best_stage1.pth before any rank reloads it; regression test with best epoch == last epoch under 2 gloo ranks",
+  "Provenance (S12 F71b): .gitignore `dataset_*` (no trailing slash) so the Kaggle dataset symlink does not mark every run dirty; a run whose `git status --porcelain` lists anything else stays dirty",
+  "Re-score X2/spatial_only__f1_s0 through the designed path (rerun the cell: the finished stage is detected and only the final evaluation runs); it decides nothing (S12 §5.2)",
+  "Late-fusion scorer (reads two cells' saved logits; weight chosen on calib; writes the same run.json/session fields as a model)",
+  "Session κ probe in the final report (training rows, embedding + pathway outputs)"
+ ],
+ "arms": {
+  "Y1_decoupled_pathways": {
+   "change": "No model change. Train the two pathways as separate networks under R1 (model.pathways=[spectral] and model.pathways=[spatial], X2's switch: a disabled pathway is skipped and frozen; [spectral] has no aux term, [spatial] has no morphometrics). For each (fold, seed) fuse the two networks' log-softmax: z = w·log p_spectral + (1−w)·log p_spatial, w ∈ {0, 0.05, …, 1} chosen by macro-F1 on calib (TTA logits; ties → closest to 0.5), applied unchanged to held-out TTA logits. Equal weight (w = 0.5) reported beside.",
+   "literature": "Du et al., ICML 2023 (uni-modal ensemble when paired features are scarce); Wang, Tran & Feiszli, CVPR 2020 (modalities over-fit at different rates; the best uni-modal model often beats the joint one)",
+   "runs": "grouped folds 0,1 × seeds 0,1,2 × {spectral, spatial} = 12 runs → 6 fused cells"
+  },
+  "Y2_spatial_style_randomisation": {
+   "change": "Masked MixStyle (random-pair variant, Zhou et al. ICLR 2021) in the spatial stem, training only: after the GN→GELU→×α of 3-D stem blocks 1 and 2, with probability p = 0.5 per batch, each kernel's per-(channel, spectral-slice) mean and sd over its FOREGROUND pixels are mixed with another kernel's from the same batch, λ ~ Beta(0.1, 0.1); background stays zero. New key model.spatial_mixstyle (default off = today's model bit-for-bit). Full network, R1.",
+   "literature": "Zhou et al., ICLR 2021 (MixStyle); Li et al., ICLR 2022 (DSU) — instance feature statistics carry acquisition 'style'",
+   "runs": "grouped folds 0,1 × seeds 0,1,2 = 6 runs"
+  },
+  "Y3_lean_architecture": {
+   "change": "Remove what S10/S12 found inert or dead, nothing else: spectral descriptor = [SNV(r) 32 | morphometrics 8] (drop the index bank, continuum depths, D1, D2); spatial tail strides [2,2,2,1] (S10 X5: no structurally zero-gradient parameter); no CBAM after a block whose output is ≤ 2 × 2. New keys model.spectral_descriptor ∈ {full, snv_morph}, model.spatial_tail_strides, model.cbam_min_hw; defaults reproduce today's model bit-for-bit. Full network, R1.",
+   "runs": "grouped folds 0,1 × seeds 0,1,2 + stratified seeds 0,1,2 = 9 runs"
+  },
+  "Y4_within_acquisition_tier": {
+   "change": "S09's X3 unchanged in design: data=ablation/u430k32_stratified data.split_eval_frac=0.2, under R1 (the S09 text says 'the regime chosen by H12'; H12a was rejected, and S12 D24 makes R1 the reference regime).",
+   "runs": "seeds 0,1,2 = 3 runs",
+   "role": "the D16 tier-1 number; decides only H15 (frozen in S09, restated here unchanged)"
+  }
+ },
+ "hypotheses": {
+  "H19a": "Y1 fused grouped macro-F1 (TTA, mean of 6 fused cells) ≥ 0.530786 − 0.020 = 0.5108 (non-inferior to the jointly trained network)",
+  "H19b": "Y1 fused cross-session recall ≥ 0.146637 + 0.020 = 0.1666 AND cross-session attraction ≤ 0.463958 − 0.040 = 0.4240",
+  "H20": "Y2 cross-session recall ≥ 0.1666 AND same-session recall ≥ 0.648493 − 0.020 = 0.6285 (a move off the same/cross frontier, not along it)",
+  "H21a": "Y3 grouped macro-F1 ≥ 0.5108 (non-inferior)",
+  "H21b": "Y3 stratified macro-F1 ≥ 0.726984 − 0.018 = 0.7090 (non-inferior within acquisition)",
+  "H15": "(S09, unchanged) Y4 (80/20) − R1 stratified (0.726984) ≤ +0.03"
+ },
+ "decision_rule": {
+  "H19a and H19b": "decoupled pathways + calib-weighted late fusion become the reference form (SeedNet-D); joint fusion is retired",
+  "H19a, not H19b": "no adoption; the joint network stays; record that decoupling does not buy session robustness under R1",
+  "not H19a": "joint training carries paired information late fusion lacks; keep it",
+  "H20": "supported → adopt masked MixStyle in the stem; rejected with cross ≥ +0.020 but same < −0.020 → a frontier move only, not adopted, reported as a trade-off point; rejected otherwise → instance statistics are not separable into session and variety here",
+  "H21a and H21b": "adopt the lean architecture as the base of every later arm (SeedNet v5); the paper drops the index-bank/continuum/derivative claims",
+  "H21a xor H21b": "dissect: descriptor and tail as two arms before adopting either",
+  "neither H21": "keep today's architecture and record which removal is load-bearing as a finding",
+  "combination": "arms adopted here are combined only in a later, separately frozen round; no combination is selected on held-out"
+ },
+ "guards": [
+  "A run whose run.json → run.code.dirty is true for any reason other than the documented symlink, or whose commit is not the S13 commit, is not an S13 result",
+  "Any arm epoch with grad_norm/clip_fraction > 0.01 outside epoch 1 and fp16-overflow epochs is reported (S12 F71c)",
+  "Runs stopping before epoch 160 are reported (as D21 guard 4)",
+  "Y1's weight is chosen on calib only; the equal-weight number is reported beside it and decides nothing"
+ ],
+ "not_in_this_round": "CPU-first and later items: FW-27 a pixel-set (multiple-instance) spectral encoder trained on CPU with a calib gate; FW-28 TabPFN-3 on kernel summaries; FW-29 a transfer-standard (EPO-style, leave-varieties-out) protocol tier; FW-30 hyperspectral foundation-model encoders; FW-18 RGB morphology (needs the raw archive). Each needs its own frozen file before it touches held-out.",
+ "heldout_use": "Each arm is scored once on val ∪ test. No arm, epoch, threshold, fusion weight or hyperparameter is chosen by its held-out score. A second round, if any, is a new frozen file naming what motivated it."
+}

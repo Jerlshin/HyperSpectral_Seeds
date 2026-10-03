@@ -1,0 +1,100 @@
+{
+ "n_representations": 13,
+ "spearman_kappa_vs_attraction": 0.9340659340659341,
+ "spearman_kappa_vs_cross_recall": -0.34065934065934067,
+ "pearson_kappa_vs_attraction": 0.8824991644864448,
+ "table": [
+  {
+   "representation": "SNV",
+   "kappa": 0.2976,
+   "attraction_cross": 0.419,
+   "cross_recall": 0.0565,
+   "f1": 0.2052
+  },
+  {
+   "representation": "SNV + level + morph",
+   "kappa": 0.3226,
+   "attraction_cross": 0.3771,
+   "cross_recall": 0.1225,
+   "f1": 0.4444
+  },
+  {
+   "representation": "SNV + morph (spectral-path analogue)",
+   "kappa": 0.2856,
+   "attraction_cross": 0.2518,
+   "cross_recall": 0.2021,
+   "f1": 0.4163
+  },
+  {
+   "representation": "all pixel statistics + morph",
+   "kappa": 0.451,
+   "attraction_cross": 0.6536,
+   "cross_recall": 0.0582,
+   "f1": 0.5128
+  },
+  {
+   "representation": "core + rim + morph",
+   "kappa": 0.3196,
+   "attraction_cross": 0.3974,
+   "cross_recall": 0.1495,
+   "f1": 0.4949
+  },
+  {
+   "representation": "level + morph",
+   "kappa": 0.1111,
+   "attraction_cross": 0.2862,
+   "cross_recall": 0.1319,
+   "f1": 0.1756
+  },
+  {
+   "representation": "mean + log-cov + morph",
+   "kappa": 0.4417,
+   "attraction_cross": 0.637,
+   "cross_recall": 0.0484,
+   "f1": 0.4766
+  },
+  {
+   "representation": "mean + sd + morph",
+   "kappa": 0.3693,
+   "attraction_cross": 0.4441,
+   "cross_recall": 0.1235,
+   "f1": 0.5065
+  },
+  {
+   "representation": "morphometrics",
+   "kappa": 0.0449,
+   "attraction_cross": 0.1714,
+   "cross_recall": 0.1218,
+   "f1": 0.1512
+  },
+  {
+   "representation": "pixel-SNV mean + sd + morph",
+   "kappa": 0.421,
+   "attraction_cross": 0.4706,
+   "cross_recall": 0.1105,
+   "f1": 0.476
+  },
+  {
+   "representation": "quantiles 10/50/90 + morph",
+   "kappa": 0.3778,
+   "attraction_cross": 0.5129,
+   "cross_recall": 0.0897,
+   "f1": 0.5178
+  },
+  {
+   "representation": "raw + morph (S09 best linear)",
+   "kappa": 0.2526,
+   "attraction_cross": 0.3243,
+   "cross_recall": 0.1664,
+   "f1": 0.4359
+  },
+  {
+   "representation": "raw reflectance",
+   "kappa": 0.2344,
+   "attraction_cross": 0.3545,
+   "cross_recall": 0.0386,
+   "f1": 0.2625
+  }
+ ],
+ "note": "held-out values are read from linear_controls.csv / pixel_controls.csv (shrinkage LDA); the proxy itself uses training rows only"
+}

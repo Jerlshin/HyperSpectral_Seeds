@@ -1,0 +1,87 @@
+{
+ "frozen_at": "2026-10-02",
+ "repo_commit": "413a11e (base: the S11 code every reference cell ran on). The S13 code, this file and the S13 page are uncommitted when this is frozen; the S13 commit is the one that lands them and is recorded by every cell in results/run.json → run.code.",
+ "study": "S13 — route-A representation arms Y1–Y4, executed as a single-seed screening study",
+ "type": "amendment of a frozen pre-registration. The parent file is not edited (its SHA-256 still verifies); this file records the one approved deviation and the exact cells it implies. Both hashes are checked before any S13 cell runs (scripts/run_s13.py).",
+ "amends": {
+  "file": "evidence/S12_frozen_arms_reading/preregistration_s12.json",
+  "sha256": "88b377c5bc32f31a9ccb95356a88eb0be35e8cb51216b035c88f1761919ae7f4"
+ },
+ "approved": "2026-10-02, by the PI, before any S13 code had run on GPU: 'a fast screening study using one seed only … keep all scientifically necessary arms, controls, protocol contrasts and grouped folds, but remove repeated random seeds; use one fixed seed consistently across S13 … successful arms can be replicated across multiple seeds later'.",
+ "heldout_status_at_amendment": "No S13 cell exists. No held-out row has been scored by any S13 arm. The amendment is motivated by GPU budget and turnaround (30 runs ≈ 12.5 GPU-pair-hours → 10 runs ≈ 4.4 h on Kaggle T4 × 2, one session), not by any result.",
+
+ "deviation": {
+  "what": "Seeds per cell: 3 → 1. Every S13 cell runs at seed 0.",
+  "seed": 0,
+  "why_seed_0": "Seed 0 is the first seed of every frozen design (S09 X1/X2, S10 X4, S12 Y1–Y4), fixed here before any run and chosen on nothing. It gives every S13 cell a fold- and seed-matched R1 reference cell that already exists (X1 seed 0: grouped f0, f1; stratified f0) and gives Y1's cells seed-matched shipped-regime counterparts (X2 spectral_only/spatial_only seed 0).",
+  "rationale": [
+   "S13 is a screen: its question is which representation changes deserve confirmatory compute, not what an arm's population mean is. Every arm, control, protocol contrast and grouped fold the frozen design has is kept; only seed replication is removed.",
+   "On S12's evidence no S13 arm is expected to move grouped F1 by more than ≈ 0.02 (S12 §9); the arms are decided on cross-session recall, attraction and non-inferiority. A single seed answers 'is the effect roughly the size the decision rule needs, or clearly not', which is what a screen needs.",
+   "Seed variance is already measured under R1 on this exact data and code path: X1 grouped F1 sd 0.0099 across 6 runs, stratified 0.0058 (S12 F60). The frozen margins were set from it and are unchanged.",
+   "Seed replication is deferred, not dropped: an arm that passes its screen is re-run at seeds 1 and 2 under a new frozen file before any claim rests on it (see 'replication')."
+  ],
+  "statistical_consequence": "The frozen margins were defined as 2·max(run-level sd, floor) and do not change. What changes is the precision of each arm's estimate: a 2-run grouped mean has SE ≈ 0.0099/√2 ≈ 0.007 (was ≈ 0.004 at 6 runs), so the 0.020 non-inferiority/gain margins sit ≈ 2.9 SE from the estimate instead of ≈ 5; a single stratified run has SE ≈ 0.006 against the 0.018 margin. Screening verdicts therefore carry a materially higher false-pass and false-fail rate than the confirmatory design would have, which is why a pass advances an arm to replication and does not make it the reference."
+ },
+
+ "unchanged_from_parent": [
+  "regime R1 (parent: regime.overrides), and everything listed under regime.unchanged",
+  "each arm's change (parent: arms.*.change), its literature and its role",
+  "protocols and folds: grouped folds 0 and 1 for Y1, Y2, Y3; the stratified contrast for Y3; Y4 = S09 X3 (data=ablation/u430k32_stratified data.split_eval_frac=0.2) under R1",
+  "the reference (X1, commit 413a11e), its values and every margin (parent: reference)",
+  "the metric, checkpoint selection on calib, each held-out kernel scored once (parent: metric)",
+  "every hypothesis threshold (parent: hypotheses) and the logic of every decision rule (parent: decision_rule)",
+  "the guards (parent: guards) and the held-out rule (parent: heldout_use)",
+  "P0 (parent: p0_before_any_arm) and what is not in this round (parent: not_in_this_round)"
+ ],
+
+ "cells": {
+  "base_overrides": "runtime=kaggle_t4x2 tracking=console_jsonl  (as S11; the cell is launched under torchrun with its own output directory — S11 D22 deviation 2)",
+  "regime": "R1 = preregistration_s12.json → regime.overrides, read from the parent file by scripts/run_s13.py",
+  "output_root": "outputs/experiments_u430k32/s13/<arm>/<variant>__f<fold>_s0/",
+  "gpu": [
+   {"cell": "Y1/spectral_only__f0_s0", "data": "ablation/u430k32_grouped", "fold": 0, "arm_overrides": "model.pathways=[spectral]"},
+   {"cell": "Y1/spectral_only__f1_s0", "data": "ablation/u430k32_grouped", "fold": 1, "arm_overrides": "model.pathways=[spectral]"},
+   {"cell": "Y1/spatial_only__f0_s0",  "data": "ablation/u430k32_grouped", "fold": 0, "arm_overrides": "model.pathways=[spatial]"},
+   {"cell": "Y1/spatial_only__f1_s0",  "data": "ablation/u430k32_grouped", "fold": 1, "arm_overrides": "model.pathways=[spatial]"},
+   {"cell": "Y2/mixstyle__f0_s0",      "data": "ablation/u430k32_grouped", "fold": 0, "arm_overrides": "model.spatial_mixstyle=true"},
+   {"cell": "Y2/mixstyle__f1_s0",      "data": "ablation/u430k32_grouped", "fold": 1, "arm_overrides": "model.spatial_mixstyle=true"},
+   {"cell": "Y3/lean_grouped__f0_s0",  "data": "ablation/u430k32_grouped", "fold": 0, "arm_overrides": "model.spectral_descriptor=snv_morph model.spatial_tail_strides=[2,2,2,1] model.cbam_min_hw=3"},
+   {"cell": "Y3/lean_grouped__f1_s0",  "data": "ablation/u430k32_grouped", "fold": 1, "arm_overrides": "model.spectral_descriptor=snv_morph model.spatial_tail_strides=[2,2,2,1] model.cbam_min_hw=3"},
+   {"cell": "Y3/lean_stratified__f0_s0", "data": "ablation/u430k32_stratified", "fold": 0, "arm_overrides": "model.spectral_descriptor=snv_morph model.spatial_tail_strides=[2,2,2,1] model.cbam_min_hw=3"},
+   {"cell": "Y4/within_8020__f0_s0",   "data": "ablation/u430k32_stratified", "fold": 0, "arm_overrides": "data.split_eval_frac=0.2"}
+  ],
+  "cpu": [
+   {"cell": "Y1/fused__f0_s0", "inputs": ["Y1/spectral_only__f0_s0", "Y1/spatial_only__f0_s0"], "rule": "parent arms.Y1_decoupled_pathways.change (spectralquadnet.experiments.fusion)"},
+   {"cell": "Y1/fused__f1_s0", "inputs": ["Y1/spectral_only__f1_s0", "Y1/spatial_only__f1_s0"], "rule": "as above"}
+  ],
+  "p0_rescore": "X2/spatial_only__f1_s0 — the S11 cell re-run through scripts/run_frozen.py; its finished stage is detected and only the final evaluation runs (no training). Decides nothing (parent p0_before_any_arm, item 3).",
+  "run_count": {"gpu_training_runs": 10, "cpu_fused_cells": 2, "final_evaluation_only": 1, "parent_gpu_training_runs": 30}
+ },
+
+ "implementation": {
+  "keys": {
+   "model.spectral_descriptor": "{full (default), snv_morph} — Y3",
+   "model.spatial_tail_strides": "list of 4 strides in {1, 2}; default [2, 2, 2, 2] — Y3 uses [2, 2, 2, 1]",
+   "model.cbam_min_hw": "int; a tail CBAM is kept only after a block whose output side ≥ this; default 0 — Y3 uses 3 ('no CBAM after a block whose output is ≤ 2 × 2')",
+   "model.spatial_mixstyle": "bool, default false — Y2 (p 0.5, Beta(0.1, 0.1), stem blocks 1–2, per-(channel, spectral-slice) foreground-weighted statistics, training only; constants in models/branches/spatial_cnn.py)",
+   "evaluation.session_probe": "bool, default true — the training-rows session κ in every single-stage run's report (P0 item 5, D26)"
+  },
+  "defaults_are_the_shipped_network": "Every default reproduces the S11 network bit for bit; verified by S11's G-neutral gate (identical per-step losses, checkpoint tensors and held-out predictions ±TTA against 413a11e) before any S13 cell runs."
+ },
+
+ "reading": {
+  "hypotheses": "H19a, H19b, H20, H21a, H21b and H15 are evaluated exactly as frozen — same quantities, same thresholds, same reference (the 6-run X1 mean) — on the mean of the seed-0 cells: 2 grouped runs (2 fused cells for Y1), 1 stratified run for H21b, 1 run for H15.",
+  "verdict_status": "Every outcome is a screening verdict. Where the parent's decision_rule says 'adopt', S13 reads 'passes the screen': the arm advances to replication and may serve as the provisional base of later screening arms; it does not become the reference form, SeedNet v5, or a paper claim until replicated. 'Not adopted' outcomes are screening rejections: the arm is not replicated unless a later, separately frozen file gives a reason.",
+  "reported_beside_deciding_nothing": [
+   "per-fold values of every quantity",
+   "fold- and seed-matched deltas against X1 seed 0 (grouped f0: F1 0.535325, same 0.646925, cross 0.158660, attraction 0.441574; f1: 0.535409, 0.656392, 0.139706, 0.472393; stratified f0 s0: F1 0.723766) — Y2 and Y1-spatial share X1's initial weights at seed 0, so these pairings remove initialisation variance",
+   "Y1: equal-weight (w = 0.5) fusion, the no-TTA variant, and each single network's own numbers",
+   "the training-rows session κ of every cell (D26)"
+  ],
+  "guards": "the parent's guards apply unchanged, including: a cell whose run.json → run.code.dirty is true or whose commit is not the S13 commit is not an S13 result"
+ },
+
+ "replication": "An arm whose screening verdict is 'pass' is re-run at seeds 1 and 2 — the same cells, overrides, code path and thresholds — under a new frozen file that names this one and the S13 results that motivated it, before its decision rule is read as confirmatory. With seeds 0–2 the design is the parent's 30-run design and its 6-run means.",
+
+ "heldout_use": "As the parent: each cell is scored once on val ∪ test; no arm, epoch, threshold, fusion weight or hyperparameter is chosen by a held-out score. Y1's fusion weight is chosen on calib only."
+}

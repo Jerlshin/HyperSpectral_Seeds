@@ -257,7 +257,9 @@ def build_run_context(
 
     _log.info("[CONTEXT] Building model ...")
     t0 = time.monotonic()
-    model = build_model(cfg, store.require_wavelengths()).to(device)
+    model = build_model(
+        cfg, store.require_wavelengths(), input_side=int(store.require_patches().shape[-1])
+    ).to(device)
     _log.info("[CONTEXT] Model built and moved to %s in %.1f s", device, time.monotonic() - t0)
     path_notes = apply_runtime_optimisations(model, plan)
     ema = ModelEMA(model, decay=cfg.ema_decay)

@@ -104,7 +104,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from spectralquadnet.models.blocks.attention import MaskedSpectralECA
-from spectralquadnet.models.branches.spatial_cnn import DEFAULT_FOLDED_DEPTH, SpatialCNNBranch
+from spectralquadnet.models.branches.spatial_cnn import (
+    DEFAULT_FOLDED_DEPTH,
+    DEFAULT_TAIL_STRIDES,
+    SpatialCNNBranch,
+)
 from spectralquadnet.models.branches.spectral_stats import ContinuumDepths, SoftIndexBank
 from spectralquadnet.models.control import set_dropout as set_module_dropout
 from spectralquadnet.models.front_end import SpectralDerivatives, snv
@@ -121,6 +125,11 @@ EMBED_DIM: int = 256
 #: The two pathways, in fusion (and ``branch_mask``) order. ``model.pathways``
 #: names a non-empty subset of these (X2, S09 FW-16).
 PATHWAYS: tuple[str, ...] = ("spatial", "spectral")
+
+#: ``model.spectral_descriptor`` values (S13 Y3). ``full`` is the shipped
+#: descriptor ``[index bank | continuum depths | SNV | D₁ | D₂ | morph]``;
+#: ``snv_morph`` keeps only what S10 F49 found the MLP actually uses: ``[SNV | morph]``.
+SPECTRAL_DESCRIPTORS: tuple[str, ...] = ("full", "snv_morph")
 
 #: Parameter-name prefixes the per-module gradient norm is reported under
 #: (S10 P0.5, F53). Every parameter belongs to exactly one entry, in this order;
@@ -206,15 +215,26 @@ class SpectralPath(nn.Module):
         n_morph: int = 8,
         hidden: int = 256,
         drop: float = 0.15,
+        descriptor: str = "full",
     ) -> None:
         super().__init__()
         self.n_morph = int(n_morph)
-        self.index_bank = SoftIndexBank(num_bands, n_indices)
-        self.continuum = ContinuumDepths(wavelengths, n_depths=n_depths)
-        self.derivatives = SpectralDerivatives(wavelengths)
-
-        # 3 * num_bands is [snv, D1, D2]; the derivative module stacks them.
-        in_dim = self.index_bank.n_indices + self.continuum.n_depths + 3 * int(num_bands)
+        self.descriptor = str(descriptor)
+        if self.descriptor not in SPECTRAL_DESCRIPTORS:
+            raise ValueError(
+                f"model.spectral_descriptor={descriptor!r}: expected one of {list(SPECTRAL_DESCRIPTORS)}"
+            )
+        if self.descriptor == "full":
+            self.index_bank = SoftIndexBank(num_bands, n_indices)
+            self.continuum = ContinuumDepths(wavelengths, n_depths=n_depths)
+            self.derivatives = SpectralDerivatives(wavelengths)
+            # 3 * num_bands is [snv, D1, D2]; the derivative module stacks them.
+            in_dim = self.index_bank.n_indices + self.continuum.n_depths + 3 * int(num_bands)
+        else:
+            # S13 Y3: the index bank never left uniform, and the continuum and
+            # derivative blocks reach the MLP at ≈ 1 % amplitude (S10 F49); none
+            # of them is built, so none holds a parameter or a buffer.
+            in_dim = int(num_bands)
         in_dim += self.n_morph
         self.in_dim = in_dim
 
@@ -237,12 +257,15 @@ class SpectralPath(nn.Module):
         path — are properties of this tensor, not of the embedding.
         """
         r = mean_spectrum
-        shape = self.derivatives(snv(r))  # (B, 3, C)
-        parts = [
-            self.index_bank(r),
-            self.continuum(r),
-            shape.flatten(1),
-        ]
+        if self.descriptor == "full":
+            shape = self.derivatives(snv(r))  # (B, 3, C)
+            parts = [
+                self.index_bank(r),
+                self.continuum(r),
+                shape.flatten(1),
+            ]
+        else:
+            parts = [snv(r)]
         if morph is None:
             morph = r.new_zeros(r.shape[0], self.n_morph)
         parts.append(morph.to(dtype=r.dtype))
@@ -279,6 +302,7 @@ class SpectralSeedNet(nn.Module):
         num_bands: int = 256,
         dropout: float = 0.15,
         wl_embed_dim: int = 16,
+        input_side: int | None = None,
     ) -> None:
         super().__init__()
         model_cfg = cfg.model
@@ -299,6 +323,11 @@ class SpectralSeedNet(nn.Module):
             stem_channels=int(model_cfg.stem_channels),
             width_mult=float(model_cfg.spatial_width_mult),
             stem_folded_depth=int(getattr(model_cfg, "stem_folded_depth", DEFAULT_FOLDED_DEPTH)),
+            # S13 Y3 / Y2. Defaults are the shipped branch, bit for bit.
+            tail_strides=list(getattr(model_cfg, "spatial_tail_strides", DEFAULT_TAIL_STRIDES)),
+            cbam_min_hw=int(getattr(model_cfg, "cbam_min_hw", 0)),
+            input_side=input_side,
+            mixstyle=bool(getattr(model_cfg, "spatial_mixstyle", False)),
         )
 
         # ── Spectral path ─────────────────────────────────────────────
@@ -311,6 +340,7 @@ class SpectralSeedNet(nn.Module):
             n_morph=self.n_morph,
             hidden=int(model_cfg.spectral_hidden),
             drop=float(model_cfg.fusion_drop),
+            descriptor=str(getattr(model_cfg, "spectral_descriptor", "full")),
         )
 
         # ── Fusion: concat + MLP (CHANGES §16.2, replacing the pool) ──
@@ -350,8 +380,17 @@ class SpectralSeedNet(nn.Module):
     # ── Construction from a composed config ───────────────────────────
 
     @classmethod
-    def from_config(cls, cfg: ExperimentConfig | Any, physical_wl: torch.Tensor) -> SpectralSeedNet:
-        """Build from a composed experiment config — the single canonical path."""
+    def from_config(
+        cls,
+        cfg: ExperimentConfig | Any,
+        physical_wl: torch.Tensor,
+        input_side: int | None = None,
+    ) -> SpectralSeedNet:
+        """Build from a composed experiment config — the single canonical path.
+
+        ``input_side`` is the patch side (the pipeline passes the cube's); only
+        ``model.cbam_min_hw > 0`` reads it (S13 Y3).
+        """
         return cls(
             cfg=cfg,
             physical_wl=physical_wl,
@@ -359,6 +398,7 @@ class SpectralSeedNet(nn.Module):
             num_bands=cfg.data.num_bands,
             dropout=cfg.single.dropout,
             wl_embed_dim=cfg.model.wl_embed_dim,
+            input_side=input_side,
         )
 
     def _init_weights(self) -> None:

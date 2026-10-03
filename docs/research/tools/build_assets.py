@@ -864,6 +864,158 @@ def fig_s10() -> None:
           "evidence/S10_training_architecture_review/ckpt_probes.csv (calib only; knock-outs are not retrained ablations)")
 
 
+def fig_s12() -> None:
+    s = "S12_frozen_arms_reading"
+    ev = EVIDENCE / s
+    if not (ev / "ladder_summary.csv").exists():
+        print("  skip    s12 (no ladder_summary.csv — run the study's code/ scripts first)")
+        return
+
+    # 1 · The generalisation ladder: fit moved, nothing held-out did.
+    lad = pd.read_csv(ev / "ladder_summary.csv")
+    rungs = [("clean_train", "clean train\n(D18 subset)"), ("calib_acc", "calib\n(same bundle)"),
+             ("same_recall", "held-out ·\nsame session"), ("cross_recall", "held-out ·\ncross session")]
+    series = [("S08 shipped", BLUE, "S08 shipped (6 runs)"), ("X1", ORANGE, "X1 fit-first (6)"),
+              ("X4", AQUA, "X4 no softeners (1)")]
+    fig, ax = plt.subplots(figsize=(8.2, 4.4))
+    xs = np.arange(len(rungs))
+    for arm, col, lab in series:
+        r = lad[(lad.arm == arm) & (lad.protocol == "grouped")].iloc[0]
+        ys = [r[k] for k, _ in rungs]
+        ax.plot(xs, ys, color=col, marker="o", ms=8, mec=SURFACE, mew=2, zorder=3, label=lab)
+        _label_end(ax, xs[-1], ys[-1], lab, col, dy={"S08 shipped": 8, "X1": -6, "X4": 18}[arm])
+    r1 = lad[(lad.arm == "X1") & (lad.protocol == "grouped")].iloc[0]
+    ax.annotate(f"fit +{r1.clean_train - 0.900:.2f}", (0, r1.clean_train), xytext=(10, 6),
+                textcoords="offset points", fontsize=8, color=INK_2)
+    ax.annotate("calib 0.714 vs 0.714", (1, r1.calib_acc), xytext=(10, 8), textcoords="offset points",
+                fontsize=8, color=INK_2)
+    ax.set_xticks(xs, [lab for _, lab in rungs], fontsize=8.5)
+    ax.grid(axis="x", visible=False)
+    ax.set_xlim(-0.3, 4.2)
+    ax.set_ylim(0, 1.05)
+    ax.set_ylabel("accuracy (train, calib) · macro-recall (held-out)")
+    ax.legend(loc="lower left")
+    ax.set_title("X1 fits 0.98 of its training kernels and no held-out rung moves; X4 fits all and loses (grouped)", fontsize=10)
+    _save(fig, s, "s12_ladder.png", "evidence/S12_frozen_arms_reading/ladder_summary.csv (selected checkpoints, TTA)")
+
+    # 2 · The same-session / cross-session frontier.
+    fr = pd.read_csv(ev / "frontier.csv")
+    fu = pd.read_csv(ev / "pathway_fusion.csv")
+    lin = pd.read_csv(ev / "linear_controls.csv")
+    pix = pd.read_csv(ev / "pixel_controls.csv")
+    lin = lin[lin.lda == "shrinkage"].groupby("representation")[["same_recall", "cross_recall"]].mean()
+    pix = pix[pix.protocol == "grouped"].groupby("representation")[["same_recall", "cross_recall"]].mean()
+    pix = pix.drop(index="mean + morph (S09 best linear)")          # same features as "raw + morph"
+    linear = pd.concat([lin, pix[~pix.index.isin(lin.index)]])
+    arms = [("S08 full (shipped)", BLUE, "S08 full"), ("X1 full", ORANGE, "X1 full"),
+            ("X2 spatial_only", AQUA, "spatial only"), ("X2 no_morph", YELLOW, "no morph"),
+            ("X2 spectral_only", MAGENTA, "spectral only"), ("X4 full", VIOLET, "X4")]
+    fig, ax = plt.subplots(figsize=(8.6, 5.4))
+    ax.scatter(linear.same_recall, linear.cross_recall, s=40, facecolor="none", edgecolor=MUTED, lw=1.2,
+               zorder=2, label="linear controls (shrinkage LDA, fold means)")
+    for name, r in linear.iterrows():
+        short = name.replace(" (S09 best linear)", "").replace(" (spectral-path analogue)", "").replace(" + morph", " +m")
+        ax.annotate(short, (r.same_recall, r.cross_recall),
+                    xytext={"core + rim +m": (-58, 8)}.get(short, (4, -9)), textcoords="offset points",
+                    fontsize=6.5, color=MUTED)
+    for model, col, lab in arms:
+        g = fr[fr.model == model]
+        ax.scatter(g.same_recall, g.cross_recall, s=22, color=col, alpha=0.55, edgecolor="none", zorder=3)
+        ax.scatter([g.same_recall.mean()], [g.cross_recall.mean()], s=90, color=col, edgecolor=SURFACE,
+                   lw=2, zorder=4, label=f"{lab} (run · mean)")
+        ax.annotate(lab, (g.same_recall.mean(), g.cross_recall.mean()),
+                    xytext={"no morph": (-52, 8), "X1 full": (8, -8)}.get(lab, (7, 4)),
+                    textcoords="offset points", fontsize=8.5, color=INK_2)
+    f = fu[(fu.view == "tta") & (fu.model == "fusion equal")]
+    ax.scatter([f.same_recall.mean()], [f.cross_recall.mean()], s=90, marker="D", color=GREEN,
+               edgecolor=SURFACE, lw=2, zorder=5, label="late fusion: spectral + spatial (3 cells)")
+    ax.annotate("late fusion", (f.same_recall.mean(), f.cross_recall.mean()), xytext=(7, 4),
+                textcoords="offset points", fontsize=8.5, color=INK_2)
+    ax.set_xlabel("same-session macro-recall (73 varieties, held-out bundle)")
+    ax.set_ylabel("cross-session macro-recall (17 varieties)")
+    ax.set_xlim(0.1, 0.72)
+    ax.set_ylim(0, 0.26)
+    ax.legend(loc="upper left", fontsize=7.5)
+    ax.set_title("Gaining same-session recall costs cross-session recall; the spectral-only network is at the far end",
+                 fontsize=10)
+    _save(fig, s, "s12_frontier.png", "evidence/S12_frozen_arms_reading/{frontier.csv, pathway_fusion.csv, "
+          "linear_controls.csv, pixel_controls.csv} (grouped, TTA for networks)")
+
+    # 3 · The training-rows session probe against held-out attraction.
+    val = json.loads((ev / "session_probe_validation.json").read_text())
+    tl = pd.DataFrame(val["table"])
+    ep = pd.read_csv(ev / "embed_probe.csv")
+    ep = ep[ep.representation == "embedding"]
+    epv = json.loads((ev / "embed_probe_validation.json").read_text())
+    fig, ax = plt.subplots(figsize=(8.2, 4.8))
+    ax.scatter(tl.kappa, tl.attraction_cross, s=46, color=BLUE, edgecolor=SURFACE, lw=1.5, zorder=3,
+               label=f"linear representations (13) · ρ = {val['spearman_kappa_vs_attraction']:.2f}")
+    for _, r in tl.iterrows():
+        if r.representation in ("morphometrics", "SNV + morph (spectral-path analogue)", "all pixel statistics + morph",
+                                "raw + morph (S09 best linear)", "quantiles 10/50/90 + morph"):
+            ax.annotate(r.representation.replace(" (spectral-path analogue)", "").replace(" (S09 best linear)", ""),
+                        (r.kappa, r.attraction_cross), xytext=(6, -3), textcoords="offset points", fontsize=7.5,
+                        color=INK_2)
+    ax.scatter(ep.kappa, ep.heldout_attraction, s=46, marker="s", color=ORANGE, edgecolor=SURFACE, lw=1.5,
+               zorder=3, label=f"network embeddings (11 checkpoints) · ρ = {epv['spearman_kappa_vs_attraction']:.2f}, "
+                               f"r = {epv['pearson_kappa_vs_attraction']:.2f}")
+    so = ep[ep.model == "X2 spectral_only"]
+    ax.annotate("spectral-only networks", (so.kappa.mean(), so.heldout_attraction.mean()), xytext=(8, -12),
+                textcoords="offset points", fontsize=7.5, color=INK_2)
+    ax.annotate("every network with the spatial pathway", (0.33, 0.47), xytext=(-150, 22),
+                textcoords="offset points", fontsize=7.5, color=INK_2,
+                arrowprops=dict(arrowstyle="-", color=MUTED, lw=0.8))
+    ax.set_xlabel("class-disjoint session decodability, Cohen's κ (training rows only)")
+    ax.set_ylabel("held-out cross-session attraction")
+    ax.set_xlim(0, 0.5)
+    ax.set_ylim(0.1, 0.7)
+    ax.legend(loc="upper left", fontsize=7.5)
+    ax.set_title("A training-rows probe tracks held-out session attraction — finely for linear models, coarsely for networks",
+                 fontsize=10)
+    _save(fig, s, "s12_session_probe.png", "evidence/S12_frozen_arms_reading/{session_probe_validation.json, "
+          "embed_probe.csv} (grouped fold 0 for networks; both folds for linear)")
+
+    # 4 · Joint training vs fusing separately trained pathways (shipped regime, matched cells).
+    fu = fu[fu.view == "tta"]
+    order = [("spectral_only", "spectral only"), ("spatial_only", "spatial only"),
+             ("full (S08, joint)", "joint full network"), ("fusion equal", "late fusion (equal)"),
+             ("fusion calib-w", "late fusion (w on calib)")]
+    m = fu.groupby("model")[["f1", "cross_recall", "attraction_cross"]].mean().loc[[k for k, _ in order]]
+    fig, axes = plt.subplots(1, 3, figsize=(11.0, 3.3), sharey=True)
+    yy = np.arange(len(order))[::-1]
+    cols = [MUTED, MUTED, BLUE, GREEN, GREEN]
+    for ax, (key, title) in zip(axes, (("f1", "macro-F1"), ("cross_recall", "cross-session recall"),
+                                       ("attraction_cross", "cross-session attraction (lower = less session)"))):
+        ax.barh(yy, m[key], 0.6, color=cols)
+        for yi, v in zip(yy, m[key], strict=True):
+            ax.text(v + 0.005, yi, f"{v:.3f}", va="center", fontsize=8, color=INK_2)
+        ax.set_title(title, fontsize=9.5)
+        ax.grid(axis="y", visible=False)
+        ax.set_xlim(0, max(m[key]) * 1.25)
+    axes[0].set_yticks(yy, [lab for _, lab in order], fontsize=8.5)
+    fig.suptitle("Fusing separately trained pathways matches the jointly trained network and keeps more "
+                 "cross-session recall", x=0.01, ha="left", fontsize=11, fontweight="bold", y=1.06)
+    _save(fig, s, "s12_pathways.png", "evidence/S12_frozen_arms_reading/pathway_fusion.csv (shipped regime; grouped "
+          "f0 s0, f0 s1, f1 s1; TTA)")
+
+    # 5 · Detector noise by session.
+    nb = pd.read_csv(ev / "noise_by_session.csv")
+    fig, ax = plt.subplots(figsize=(8.2, 3.4))
+    ax.bar(nb.session, nb.hf_median * 1e3, 0.66, color=BLUE)
+    for x, v, n in zip(nb.session, nb.hf_median * 1e3, nb.n, strict=True):
+        ax.text(x, v + 0.25, f"{v:.1f}", ha="center", fontsize=8, color=INK_2)
+        ax.text(x, 0.5, f"n {n}", ha="center", fontsize=7, color=SURFACE)
+    ax.set_xticks(nb.session, [f"s{s}\n{str(n)[9:19]}" for s, n in zip(nb.session, nb.session_name, strict=True)],
+                  fontsize=7.5)
+    ax.grid(axis="x", visible=False)
+    ax.set_ylabel("median HF residual sd (× 10⁻³ reflectance)")
+    ax.set_ylim(0, 24)
+    ax.set_title("Detector noise steps up 25–30 % from session 5 on: a session fingerprint inside every kernel",
+                 fontsize=10)
+    _save(fig, s, "s12_noise_by_session.png", "evidence/S12_frozen_arms_reading/noise_by_session.csv "
+          "(bands 8–23, per-kernel 3 × 3 high-frequency residual)")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--figures", action="store_true", help="skip the evidence snapshot")
@@ -871,7 +1023,7 @@ def main() -> None:
     if not a.figures:
         snapshot_evidence()
     print("figures:")
-    for f in (fig_s01, fig_s04, fig_s05, fig_s06, fig_s07, fig_s09, fig_s10):
+    for f in (fig_s01, fig_s04, fig_s05, fig_s06, fig_s07, fig_s09, fig_s10, fig_s12):
         f()
 
 

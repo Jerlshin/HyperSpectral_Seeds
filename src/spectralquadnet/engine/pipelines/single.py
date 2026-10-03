@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import torch
 from torch.utils.data import DataLoader
 
 from spectralquadnet.data.datasets import RiceSeedDataset
@@ -92,6 +93,7 @@ def run(ctx: RunContext) -> None:
         run_summary=ctx.summary(),
         sessions=ctx.session_map(),
         calib_ldr=ctx.calib_loader,
+        probe_ldr=_session_probe_loader(ctx),
     )
 
 
@@ -142,6 +144,24 @@ def _clean_fit_probe(ctx: RunContext) -> CleanFitProbe | None:
         seed=int(getattr(ctx.cfg.single, "clean_fit_seed", 0)),
         plan=ctx.plan,
         dist=ctx.dist,
+    )
+
+
+def _session_probe_loader(ctx: RunContext) -> DataLoader[Any] | None:
+    """Every training row, unaugmented, for the training-rows session κ (D26), or ``None``.
+
+    Built after training, with a private generator (as the clean-fit probe's), so
+    starting it draws nothing from the global RNG.
+    """
+    if not bool(getattr(ctx.cfg.evaluation, "session_probe", True)):
+        return None
+    generator = torch.Generator()
+    generator.manual_seed(0)
+    return build_eval_loader(
+        RiceSeedDataset(ctx.splits.train, **_dataset_kwargs(ctx)),
+        plan=ctx.plan,
+        dist=ctx.dist,
+        generator=generator,
     )
 
 

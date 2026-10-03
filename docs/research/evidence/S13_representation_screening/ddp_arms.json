@@ -1,0 +1,205 @@
+{
+ "launcher": "torchrun --nproc_per_node=2 (gloo, CPU)",
+ "arms": {
+  "R1": {
+   "world_size": 2,
+   "held_out_kernels": 91,
+   "predictions_written": 91,
+   "each_kernel_once": true,
+   "regime": {
+    "pathways": [
+     "spatial",
+     "spectral"
+    ],
+    "spatial_mixstyle": false,
+    "spectral_descriptor": "full",
+    "spatial_tail_strides": [
+     2,
+     2,
+     2,
+     2
+    ],
+    "cbam_min_hw": 0,
+    "split_eval_frac": 0.3,
+    "grad_clip": 50.0,
+    "arcface_m": 0.0
+   },
+   "parameters": 917787,
+   "session_probe_rows": 77,
+   "train_rows": 77,
+   "probe_every_training_row_once": true,
+   "kappa": {
+    "embedding": -0.07516339869281041,
+    "spatial": -0.26875000000000027,
+    "spectral": 0.1707317073170732
+   }
+  },
+  "Y1_spectral_only": {
+   "world_size": 2,
+   "held_out_kernels": 91,
+   "predictions_written": 91,
+   "each_kernel_once": true,
+   "regime": {
+    "pathways": [
+     "spectral"
+    ],
+    "spatial_mixstyle": false,
+    "spectral_descriptor": "full",
+    "spatial_tail_strides": [
+     2,
+     2,
+     2,
+     2
+    ],
+    "cbam_min_hw": 0,
+    "split_eval_frac": 0.3,
+    "grad_clip": 50.0,
+    "arcface_m": 0.0
+   },
+   "parameters": 917787,
+   "session_probe_rows": 77,
+   "train_rows": 77,
+   "probe_every_training_row_once": true,
+   "kappa": {
+    "embedding": 0.1619718309859155,
+    "spectral": -0.0068493150684934
+   }
+  },
+  "Y1_spatial_only": {
+   "world_size": 2,
+   "held_out_kernels": 91,
+   "predictions_written": 91,
+   "each_kernel_once": true,
+   "regime": {
+    "pathways": [
+     "spatial"
+    ],
+    "spatial_mixstyle": false,
+    "spectral_descriptor": "full",
+    "spatial_tail_strides": [
+     2,
+     2,
+     2,
+     2
+    ],
+    "cbam_min_hw": 0,
+    "split_eval_frac": 0.3,
+    "grad_clip": 50.0,
+    "arcface_m": 0.0
+   },
+   "parameters": 917787,
+   "session_probe_rows": 77,
+   "train_rows": 77,
+   "probe_every_training_row_once": true,
+   "kappa": {
+    "embedding": -0.28228228228228236,
+    "spatial": -0.3203592814371259
+   }
+  },
+  "Y2_mixstyle": {
+   "world_size": 2,
+   "held_out_kernels": 91,
+   "predictions_written": 91,
+   "each_kernel_once": true,
+   "regime": {
+    "pathways": [
+     "spatial",
+     "spectral"
+    ],
+    "spatial_mixstyle": true,
+    "spectral_descriptor": "full",
+    "spatial_tail_strides": [
+     2,
+     2,
+     2,
+     2
+    ],
+    "cbam_min_hw": 0,
+    "split_eval_frac": 0.3,
+    "grad_clip": 50.0,
+    "arcface_m": 0.0
+   },
+   "parameters": 917787,
+   "session_probe_rows": 77,
+   "train_rows": 77,
+   "probe_every_training_row_once": true,
+   "kappa": {
+    "embedding": -0.07333333333333347,
+    "spatial": -0.23809523809523814,
+    "spectral": -0.03886925795053009
+   }
+  },
+  "Y3_lean": {
+   "world_size": 2,
+   "held_out_kernels": 91,
+   "predictions_written": 91,
+   "each_kernel_once": true,
+   "regime": {
+    "pathways": [
+     "spatial",
+     "spectral"
+    ],
+    "spatial_mixstyle": false,
+    "spectral_descriptor": "snv_morph",
+    "spatial_tail_strides": [
+     2,
+     2,
+     2,
+     1
+    ],
+    "cbam_min_hw": 3,
+    "split_eval_frac": 0.3,
+    "grad_clip": 50.0,
+    "arcface_m": 0.0
+   },
+   "parameters": 914109,
+   "session_probe_rows": 77,
+   "train_rows": 77,
+   "probe_every_training_row_once": true,
+   "kappa": {
+    "embedding": 0.2222222222222222,
+    "spatial": 0.14238410596026485,
+    "spectral": 0.11692307692307691
+   }
+  },
+  "Y4_8020": {
+   "world_size": 2,
+   "held_out_kernels": 37,
+   "predictions_written": 37,
+   "each_kernel_once": true,
+   "regime": {
+    "pathways": [
+     "spatial",
+     "spectral"
+    ],
+    "spatial_mixstyle": false,
+    "spectral_descriptor": "full",
+    "spatial_tail_strides": [
+     2,
+     2,
+     2,
+     2
+    ],
+    "cbam_min_hw": 0,
+    "split_eval_frac": 0.2,
+    "grad_clip": 50.0,
+    "arcface_m": 0.0
+   },
+   "parameters": 917787,
+   "session_probe_rows": 123,
+   "train_rows": 123,
+   "probe_every_training_row_once": true,
+   "kappa": {
+    "embedding": -0.020746887966805128,
+    "spatial": -0.10659104244083695,
+    "spectral": 0.08657171922685647
+   }
+  }
+ },
+ "Y1_fused": {
+  "weight": 0.95,
+  "n_scored": 91,
+  "each_kernel_once": true
+ },
+ "all_ok": true
+}

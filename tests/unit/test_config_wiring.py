@@ -131,6 +131,23 @@ NOT_FORWARD_OBSERVABLE: dict[str, str] = {
         "this module perturbs. Covered by tests/unit/test_s11_instrumentation.py::"
         "test_spectral_only_logits_ignore_the_spatial_arrangement."
     ),
+    # ── S13 arms (SpectralSeedNet only; defaults are the shipped network) ──
+    "spectral_descriptor": (
+        "S13 Y3, SpectralSeedNet's spectral descriptor — unread by SpectralQuadNet. Covered by "
+        "tests/unit/test_s13_model.py::test_snv_morph_builds_only_snv_and_morph."
+    ),
+    "spatial_tail_strides": (
+        "S13 Y3, SpectralSeedNet's spatial-tail strides — unread by SpectralQuadNet. Covered by "
+        "tests/unit/test_s13_model.py::test_the_lean_tail_ends_at_2x2_and_drops_only_the_gate_on_it."
+    ),
+    "cbam_min_hw": (
+        "S13 Y3, SpectralSeedNet's tail CBAM placement — unread by SpectralQuadNet. Covered by "
+        "tests/unit/test_s13_model.py::test_the_lean_tail_ends_at_2x2_and_drops_only_the_gate_on_it."
+    ),
+    "spatial_mixstyle": (
+        "S13 Y2, training-only by construction (an eval forward is unchanged). Covered by "
+        "tests/unit/test_s13_model.py::test_mixstyle_changes_a_training_forward."
+    ),
 }
 
 

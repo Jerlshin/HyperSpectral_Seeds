@@ -490,5 +490,11 @@ def run_single_stage(
     if clean_fit is not None and dist.is_main:
         path = clean_fit.write(cfg.output_dir, final_epoch=ep)
         trk.log_message(f"Clean fit → {path}", level="plain")
+    # S12 F71a / S13 P0. Every caller reloads `best_ckpt` on every rank as soon as
+    # this returns, and rank 0 may still be writing it: when the best epoch is the
+    # last one, rank 1 used to read a truncated file, and its error-path barrier
+    # then paired with rank 0's next collective. No rank leaves the stage before
+    # rank 0 has finished writing (the write itself is atomic, see `save_ckpt`).
+    dist.barrier()
     trk.progress_stop("single")
     return best_f1

@@ -1,0 +1,56 @@
+{
+ "source": "outputs/experiments_u430k32/s11/*/metrics.jsonl (Kaggle T4 x2, commit 413a11e)",
+ "analogues": {
+  "X1 grouped (full, R1)": {
+   "n": 6,
+   "s_per_epoch": 7.91,
+   "final_eval_s": 39.37,
+   "epochs_mean": 184.5,
+   "epochs_min": 131.0,
+   "epochs_max": 200.0,
+   "total_min_mean": 24.95
+  },
+  "X1 stratified (full, R1)": {
+   "n": 3,
+   "s_per_epoch": 10.05,
+   "final_eval_s": 29.55,
+   "epochs_mean": 189.33,
+   "epochs_min": 177.0,
+   "epochs_max": 198.0,
+   "total_min_mean": 32.18
+  },
+  "X2 spectral_only (shipped, \u2264150)": {
+   "n": 4,
+   "s_per_epoch": 6.29,
+   "final_eval_s": 19.95,
+   "epochs_mean": 145.75,
+   "epochs_min": 140.0,
+   "epochs_max": 150.0,
+   "total_min_mean": 15.61
+  },
+  "X2 spatial_only (shipped, \u2264150)": {
+   "n": 4,
+   "s_per_epoch": 8.02,
+   "final_eval_s": 31.34,
+   "epochs_mean": 147.0,
+   "epochs_min": 138.0,
+   "epochs_max": 150.0,
+   "total_min_mean": 20.18
+  }
+ },
+ "epochs_typical": 184.5,
+ "epochs_cap": 200.0,
+ "gpu_runs": 10,
+ "minutes_typical": 266.0,
+ "minutes_cap": 287.0,
+ "hours_typical": 4.43,
+ "hours_cap": 4.78,
+ "extras_minutes": {
+  "Y1 fusion (CPU)": 0.5,
+  "P0 re-score of X2/spatial_only__f1_s0": 3.0
+ },
+ "parent_design": {
+  "gpu_runs": 30,
+  "hours": 13.3
+ }
+}

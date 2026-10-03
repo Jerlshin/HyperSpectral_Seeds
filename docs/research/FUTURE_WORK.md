@@ -10,7 +10,77 @@ ID and leave the row in place.
 
 ---
 
-## Priority 0 — the S09 sequence (do in this order; frozen in `preregistration_next.json`)
+## Priority 0 — S13: route-A representation arms → **[S13](studies/S13_representation_screening/README.md), single-seed screen (D28)**
+
+S12 found the bottleneck has moved from optimisation to representation under acquisition shift (D23): the network fits
+everything, generalises within an acquisition no better than before, and its 3-D pathway is the session channel.
+Frozen in `evidence/S12_frozen_arms_reading/preregistration_s12.json` (30 runs); **amended before any run** to one seed
+(seed 0): `evidence/S13_representation_screening/preregistration_s13.json`. Reference = X1 (R1). **10 GPU runs ≈ 4.4 h
+on Kaggle T4 × 2 (one session)**: `python scripts/run_s13.py --nproc-per-node 2 --stream` (S13 §8). Code implemented and
+validated (S13 part 1); not yet run.
+
+### FW-34 · P0 before the next Kaggle session (D27) — **done in S13** (F72)
+Barrier + atomic write of `best_stage1.pth` with a 2-rank best-epoch-is-last regression test (F71a); `.gitignore`
+`dataset_*` (F71b); a late-fusion scorer over two cells' logits (weight on calib); the training-rows session κ in the
+final report (D26). **Remaining:** re-score `X2/spatial_only__f1_s0` (rerun the S11 cell — the finished stage is detected
+and only the final evaluation runs) in the S13 Kaggle session; it decides nothing.
+
+### FW-31 · Y1 — decoupled pathways + calib-weighted late fusion (H19a, H19b)
+- **Builds on** F64, F65; Wang et al. CVPR 2020, Du et al. ICML 2023 (uni-modal ensembles when paired features are few).
+- **Design.** `model.pathways=[spectral]` and `[spatial]` under R1, grouped 2 folds × seed 0 (4 runs, D28; frozen 2 × 3);
+  fuse log-probabilities with a weight chosen on calib (`experiments/fusion.py`). No model code.
+- **If H19a ∧ H19b:** the joint fusion is retired; every later arm is a pair of single-pathway networks.
+
+### FW-32 · Y2 — masked MixStyle in the 3-D stem (H20)
+- **Builds on** F67–F69; Zhou et al. ICLR 2021, Li et al. ICLR 2022. Foreground-masked instance statistics per (channel,
+  spectral slice), stem blocks 1–2, p 0.5, Beta(0.1, 0.1), training only; key `model.spatial_mixstyle` (default off).
+  Grouped 2 folds × seed 0 (2 runs, D28). Implemented (S13).
+- **If H20 holds:** the session in early feature statistics is separable from variety; adopt. **If only cross-session
+  rises:** a frontier move, reported as such.
+
+### FW-33 · Y3 — lean architecture (H21a, H21b)
+- **Builds on** F48, F49, F66. Descriptor = SNV + morph; tail strides [2,2,2,1]; no CBAM on ≤ 2 × 2 maps. Grouped 2 folds +
+  stratified, seed 0 (3 runs, D28; frozen 2 × 3 + 3). Non-inferiority; if it passes the screen and its replication
+  (FW-35), SeedNet v5 is the base of every later arm. Implemented (S13).
+
+### FW-35 · Replicate every S13 arm that passes its screen (seeds 1, 2)
+- **Builds on** D28: S13's verdicts are single-seed screens (margins ≈ 2.9 SE; gate G3 unmet).
+- **Design.** For each arm whose screening verdict is *pass*, the same cells at seeds 1 and 2 — same overrides, code
+  path and thresholds — under a new frozen file naming `preregistration_s13.json` and the S13 results that motivated it;
+  read on the 3-seed means exactly as `preregistration_s12.json` frozen them. Cost per arm: 2× its S13 runs
+  (Y1 8, Y2 4, Y3 6, Y4 2; ≈ 0.9 h per 2 grouped runs). `experiments/s13.py` builds cells from a hashed file in the
+  amendment's format (`cells.gpu`, `deviation.seed`), so a replication file in that format needs only its hash
+  registered there.
+- **If replicated:** the parent's *adopt* applies (reference form / SeedNet v5). **If not:** the screen was a false
+  pass; record it and keep the S12 reference.
+
+## Priority 0c — CPU-first representation track (no held-out until each has its own frozen file)
+
+### FW-27 · Pixel-set (multiple-instance) spectral encoder
+- **Builds on** F67: per-band pixel quantiles + morph are linearly worth +0.08 grouped / +0.18 calib over the mean
+  spectrum — information only the 3-D CNN reaches today. Pixel-wise seed models with voting are standard in the HSI seed
+  literature; attention-MIL (Ilse et al. 2018) learns the pooling.
+- **Design.** A shared per-pixel MLP/1-D conv over foreground pixel spectra (≈ 50 k parameters, 256 pixels sampled per
+  kernel), gated-attention + mean pooling, morphometrics after pooling; trainable on CPU. Train → calib only.
+- **Gate to a GPU arm:** calib macro-F1 ≥ quantile-LDA + 0.03 (≥ 0.73) **and** embedding κ no higher than the
+  spectral-only network's + 0.05. If it passes only the first, within-kernel spread is session-laden for any learner.
+
+### FW-28 · TabPFN-3 on kernel summaries — the strongest tabular baseline
+- **Builds on** F32, F67. TabPFN-3 (2026) reports first place on many-class tabular data and handles ≤ 200 features;
+  inputs: mean + morph (40), quantiles + morph (104). Calib first; held-out once, in the paper's baseline table. If it
+  matches the network on grouped, the network's claim must be stated against it, not against LDA.
+
+### FW-29 · A transfer-standard protocol tier (calibration transfer)
+- **Builds on** F66, F68–F70; EPO (Roger et al. 2003), di-PLS. Estimate the session nuisance subspace from the
+  between-session differences of *paired* cross-session varieties, cross-fitted by variety (leave-varieties-out), project
+  it out, score the held-out varieties. Uses held-out bundles of *other* varieties as transfer standards — a new tier, so
+  it needs a D16 extension before it is run. LDA first (CPU minutes).
+
+### FW-30 · Hyperspectral foundation-model encoders
+- **Builds on** Theisen & Neubert 2026 (remote-sensing HSI foundation models transfer to proximal sensing, especially
+  with little data). After FW-27/FW-31: a frozen pretrained spectral encoder as the per-pixel encoder of FW-27.
+
+## Priority 0 (done) — the S09 sequence (frozen in `preregistration_next.json`)
 
 S09 found the network fit-limited within the acquisition (F34, F35), only ≈ 0.05 above a linear model on
 its own scalars (F32), and its cross-session recall matched by shape alone (F33). D17 routes the next
@@ -31,6 +101,8 @@ augmentation, no margin) on a fixed 1,000-kernel training subset. None changes a
 > Gate: a 2-epoch CPU run is bit-identical before and after. Ordered checklist: S10 §9.
 
 ### FW-15 · X1 — fit-first regime (H12a, H12b, H13) — **decides route A vs B**
+> **Status: done (S11 run → S12 read).** H12a, H12b rejected; H13 supported: fit 0.98–0.99, held-out unchanged (F59, F60).
+> Route A (D23). R1 becomes the reference regime (D24).
 > **Status: ready to run (S11).** `python scripts/run_frozen.py --arms X1 X4 --nproc-per-node 2 --stream`
 > (with X4); every cell composes to its frozen command; where each hypothesis is read from is fixed in S11 §6.
 - **Builds on** F34, F35, F36, F37. Could reverse D06, D07.
@@ -47,6 +119,8 @@ augmentation, no margin) on a fixed 1,000-kernel training subset. None changes a
   schedule (0.65 → 0.25, F54) must stay `legacy`. Run X4 (FW-20) in the same session.
 
 ### FW-16 · X2 — what the network uses (H14a, H14b)
+> **Status: done (S11 run → S12 read).** H14a, H14b rejected: morph scalars do not carry cross-session recall (F63); the
+> spatial pathway adds +0.10 and is the session channel (F64); late fusion ≈ joint (F65). One cell unscored (F71a).
 > **Status: ready to run (S11).** `model.pathways` implemented (freeze + skip, aux term off with the spatial
 > path); `python scripts/run_frozen.py --arms X2 --nproc-per-node 2 --stream`.
 - **Builds on** F32, F33; tests D05's two-pathway rationale and D12's effect on the network.
@@ -63,10 +137,14 @@ augmentation, no margin) on a fixed 1,000-kernel training subset. None changes a
   retrained arms are the test.
 
 ### FW-17 · X3 — the within-acquisition tier (H15, D16)
+> **Status: scheduled as S13 Y4** under R1 (`preregistration_s12.json`).
 - `data=ablation/u430k32_stratified data.split_eval_frac=0.2`, seeds 0–2, under X1's chosen regime. The
   literature-comparable number, labelled as tier 1. H15 checks the S09 prediction that 80/20 adds ≤ 0.03.
 
 ### FW-18 · RGB-resolution morphology, CPU first
+> **Status (S12): top data item.** Morphometrics are the least session-decodable input measured (κ 0.045, F69) and the
+> only one with cross-session recall that does not trade against attraction; the raw archive with the RGB images is not
+> on this machine — downloading it (17.3 GB) is the user's call.
 - **Builds on** F33 (shape is the only acquisition-invariant cue measured), F43 (prior work's 78–96 % uses
   high-resolution RGB shape). The Zenodo record ships RGB images of the same trays.
 - **Design.** Segment kernels in RGB, register them to HSI kernels (Fabiyi et al. did this), compute
@@ -82,6 +160,7 @@ applied (F54), and three component defects: an untrainable spatial-tail block (F
 descriptor (F49) and a level-blind input path (F50). D19 orders the work: X4 with X1; X5 and X6 after X1.
 
 ### FW-20 · X4 — fit ceiling (H16)
+> **Status: done (S12).** H16 supported: 1.000 clean fit; softeners worth +0.06–0.17 (F61).
 > **Status: ready to run (S11)**, in the same session as X1. H16 is read from `clean_fit.json → final.live.acc`
 > of the grouped cell.
 - **Builds on** F45, F47; D19's reversal trigger.
@@ -92,11 +171,14 @@ descriptor (F49) and a level-blind input path (F50). D19 orders the work: X4 wit
 - **Cost.** 2 runs ≈ 1 h. **If H16 fails:** capacity/optimisation-limited — X5 and tail layout (S10 P3.6) first.
 
 ### FW-21 · X5 — spatial tail without untrainable parameters (H17)
+> **Status: folded into S13 Y3** (D25) — capacity is ample (H16), so this is a correctness change tested for non-inferiority.
 - **Builds on** F48. Last `ResBlock2D` stride 2 → 1 behind `model.spatial_tail_strides` (default = today's model,
   bit-for-bit). Grouped 2 × 3 under X1's regime if H12a holds. Non-inferiority; adopt as default if it holds.
 - **Cost.** 6 runs ≈ 2.7 h.
 
 ### FW-22 · X6 — reflectance level in the spectral path (H18a, H18b)
+> **Status: deferred (D25).** The linear proxy shows the H18a ∧ ¬H18b pattern: level buys same-session accuracy and
+> costs cross-session robustness (F70).
 - **Builds on** F50, S09 C3 (+0.085 grouped for LDA from level). Append standardised log mean reflectance (train-split
   statistics) to the descriptor behind `model.spectral_level_block` (default none). Grouped 2 × 3 with the session
   guard (H18b). **Changes what the model may know** — albedo — so it is reported with cross-session recall and
@@ -104,10 +186,14 @@ descriptor (F49) and a level-blind input path (F50). D19 orders the work: X4 wit
 - **Cost.** 6 runs ≈ 2.7 h.
 
 ### FW-23 · Training-objective follow-ups (S10 P1.3, P1.4, P3.3–P3.5)
+> **Status (S12):** the margin question is closed for now — m = 0 is non-inferior and R1 drops it (D24). The aux-weight
+> and label-smoothing arms stay open but are low priority under D23 (they are regime arms).
 Each one arm, after X1, under the chosen regime: aux weight as documented (0.2, then 0); a margin with ≥ 25 % of the
 LR budget and ε = 0 (A7); label smoothing 0 / s ∈ {16, 24}; an effective weight decay only if X1 over-fits.
 
 ### FW-24 · Spectral descriptor repair or removal (S10 P3.1)
+> **Status: removal scheduled as part of S13 Y3** — H14b was rejected, but the spectral pathway behaves as shrinkage LDA on
+> SNV + morph (F66), so its inert blocks are removed rather than repaired.
 Only if X2 shows the spectral path matters (H14b rejected): per-block standardisation instead of one LayerNorm,
 an index bank initialised from sharp band pairs, D₁/D₂ dropped (linear in SNV). Otherwise remove the inert blocks.
 
@@ -117,6 +203,9 @@ GroupNorm statistics over the foreground only, so activation scale stops dependi
 ## Priority 1 — decides what the project is about
 
 ### FW-01 · Does reflectance calibration restore cross-session recall?
+> **Status (S12):** for the network, the spectral pathway alone reaches 0.214 cross-session recall (F64) and a shrinkage LDA
+> on SNV + morph 0.202 (F66) — reflectance + SNV + shape transfers *some* variety signal; level and within-kernel spread
+> carry the session (F67, F70).
 > **Status (S09):** partly answered. Spectrum-only LDA on reflectance gives 0.039 (k32) / 0.053 (215) against
 > 0.000 on SNV-256 — above chance, small. The network's 0.152 awaits X2's no-morph arm (FW-16). The SNV
 > arm on identical rows still needs the SNV cube rebuilt (`--radiometry snv`).
@@ -198,6 +287,9 @@ GroupNorm statistics over the foreground only, so activation scale stops dependi
 ## Priority 3 — housekeeping and longer-term
 
 ### FW-10 · Session invariance, only if FW-01 is negative
+> **Status (S12):** narrowed. Session-adversarial heads cannot work under `grouped` (session never varies within a class in
+> training); illumination-shape augmentation is open; the in-kernel noise floor is a fingerprint but removing it does not
+> remove the session (F68). The live candidates are S13 Y1/Y2 and FW-29.
 Speculative: per-session normalisation against the tile spectrum; augmenting illumination shape
 during training; a session-adversarial head. Each needs a cross-session test set to be judged,
 which only 17 classes provide — so expect wide intervals.
@@ -241,3 +333,4 @@ then the band-budget result; publish the negative results (F05, F09, F18, F25).
 | Kaggle infrastructure for neural runs | S04 (Oct 2026 part), S08 |
 | FW-02 σ, FW-04 leakage gap (first neural sweep, u430k32) | S08 (run) → S09 (analysis) |
 | FW-19 instrumentation (D18, D20) + X2's pathway switch + the frozen-arm runner | S11 |
+| FW-15 X1, FW-16 X2, FW-20 X4 (run S11, read) | S12 |

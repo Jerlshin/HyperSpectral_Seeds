@@ -1,0 +1,39 @@
+model,kind,cell,fold,seed,f1,same_recall,cross_recall,attraction_cross
+S08 full (shipped),network,S08/grouped__f0_s0,0,0,0.517829,0.61588,0.18317,0.461255
+S08 full (shipped),network,S08/grouped__f0_s1,0,1,0.530086,0.655958,0.132271,0.473555
+S08 full (shipped),network,S08/grouped__f0_s2,0,2,0.538978,0.662808,0.141013,0.495695
+S08 full (shipped),network,S08/grouped__f1_s0,1,0,0.538612,0.656548,0.161765,0.47362
+S08 full (shipped),network,S08/grouped__f1_s1,1,1,0.533234,0.652616,0.161765,0.457669
+S08 full (shipped),network,S08/grouped__f1_s2,1,2,0.52146,0.646677,0.132353,0.471166
+X1 full,network,X1/grouped__f0_s0,0,0,0.535325,0.646925,0.15866,0.441574
+X1 full,network,X1/grouped__f0_s1,0,1,0.517854,0.625012,0.155637,0.447724
+X1 full,network,X1/grouped__f0_s2,0,2,0.545625,0.667027,0.14518,0.487085
+X1 full,network,X1/grouped__f1_s0,1,0,0.535409,0.656392,0.139706,0.472393
+X1 full,network,X1/grouped__f1_s1,1,1,0.526417,0.648682,0.148284,0.44908
+X1 full,network,X1/grouped__f1_s2,1,2,0.524089,0.646919,0.132353,0.48589
+X2 no_morph,network,X2/no_morph__f0_s0,0,0,0.480203,0.579698,0.163399,0.450185
+X2 no_morph,network,X2/no_morph__f0_s1,0,1,0.510215,0.627258,0.138562,0.463715
+X2 no_morph,network,X2/no_morph__f1_s0,1,0,0.475318,0.580425,0.132353,0.453988
+X2 no_morph,network,X2/no_morph__f1_s1,1,1,0.495549,0.611825,0.140931,0.468712
+X2 spatial_only,network,X2/spatial_only__f0_s0,0,0,0.437975,0.542039,0.137418,0.398524
+X2 spatial_only,network,X2/spatial_only__f0_s1,0,1,0.459807,0.577961,0.112827,0.479705
+X2 spatial_only,network,X2/spatial_only__f1_s1,1,1,0.449382,0.560752,0.125,0.442945
+X2 spectral_only,network,X2/spectral_only__f0_s0,0,0,0.437277,0.510237,0.217565,0.291513
+X2 spectral_only,network,X2/spectral_only__f0_s1,0,1,0.415856,0.473645,0.249673,0.209102
+X2 spectral_only,network,X2/spectral_only__f1_s0,1,0,0.43922,0.519956,0.177722,0.32638
+X2 spectral_only,network,X2/spectral_only__f1_s1,1,1,0.429727,0.501834,0.209611,0.233129
+X4 full,network,X4/grouped__f0_s0,0,0,0.443084,0.542076,0.177941,0.313653
+LDA raw reflectance,linear,,0,-1,0.319785,0.407261,0.0367647,0.576876
+LDA raw reflectance,linear,,1,-1,0.342878,0.433018,0.0404412,0.480982
+LDA SNV,linear,,0,-1,0.2409,0.303876,0.0308007,0.590406
+LDA SNV,linear,,1,-1,0.251823,0.320575,0.0379902,0.467485
+LDA morphometrics,linear,,0,-1,0.169645,0.186756,0.14281,0.172202
+LDA morphometrics,linear,,1,-1,0.164446,0.192416,0.10547,0.180368
+LDA raw + morph (S09 best linear),linear,,0,-1,0.48236,0.60372,0.0616013,0.559656
+LDA raw + morph (S09 best linear),linear,,1,-1,0.487029,0.619954,0.0526961,0.496933
+LDA SNV + morph (spectral-path analogue),linear,,0,-1,0.445152,0.551047,0.0819444,0.509225
+LDA SNV + morph (spectral-path analogue),linear,,1,-1,0.45315,0.571469,0.0650031,0.451534
+LDA SNV + level + morph,linear,,0,-1,0.466203,0.58481,0.0494281,0.574416
+LDA SNV + level + morph,linear,,1,-1,0.475057,0.608377,0.0392157,0.511656
+LDA level + morph,linear,,0,-1,0.193639,0.21455,0.156046,0.266913
+LDA level + morph,linear,,1,-1,0.189762,0.222574,0.112823,0.267485

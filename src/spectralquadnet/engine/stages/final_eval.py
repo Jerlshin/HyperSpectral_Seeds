@@ -48,10 +48,19 @@ selected weights' **logits** are written for the reported split and — given a
 ``results/logits_<split>_<variant>.npz`` (``logits``, ``targets``, ``rows``).
 No metric is computed on calib here; its logits are for calibration and margin
 analyses that need the selection split's scores, not its argmax.
+
+The training-rows session κ (D26)
+─────────────────────────────────
+Given a ``probe_ldr`` over the training rows and a session map, the selected
+weights' embedding and each live pathway's output are scored for class-disjoint
+session decodability (:mod:`spectralquadnet.reporting.session_probe`) after the
+held-out scoring is complete, and written to ``results/session_probe.json`` and
+``run.json → session_probe``. It reads no held-out row and decides nothing.
 """
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -64,6 +73,7 @@ from spectralquadnet.engine.checkpoint import load_ckpt
 from spectralquadnet.engine.diagnostics import hardest_classes_report
 from spectralquadnet.engine.tta import tta_predict
 from spectralquadnet.models.ema import ModelEMA
+from spectralquadnet.reporting import session_probe
 from spectralquadnet.reporting.artifacts import RunArtifacts, publish
 from spectralquadnet.reporting.figures import render_run_figures
 from spectralquadnet.reporting.metrics import ClassificationResult, score
@@ -98,6 +108,7 @@ def final_evaluation(
     run_summary: dict[str, Any] | None = None,
     sessions: SessionMap | None = None,
     calib_ldr: DataLoader[Any] | None = None,
+    probe_ldr: DataLoader[Any] | None = None,
 ) -> dict[str, ClassificationResult]:
     """Load the selected weights and score the reporting split, ±TTA.
 
@@ -113,6 +124,9 @@ def final_evaluation(
         calib_ldr: The selection split's loader. When given (and
             ``evaluation.save_logits``), the selected weights' calib logits are
             written ±TTA. Nothing is scored on it.
+        probe_ldr: An unshuffled loader over the **training** rows. When given
+            with ``sessions`` (and ``evaluation.session_probe``), the
+            training-rows session κ is computed on the selected weights (D26).
 
     Returns:
         ``{"no_tta": …, "tta": …}`` (the second only when
@@ -235,7 +249,26 @@ def final_evaluation(
                 artifacts.write_logits(f"calib_{key}", logits, targets, rows=aligned)
             logit_files.append(f"calib_{key}")
 
+    probe: dict[str, Any] | None = None
+    if (
+        probe_ldr is not None
+        and sessions is not None
+        and bool(getattr(cfg.evaluation, "session_probe", True))
+    ):
+        # A collective on every rank (the extraction gathers); only rank 0 fits.
+        probe = session_probe.session_probe_report(
+            eval_model, probe_ldr, sessions, device, dist, weights=source
+        )
+        if probe is not None:
+            for line in session_probe.lines(probe):
+                trk.log_message(line, level="plain")
+            trk.log_scalars(session_probe.scalars(probe), step=epoch)
+
     if artifacts is not None:
+        if probe is not None:
+            (artifacts.results / "session_probe.json").write_text(
+                json.dumps(probe, indent=2) + "\n"
+            )
         artifacts.write_manifest(
             {
                 "run": dict(run_summary or {}),
@@ -252,6 +285,7 @@ def final_evaluation(
                 "results": {
                     k: _result_payload(v, session_results.get(k)) for k, v in results.items()
                 },
+                **({"session_probe": probe} if probe is not None else {}),
             }
         )
         if bool(getattr(cfg.evaluation, "save_artifacts", True)):

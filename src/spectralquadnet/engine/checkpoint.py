@@ -34,6 +34,13 @@ The following conventions are load-bearing and must not drift:
   run could load, and ``SCHEMA_VERSION`` would be describing the wrong thing.
   Only rank 0 writes: every rank holds identical weights, so a second writer
   would only race the first.
+* **Atomic writes** (S12 F71a, S13 P0) — the bundle and its sidecar are each
+  written to a temporary name beside the target and ``os.replace``d into place,
+  ``.pth`` before ``.json``. A reader therefore sees the previous complete file
+  or the new complete file, never a truncated one. Atomicity is not ordering:
+  a rank that reloads must still wait for rank 0 to have *finished* writing,
+  which is the barrier at the end of every stage (``single_stage.py``,
+  ``pipelines/three_stage.py``).
 
 :func:`load_stage_meta` re-integerises dict keys because JSON stringifies them:
 ``class_f1``/``cdws_weights`` are ``{int: float}`` in memory and must come back
@@ -46,6 +53,7 @@ from __future__ import annotations
 # Aliased as `_json` (not `json`) so this module stays symbol-for-symbol
 # comparable against the reference implementation `scripts/check_ast_no_op_move.py`
 # checks it against.
+import contextlib
 import json as _json
 import os
 from typing import TYPE_CHECKING, Any
@@ -283,13 +291,41 @@ def save_ckpt(
         "arch": identity.arch,
         **metadata,
     }
-    torch.save(bundle, path)
+    _atomic_torch_save(bundle, path)
     sidecar = {
         k: v for k, v in bundle.items() if k not in ("model", "ema") and _is_json_serialisable(v)
     }
     sn = int(stage.split()[-1]) if stage.split()[-1].isdigit() else 0
-    with open(stage_meta_path(cfg, sn), "w") as f:
-        _json.dump(sidecar, f, indent=2)
+    _atomic_write_json(sidecar, stage_meta_path(cfg, sn))
+
+
+def _atomic_torch_save(obj: Any, path: str) -> None:
+    """``torch.save`` to a temporary name in ``path``'s directory, then ``os.replace``.
+
+    Same directory, so the rename is atomic on POSIX; a failed write removes its
+    temporary file and leaves whatever was at ``path`` untouched (S12 F71a).
+    """
+    tmp = f"{path}.tmp{os.getpid()}"
+    try:
+        torch.save(obj, tmp)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        raise
+
+
+def _atomic_write_json(obj: Any, path: str) -> None:
+    """The sidecar's counterpart of :func:`_atomic_torch_save`."""
+    tmp = f"{path}.tmp{os.getpid()}"
+    try:
+        with open(tmp, "w") as f:
+            _json.dump(obj, f, indent=2)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        raise
 
 
 def _is_json_serialisable(v: Any) -> bool:

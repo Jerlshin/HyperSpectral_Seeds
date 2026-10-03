@@ -173,3 +173,47 @@ is not neutral at the shipped clip, and the frozen X1 commands lacked a launcher
 **Changed:** D22 — the clip partition stays `legacy` (the new one is opt-in), the frozen commands run under `torchrun`
 with one directory per cell; D18, D20 implemented. X1, X2, X4 are ready to run (S11 §10); X5/X6 wait for X1 (D19).
 
+
+### S11 part 2 · The frozen arms run — 2026-10-02
+**Did:** X1 (9 cells), X2 (12) and X4 (2) on Kaggle T4 × 2 at commit `413a11e`, built from the hashed pre-registrations
+by `scripts/run_frozen.py`. 22 of 23 cells scored; `X2/spatial_only__f1_s0` crashed in its final evaluation (F71a). Read
+in S12.
+
+### S12 · Reading X1, X2 and X4 — 2026-10-02
+**Triggered by:** the S11 cells — the frozen rules turn them into a route, but a route is not a design.
+**Did:** read H12a–H14b and H16 exactly as frozen, with hierarchical bootstrap intervals; checked every cell against its
+frozen regime and traced the unscored cell; then asked why — the generalisation ladder from clean fit to cross-session
+recall, F46 against X1's intervention, late fusion of the single-pathway networks, seed ensembles, linear controls on
+mean spectra, level, within-kernel pixel statistics and detector noise, a training-rows session probe validated on 13
+representations and 11 checkpoints, and a CPU pre-test of noise-floor equalisation; plus a literature pass (multimodal
+fusion, domain generalisation, calibration transfer, MIL, HSI and tabular foundation models). No training or model code
+was changed.
+**Found:** the network now fits (0.98–1.00) and nothing held-out moved — the extra fit is memorisation and F46 was a
+correlation, not a lever (F59, F60); capacity is ample and the regularisers are load-bearing (F61); errors stay
+systematic (F62). Morph scalars do not carry cross-session recall (F63); the 3-D spatial pathway adds +0.10 and is the
+session channel — spectral-only reaches the highest cross-session recall yet measured, 0.214 (F64); joint training is no
+better than late fusion of the two pathways and loses robustness (F65); the spectral pathway behaves as shrinkage LDA
+(F66); a linear model on within-kernel pixel statistics matches the network across bundles (F67); detector noise steps
+at session 5 but is not the main session channel (F68); session reliance can be measured on training rows (F69); level
+trades cross-session robustness for same-session accuracy (F70); three infrastructure defects (F71).
+**Changed:** route A (D23); R1 becomes the reference regime and the margin goes (D24); X5/X6 not run standalone (D25);
+a training-rows session κ in every report (D26); infrastructure fixes before the next session (D27). The next GPU round
+— decoupled pathways, masked MixStyle, a lean architecture, the 80/20 tier — is frozen in `preregistration_s12.json`.
+F34 and F46 challenged.
+
+### S13 part 1 · The route-A arms, as a single-seed screen — 2026-10-02
+**Triggered by:** S12's frozen S13 round (30 runs, `preregistration_s12.json`) and its P0 (FW-34); then the PI's request,
+before any S13 run, for a fast screen with one seed.
+**Did:** recorded the seed reduction as a hashed amendment (`preregistration_s13.json`, D28) — every arm, control,
+protocol contrast and grouped fold kept, 10 GPU runs at seed 0; implemented P0 (atomic checkpoint writes + end-of-stage
+barrier with a 2-rank regression test, `dataset_*` in `.gitignore`, a calib-weighted late-fusion scorer, the
+training-rows session κ in every report) and the Y2/Y3 model changes behind default-off keys; a runner that builds the
+cells from both hashed files; validated with S11's G-neutral gate against `413a11e`, a 2-rank `torchrun` run of every
+arm, unit and smoke tests.
+**Found:** the S13 defaults are bit-identical to the S11 network and the gate detects both new arms; the F71a race
+reproduces on `413a11e` and is fixed — by the barrier: atomic writes alone turn the crash into a silent stale reload
+(F72).
+**Changed:** D28 (single-seed screen; verdicts are screening verdicts, passes are replicated — FW-35); D29 (P0 and arms
+as implemented; D24's config-default switch deferred); D26, D27 implemented. The Kaggle run is one command,
+≈ 4.4 h (S13 §8).
+

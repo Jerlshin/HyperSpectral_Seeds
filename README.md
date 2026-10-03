@@ -384,7 +384,10 @@ starts. A run cut off mid-stage therefore **resumes at the next epoch** instead 
 taken for a finished one and reported half-trained (`engine/resume.py`). Every bundle records its `arch` and `schema_version`, and `load_ckpt` **refuses** a
 cross-architecture load rather than matching two-thirds of the tensors by coincidence of
 naming. The checkpoint used for final evaluation is chosen by recorded validation
-macro-F1, *not* by stage order.
+macro-F1, *not* by stage order. Since S13 every best checkpoint and its sidecar are written
+**atomically** (temporary file + `os.replace`) and every stage ends with a **barrier**, so under
+DDP no rank reloads a checkpoint before rank 0 has finished writing it — the race that left one
+S11 cell unscored when its best epoch was its last (S12 F71a, S13 F72).
 
 ### Reproducibility, stated exactly
 
@@ -550,6 +553,19 @@ failures that no component test could have caught.
 | `tests/unit/test_resume.py` | Training-state snapshot/restore continues exactly; interruption vs completion; the background writer; the DDP sampler reshuffles per epoch; the T4 profile composes |
 | `tests/smoke/test_kaggle_path.py` | Pre-slice → train → `metrics.jsonl` → simulated interruption → resume at the next epoch, and a two-rank `torchrun` run to the final evaluation |
 
+### Recorded result of the S13 validation (2026-10-02, macOS CPU, torch 2.13)
+
+```
+pytest --run-all      1100 passed, 4 failed, 37 errors, 3 xfailed   (413a11e: 1050 / 4 / 37 / 3 — identical failing set)
+G-neutral gate        PASS vs 413a11e — identical step losses, 222/222 tensors, predictions, 3 regimes;
+                      Y2 (mixstyle) and Y3 (lean) detected as sensitivity controls
+2-rank torchrun       every S13 arm finishes; each held-out kernel scored once; κ on every training row once
+race regression       413a11e: rank 1 EOFError (the S11 failure); S13: both ranks reload the final epoch
+```
+
+The S13 arm keys default to the shipped network; the failing set is the pre-existing one described
+below. Details: [`docs/research/studies/S13_representation_screening`](docs/research/studies/S13_representation_screening/README.md).
+
 ### Recorded result of the S11 validation (2026-10-01, macOS CPU, torch 2.14)
 
 ```
@@ -711,6 +727,28 @@ python scripts/run_frozen.py --arms X1 X4 --nproc-per-node 2 --stream   # 11 run
 python scripts/run_frozen.py --arms X2    --nproc-per-node 2 --stream   # 12 runs, T4 x2
 ```
 
+### S13 — the route-A arms Y1–Y4, as a single-seed screen
+
+Frozen in S12 (`preregistration_s12.json`, 30 runs) and **amended before any run to one seed** (seed 0;
+`preregistration_s13.json`, D28): every arm, control, protocol contrast and grouped fold is kept — **10 GPU runs**
+(Y1 decoupled pathways 4, Y2 masked MixStyle 2, Y3 lean architecture 3, Y4 the 80/20 tier 1) plus Y1's two fused cells
+(CPU). `scripts/run_s13.py` builds the cells from **both** hashed files and refuses to run if either moved. Outcomes are
+screening verdicts; an arm that passes is replicated at seeds 1–2 before it becomes a reference or a claim. See
+[`docs/research/studies/S13_representation_screening`](docs/research/studies/S13_representation_screening/README.md).
+
+```bash
+python scripts/run_s13.py --list                          # 10 GPU + 2 fused cells, their frozen sources — free
+python scripts/run_s13.py --check                         # compose every cell, assert R1 + its arm — free
+python scripts/run_s13.py --nproc-per-node 2 --dry-run    # the exact torchrun commands — free
+python scripts/run_s13.py --nproc-per-node 2 --stream     # everything: 10 runs, fusion, summary — T4 x2, ≈ 4.4 h
+python scripts/run_s13.py --fuse-only                     # re-fuse Y1 from finished cells — CPU
+python scripts/run_s13.py --summary                       # what is scored so far
+```
+
+The arms' model keys default to the shipped network (bit-identical, S13's G-neutral gate):
+`model.spatial_mixstyle` (Y2), `model.spectral_descriptor`, `model.spatial_tail_strides`, `model.cbam_min_hw` (Y3).
+Every single-stage run now also reports the training-rows session κ (`evaluation.session_probe`, D26).
+
 ### Multi-GPU
 
 ```bash
@@ -835,6 +873,19 @@ the next version, and restore it before Cell 3:
 ```bash
 !cp -rn /kaggle/input/<this-notebook-slug>/HyperSpectral_Seeds/outputs /kaggle/working/HyperSpectral_Seeds/
 ```
+
+**S13 in one session** (after Cell 1 and the 2-epoch smoke run): the code must be on GitHub `main` (Cell 2 prints
+the commit).
+
+```bash
+# Cell 2 — the S13 code and its frozen plan
+!cd /kaggle/working/HyperSpectral_Seeds && git log --oneline -1 && python scripts/run_s13.py --check
+# Cell 3 — all 10 S13 runs on both GPUs, then Y1's fusion and a summary (≈ 4.4 h)
+!cd /kaggle/working/HyperSpectral_Seeds && python scripts/run_s13.py --nproc-per-node 2 --stream
+```
+
+The P0 re-score of `X2/spatial_only__f1_s0` needs the S11 notebook's output restored (as below) and is one more line,
+`python scripts/run_frozen.py --cells X2/spatial_only__f1_s0 --nproc-per-node 2 --stream` (final evaluation only).
 
 When every cell is done (or to re-tabulate what is there):
 

@@ -77,6 +77,11 @@ WIRED_KEYS = (
     "pairwise_penalty",  # IC-9 / A7 — gates the confusion penalty
     "spectral_hidden",  # IC-10 — SpectralSeedNet's spectral MLP width
     "pathways",  # S11 / X2 — SpectralSeedNet's live pathways (FW-16)
+    # ── S13 arms (SpectralSeedNet only; tests/unit/test_s13_model.py) ──
+    "spectral_descriptor",  # Y3 — full | snv_morph
+    "spatial_tail_strides",  # Y3 — [2,2,2,2] | [2,2,2,1]
+    "cbam_min_hw",  # Y3 — tail CBAM placement
+    "spatial_mixstyle",  # Y2 — masked MixStyle in the 3-D stem
 )
 
 #: Keys accepted by the schema that never reach the module they name. 0-J found

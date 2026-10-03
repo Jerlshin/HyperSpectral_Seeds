@@ -325,6 +325,7 @@ class SpectralSpatialStem3D(nn.Module):
         out_channels: int = 192,
         folded_depth: int = DEFAULT_FOLDED_DEPTH,
         spectral_strides: tuple[int, int, int] | None = None,
+        mixstyle: bool = False,
     ) -> None:
         super().__init__()
         self.num_bands = int(num_bands)
@@ -371,6 +372,10 @@ class SpectralSpatialStem3D(nn.Module):
             nn.GroupNorm(8, out_channels),
             nn.GELU(),
         )
+        #: S13 Y2. A :class:`MaskedMixStyle` applied after the stages in
+        #: :data:`MIXSTYLE_STAGES`, or ``None`` — the shipped stem, bit for bit.
+        #: Built last and parameter-free, so it moves no initial weight.
+        self.mixstyle: MaskedMixStyle | None = MaskedMixStyle() if mixstyle else None
 
     @staticmethod
     def _apply_mask(h: torch.Tensor, mask: torch.Tensor | None) -> torch.Tensor:
@@ -406,20 +411,162 @@ class SpectralSpatialStem3D(nn.Module):
         h = conv3d_as_conv2d(h, conv.weight, conv.stride, pad, conv.bias)
         return stage[2](stage[1](h))  # type: ignore[no-any-return]  # `nn.Module.__call__` -> Any
 
+    def _mix(self, index: int, h: torch.Tensor, mask: torch.Tensor | None) -> torch.Tensor:
+        """Stage ``index``'s output, style-mixed when Y2 is on (training only).
+
+        With Y2 off this returns ``h`` before anything is computed, so the shipped
+        stem's traced graph is unchanged. With it on, everything — including the
+        mask pooling, whose output size would otherwise be symbolic after the
+        graph break — runs inside the module's ``torch.compile``-excluded forward.
+        """
+        if self.mixstyle is None or index not in MIXSTYLE_STAGES:
+            return h
+        return self.mixstyle(h, mask)  # type: ignore[no-any-return]
+
     def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
         """``(B, C, H, W) -> (B, out_channels, H // 4, W // 4)``."""
-        h = self._apply_mask(self._stage(self.stage1, x.unsqueeze(1)), mask)
-        h = self._apply_mask(self._stage(self.stage2, h), mask)
+        h = self._apply_mask(self._mix(1, self._stage(self.stage1, x.unsqueeze(1)), mask), mask)
+        h = self._apply_mask(self._mix(2, self._stage(self.stage2, h), mask), mask)
         h = self._apply_mask(self._stage(self.stage3, h), mask)
         n_batch = h.shape[0]
         folded = h.reshape(n_batch, -1, h.shape[-2], h.shape[-1])
         return self.fold(folded)  # type: ignore[no-any-return]  # `nn.Module.__call__` -> Any
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  S13 Y2 — masked MixStyle in the 3-D stem (H20)
+# ══════════════════════════════════════════════════════════════════════
+
+#: Frozen in ``preregistration_s12.json → arms.Y2_spatial_style_randomisation``:
+#: per batch, with probability 0.5, each kernel's per-(channel, spectral-slice)
+#: foreground statistics are mixed with another kernel's, λ ~ Beta(0.1, 0.1),
+#: after stem blocks 1 and 2. Constants, not config keys: the arm is one switch
+#: (``model.spatial_mixstyle``), and its parameters are not tuned.
+MIXSTYLE_P: float = 0.5
+MIXSTYLE_ALPHA: float = 0.1
+MIXSTYLE_STAGES: tuple[int, ...] = (1, 2)
+MIXSTYLE_EPS: float = 1e-6
+
+
+def _pooled_mask(h: torch.Tensor, mask: torch.Tensor | None) -> torch.Tensor:
+    """The foreground fraction of every pixel of ``h`` — the weight ``_apply_mask`` multiplies by."""
+    if mask is None:
+        return h.new_ones(h.shape[0], 1, int(h.shape[-2]), int(h.shape[-1]))
+    return F.adaptive_avg_pool2d(mask, (int(h.shape[-2]), int(h.shape[-1])))
+
+
+class MaskedMixStyle(nn.Module):
+    """MixStyle (Zhou et al., ICLR 2021; random-pair variant) over **foreground** pixels.
+
+    For a 3-D stem activation ``h`` of shape ``(B, C, D, H, W)`` the "style" of a
+    kernel is the mean and standard deviation of each (channel, spectral slice)
+    over its foreground pixels, weighted by the area-pooled mask ``w`` (the
+    fraction of each pixel that is seed; exactly the 0/1 mask at stem block 1).
+    With probability :data:`MIXSTYLE_P` per call, every kernel's statistics are
+    replaced by a convex mix with a randomly paired kernel of the same batch::
+
+        μ, σ     = weighted moments of h over (H, W)            (detached, fp32)
+        λ        ~ Beta(α, α) per kernel,  π = a random permutation
+        μ̃, σ̃     = λ·μ + (1−λ)·μ[π],  λ·σ + (1−λ)·σ[π]
+        h'       = (h − μ) / σ · σ̃ + μ̃
+
+    It runs **between** a stage's GN → GELU and the mask multiplication, so the
+    background is re-zeroed exactly as before; because the map is affine per
+    (kernel, channel, slice), this equals mixing *after* the ``× w`` with the
+    background held at zero (``h·w ↦ a·(h·w) + b·w``). Background pixels never
+    enter a statistic. A kernel with no foreground at this resolution keeps its
+    activation and lends no statistics.
+
+    Training only, no parameters. The coin, λ and π are drawn from the global
+    torch RNG (CPU), so a run is reproducible from its seed; with the switch off
+    the module does not exist and nothing is drawn. Excluded from
+    ``torch.compile`` (data-dependent branch, distribution sampling): the stem's
+    convolutions around it compile as before.
+    """
+
+    def __init__(
+        self, p: float = MIXSTYLE_P, alpha: float = MIXSTYLE_ALPHA, eps: float = MIXSTYLE_EPS
+    ) -> None:
+        super().__init__()
+        self.p = float(p)
+        self.alpha = float(alpha)
+        self.eps = float(eps)
+
+    def extra_repr(self) -> str:
+        return f"p={self.p}, alpha={self.alpha}, stages={MIXSTYLE_STAGES}, foreground-weighted"
+
+    @torch.compiler.disable  # type: ignore[untyped-decorator]
+    def forward(self, h: torch.Tensor, mask: torch.Tensor | None) -> torch.Tensor:
+        """``h`` ``(B, C, D, H, W)``; ``mask`` the stem's ``(B, 1, H₀, W₀)`` input mask, or ``None``.
+
+        The pixel weights are ``mask`` area-pooled to ``h``'s resolution — the
+        same fractions ``_apply_mask`` multiplies by.
+        """
+        if not self.training or self.p <= 0.0 or h.shape[0] < 2:
+            return h
+        if float(torch.rand(())) >= self.p:
+            return h
+        n_batch = int(h.shape[0])
+        lam = torch.distributions.Beta(self.alpha, self.alpha).sample((n_batch,))
+        perm = torch.randperm(n_batch)
+
+        w = _pooled_mask(h, mask).to(torch.float32).unsqueeze(2)  # (B, 1, 1, H, W)
+        hf = h.to(torch.float32)
+        with torch.no_grad():
+            n_fg = w.sum(dim=(-2, -1), keepdim=True)  # (B, 1, 1, 1, 1)
+            valid = n_fg.flatten() > 0.0
+            denom = n_fg.clamp_min(self.eps)
+            mu = (hf * w).sum(dim=(-2, -1), keepdim=True) / denom
+            var = (w * (hf - mu) ** 2).sum(dim=(-2, -1), keepdim=True) / denom
+            sig = (var + self.eps).sqrt()
+
+        # A kernel without foreground keeps its own style (λ = 1) and is never
+        # the partner of another kernel.
+        lam = torch.where(valid.cpu() & valid.cpu()[perm], lam, torch.ones_like(lam))
+        lam = lam.to(device=h.device, dtype=torch.float32).view(n_batch, 1, 1, 1, 1)
+        mu_mix = lam * mu + (1.0 - lam) * mu[perm.to(h.device)]
+        sig_mix = lam * sig + (1.0 - lam) * sig[perm.to(h.device)]
+        out = (hf - mu) / sig * sig_mix + mu_mix
+        out = torch.where(valid.view(n_batch, 1, 1, 1, 1), out, hf)
+        return out.to(h.dtype)
+
+
 #: Intermediate ResBlock widths of the 2-D tail, at ``width_mult = 1.0``.
 #: The terminal width is ``out_dim`` and is **not** scaled: it is the fusion
 #: contract every other modality is projected to.
 TAIL_WIDTHS: tuple[int, int, int] = (128, 192, 256)
+
+#: The shipped tail's four ResBlock strides (S13 Y3 varies them).
+DEFAULT_TAIL_STRIDES: tuple[int, int, int, int] = (2, 2, 2, 2)
+
+#: The pipeline's patch side — what :data:`SPATIAL_STRIDES` and the tail were
+#: designed against (64 → 16 after the stem). The training pipeline passes the
+#: cube's real side; this is the default for a model built without one.
+PATCH_SIDE: int = 64
+
+
+def resolve_tail_strides(strides: tuple[int, ...] | list[int]) -> tuple[int, int, int, int]:
+    """Validate ``model.spatial_tail_strides``: four strides, each 1 or 2."""
+    out = tuple(int(s) for s in strides)
+    if len(out) != 4 or any(s not in (1, 2) for s in out):
+        raise ValueError(f"model.spatial_tail_strides={list(out)}: expected four strides in {{1, 2}}")
+    return out[0], out[1], out[2], out[3]
+
+
+def tail_map_sides(input_side: int, tail_strides: tuple[int, ...]) -> tuple[int, ...]:
+    """The output side of each tail block for a square ``input_side`` patch.
+
+    The stem divides by ``prod(SPATIAL_STRIDES)`` (4); each 3 × 3, padding-1
+    conv of stride ``s`` maps a side ``n`` to ``ceil(n / s)``.
+    """
+    side = int(input_side)
+    for stride in SPATIAL_STRIDES:
+        side = -(-side // stride)
+    out = []
+    for stride in tail_strides:
+        side = -(-side // int(stride))
+        out.append(side)
+    return tuple(out)
 
 
 def _scaled_width(width: int, mult: float, multiple_of: int = 8) -> int:
@@ -451,6 +598,22 @@ class SpatialCNNBranch(nn.Module):
             tensor for tensor.
         stem_folded_depth: Passed to :class:`SpectralSpatialStem3D`; see
             :func:`spectral_stride_schedule`.
+        tail_strides: S13 Y3. The four tail ResBlocks' strides. The default
+            ``(2, 2, 2, 2)`` is the shipped tail, which takes the stem's 16 × 16
+            map to 1 × 1, so the last block's 3 × 3 stride-2 conv sees a 2 × 2
+            map and 5 of its 9 taps never receive a gradient (S10 F48);
+            ``(2, 2, 2, 1)`` stops at 2 × 2.
+        cbam_min_hw: S13 Y3. A CBAM gate follows a tail block only if that
+            block's output map is at least this many pixels on a side; the
+            others become ``nn.Identity`` (no parameters, so DDP sees none
+            unused). ``0`` — the shipped tail — keeps all three; ``3`` drops any
+            gate on a ≤ 2 × 2 map, where 40 of the 7 × 7 spatial gate's 49 taps
+            only ever see padding (S10 B8).
+        input_side: The patch side the placement above is computed for. Only
+            read when ``cbam_min_hw > 0``; the forward pass refuses an input of
+            another side rather than run a gate placement computed for it.
+        mixstyle: S13 Y2. Masked MixStyle after stem blocks 1 and 2
+            (:class:`MaskedMixStyle`), training only. Off = the shipped stem.
     """
 
     def __init__(
@@ -460,20 +623,42 @@ class SpatialCNNBranch(nn.Module):
         stem_channels: int = 192,
         width_mult: float = 1.0,
         stem_folded_depth: int = DEFAULT_FOLDED_DEPTH,
+        tail_strides: tuple[int, ...] | list[int] = DEFAULT_TAIL_STRIDES,
+        cbam_min_hw: int = 0,
+        input_side: int | None = None,
+        mixstyle: bool = False,
     ) -> None:
         super().__init__()
 
-        self.stem = SpectralSpatialStem3D(num_bands, stem_channels, folded_depth=stem_folded_depth)
+        self.stem = SpectralSpatialStem3D(
+            num_bands, stem_channels, folded_depth=stem_folded_depth, mixstyle=mixstyle
+        )
+
+        self.tail_strides = resolve_tail_strides(tail_strides)
+        self.cbam_min_hw = int(cbam_min_hw)
+        self.input_side = int(input_side) if input_side is not None else PATCH_SIDE
+        sides = tail_map_sides(self.input_side, self.tail_strides)
+        #: Output side of each tail block at :attr:`input_side` — what the CBAM
+        #: placement was computed for, checked in the forward when it matters.
+        self.tail_sides: tuple[int, ...] = sides
 
         w1, w2, w3 = (_scaled_width(w, width_mult) for w in TAIL_WIDTHS)
+        s1, s2, s3, s4 = self.tail_strides
+
+        def gate(width: int, side: int) -> nn.Module:
+            return CBAM(width) if side >= self.cbam_min_hw else nn.Identity()
+
+        # Same module order and indices as the shipped tail (CBAM at 1, 3, 5),
+        # so every parameter name — and, at the defaults, every initial weight —
+        # is unchanged.
         self.stages = nn.Sequential(
-            ResBlock2D(stem_channels, w1, 2),
-            CBAM(w1),
-            ResBlock2D(w1, w2, 2),
-            CBAM(w2),
-            ResBlock2D(w2, w3, 2),
-            CBAM(w3),
-            ResBlock2D(w3, out_dim, 2),
+            ResBlock2D(stem_channels, w1, s1),
+            gate(w1, sides[0]),
+            ResBlock2D(w1, w2, s2),
+            gate(w2, sides[1]),
+            ResBlock2D(w2, w3, s3),
+            gate(w3, sides[2]),
+            ResBlock2D(w3, out_dim, s4),
         )
         self.proj = nn.Sequential(
             nn.Linear(out_dim * 2, out_dim), nn.BatchNorm1d(out_dim), nn.GELU()
@@ -484,6 +669,12 @@ class SpatialCNNBranch(nn.Module):
         return x.sign() * x.abs().clamp(_pn_floor(x.dtype)).sqrt()
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
+        if self.cbam_min_hw > 0 and int(x.shape[-1]) != self.input_side:
+            raise ValueError(
+                f"model.cbam_min_hw={self.cbam_min_hw} placed the tail's CBAM gates for a "
+                f"{self.input_side}-pixel patch, but the input is {int(x.shape[-1])} pixels wide. "
+                "Build the model with the patch side it will see (build_model(..., input_side=…))."
+            )
         h = self.stages(self.stem(x, foreground_mask(x, mask)))
         return self.proj(  # type: ignore[no-any-return]  # `nn.Module.__call__` -> Any
             F.normalize(

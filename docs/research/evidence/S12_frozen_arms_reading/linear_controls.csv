@@ -1,0 +1,29 @@
+representation,lda,fold,f1,same_recall,cross_recall,attraction_cross
+raw reflectance,svd,0,0.319785,0.407261,0.0367647,0.576876
+raw reflectance,shrinkage,0,0.253795,0.325454,0.0356209,0.425584
+raw reflectance,svd,1,0.342878,0.433018,0.0404412,0.480982
+raw reflectance,shrinkage,1,0.271187,0.344616,0.0416667,0.283436
+SNV,svd,0,0.2409,0.303876,0.0308007,0.590406
+SNV,shrinkage,0,0.1993,0.250199,0.0492647,0.477245
+SNV,svd,1,0.251823,0.320575,0.0379902,0.467485
+SNV,shrinkage,1,0.211067,0.267282,0.0637776,0.360736
+morphometrics,svd,0,0.169645,0.186756,0.14281,0.172202
+morphometrics,shrinkage,0,0.154207,0.171059,0.142892,0.173432
+morphometrics,svd,1,0.164446,0.192416,0.10547,0.180368
+morphometrics,shrinkage,1,0.148146,0.176737,0.100621,0.169325
+raw + morph (S09 best linear),svd,0,0.48236,0.60372,0.0616013,0.559656
+raw + morph (S09 best linear),shrinkage,0,0.431927,0.503549,0.182026,0.318573
+raw + morph (S09 best linear),svd,1,0.487029,0.619954,0.0526961,0.496933
+raw + morph (S09 best linear),shrinkage,1,0.439793,0.524827,0.150735,0.330061
+SNV + morph (spectral-path analogue),svd,0,0.445152,0.551047,0.0819444,0.509225
+SNV + morph (spectral-path analogue),shrinkage,0,0.417073,0.478745,0.216585,0.231242
+SNV + morph (spectral-path analogue),svd,1,0.45315,0.571469,0.0650031,0.451534
+SNV + morph (spectral-path analogue),shrinkage,1,0.415596,0.487931,0.18763,0.272393
+SNV + level + morph,svd,0,0.466203,0.58481,0.0494281,0.574416
+SNV + level + morph,shrinkage,0,0.447843,0.537646,0.131127,0.366544
+SNV + level + morph,svd,1,0.475057,0.608377,0.0392157,0.511656
+SNV + level + morph,shrinkage,1,0.440865,0.543466,0.113971,0.38773
+level + morph,svd,0,0.193639,0.21455,0.156046,0.266913
+level + morph,shrinkage,0,0.178833,0.20239,0.144935,0.286593
+level + morph,svd,1,0.189762,0.222574,0.112823,0.267485
+level + morph,shrinkage,1,0.172401,0.203235,0.118925,0.28589

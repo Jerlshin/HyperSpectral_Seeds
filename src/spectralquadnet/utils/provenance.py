@@ -13,8 +13,9 @@ results file therefore records three things beside its metrics:
 * :func:`training_regime` — the resolved values of every knob the S09/S10
   pre-registrations vary (mixup, margin, clip, epochs, patience, label smoothing,
   dropout, augmentation, the aux schedule *and the weights it applies*, the
-  pathways, whether morphometrics reached the model), so an arm can be
-  identified from its ``run.json`` alone.
+  pathways, whether morphometrics reached the model; since S13 the Y2/Y3
+  architecture keys and the eval fraction), so an arm can be identified from its
+  ``run.json`` alone.
 
 Never raises: provenance is a record about the run, not a precondition for it.
 """
@@ -124,6 +125,12 @@ def training_regime(cfg: ExperimentConfig | Any, morph_input: bool | None = None
             "mean": (sum(applied) / len(applied)) if applied else None,
         },
         "pathways": [str(p) for p in getattr(model, "pathways", ["spatial", "spectral"])],
+        # S13 arm keys (Y2, Y3) — the shipped values unless an arm sets them.
+        "spectral_descriptor": str(getattr(model, "spectral_descriptor", "full")),
+        "spatial_tail_strides": [int(v) for v in getattr(model, "spatial_tail_strides", [2, 2, 2, 2])],
+        "cbam_min_hw": int(getattr(model, "cbam_min_hw", 0)),
+        "spatial_mixstyle": bool(getattr(model, "spatial_mixstyle", False)),
+        "split_eval_frac": float(getattr(cfg.data, "split_eval_frac", 0.0)),
         "morphometrics_input": morph_input,
         "amp_dtype": str(getattr(cfg.runtime, "amp_dtype", "")),
         "clean_fit_kernels": int(getattr(single, "clean_fit_kernels", 0)),

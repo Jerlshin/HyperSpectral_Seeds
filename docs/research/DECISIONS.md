@@ -20,8 +20,8 @@ rule or an earlier plan said, the entry says so under *Deviation*.
 | D02 | Fit and select on a calibration split carved from train; score `val ∪ test` once | 2026-08-13 | F04, F21 | active |
 | D03 | Report mean ± range over 2 folds × 3 seeds with bootstrap CIs; never a maximum | 2026-08-13 | F04 | active |
 | D04 | The default input is the full acquired cube — no band selection on the primary path | 2026-08-14 | F03, F12 | active — **under review** (F17) |
-| D05 | SpectralSeedNet (two pathways, 3.0 M) replaces SpectralQuadNet (four branches, 5.2 M) as primary | 2026-08-13 | F06, F07 | active — A3 not yet run; S10: 11.5 % of params untrainable (F48), spectral blocks inert (F49) |
-| D06 | One training stage replaces three | 2026-08-13 | F05 | active — **under review** (F35, F47: the margin is met by 0–52 % of training kernels at < 4 % of the LR) |
+| D05 | SpectralSeedNet (two pathways, 3.0 M) replaces SpectralQuadNet (four branches, 5.2 M) as primary | 2026-08-13 | F06, F07 | active — A3 not yet run; S10: 11.5 % of params untrainable (F48), spectral blocks inert (F49); **S12: the spatial pathway adds +0.10 and is the session channel (F64); joint fusion ≈ late fusion (F65); lean version frozen as Y3** |
+| D06 | One training stage replaces three | 2026-08-13 | F05 | active — **under review** (F35, F47: the margin is met by 0–52 % of training kernels at < 4 % of the LR); **S12: margin removed with R1 (D24)** |
 | D07 | Objective & optimiser fixes: one aux head at fixed 0.2, GradNorm off, clip 5.0, K = 1, AMP kept on, TF32 off | 2026-08-13 | F07, F08 | active — **under review** (F36, F53); **not executed as written: aux weight was 0.65 → 0.25, not 0.2 (F54)** |
 | D08 | Band studies select inside the fold, decide on calib, include null methods and the full budget | 2026-08-13 | F03, F11 | active |
 | D09 | Held-out confirmations are pre-registered and frozen by SHA-256 before any held-out row is scored | 2026-09-29 | F21 | active |
@@ -31,13 +31,20 @@ rule or an earlier plan said, the entry says so under *Deviation*.
 | D13 | Band indices belong to one wavelength axis; sets are regenerated per axis, never transferred | 2026-09-30 | F27 | active |
 | D14 | Every final evaluation reports same- vs cross-session scores, session attraction and entropy | 2026-09-30 | F22–F24 | active |
 | D15 | Neural runs go to Kaggle T4 × 2 on a pre-sliced `uniform430_k32` float16 cube | 2026-10-01 | F17, F28 | active — **deviation recorded** |
-| D16 | Three reporting tiers: within-acquisition (80/20) · cross-bundle (grouped, primary) · cross-session; 80/20 is never the headline | 2026-10-01 | F31, F38, F43 | active |
+| D16 | Three reporting tiers: within-acquisition (80/20) · cross-bundle (grouped, primary) · cross-session; 80/20 is never the headline | 2026-10-01 | F31, F38, F43 | active; S12: Y4 runs the 80/20 tier under R1 |
 | D17 | Next investment: two diagnostic GPU experiments (fit-first, attribution) before any new architecture or tuning | 2026-10-01 | F32, F34, F35, F37 | active |
 | D18 | Instrumentation fixes before the next sweep: logits, git commit, DDP de-duplication, pathway labels, clean train accuracy | 2026-10-01 | F35, F36, S09 §8 | active — **implemented in S11** (D22); extended by D20 |
-| D19 | Repair training before architecture: X1, X2, X4 run on the unchanged SpectralSeedNet; component repairs (X5 tail stride, X6 reflectance level) are separate pre-registered arms after X1; no simplification or redesign before X1/X2 report | 2026-10-01 | F44–F50, F54 | active |
+| D19 | Repair training before architecture: X1, X2, X4 run on the unchanged SpectralSeedNet; component repairs (X5 tail stride, X6 reflectance level) are separate pre-registered arms after X1; no simplification or redesign before X1/X2 report | 2026-10-01 | F44–F50, F54 | active; **S12: X1/X2 reported — architecture work opens under route A (D23); X5/X6 not run standalone (D25)** |
 | D20 | Instrumentation scope extended (S10 P0): clean-fit telemetry, applied-aux-weight logging with a `legacy` default, model-declared gradient/clip groups, structural regression tests, docs | 2026-10-01 | F48, F53, F54, S10 B14 | active — **implemented in S11** with one deviation (D22: the model-declared *clip* partition is opt-in) |
 | D21 | Interpretation guards on S09's frozen plan (file unchanged): H13's baseline is 0.90/0.91 under its own definition; an X1 gain is credited to mixup/margin/epochs, not the clip; the aux schedule stays `legacy` for X1/X2 | 2026-10-01 | F45, F53, F54 | active — guard 3 enforced by the code default and a test (S11) |
-| D22 | S10's P0 implemented as specified except: the model-declared clip partition is opt-in (`clip_partition=legacy` default); the frozen commands run under `torchrun` with one output directory per cell; X5/X6 not implemented (D19) | 2026-10-01 | F57, F58, S10 §6, §9 | active |
+| D22 | S10's P0 implemented as specified except: the model-declared clip partition is opt-in (`clip_partition=legacy` default); the frozen commands run under `torchrun` with one output directory per cell; X5/X6 not implemented (D19) | 2026-10-01 | F57, F58, S10 §6, §9 | active; **S12: reversal trigger fired literally (clip 50 bound on ≤ 18 group-steps per run, F71c) — X1/X4 read as legacy-partition results, effect negligible** |
+| D23 | Route A, per the frozen S09 rule (H12a rejected, H14b rejected): no further capacity or regime work; next = representation (session-robust, sample-efficient) and data/protocol | 2026-10-02 | F59–F67 | active |
+| D24 | R1 (= X1: mixup 30 epochs, margin 0, clip 50, 200 epochs, patience 40) is the reference regime for new arms; credited with parsimony and lower variance, not with a gain | 2026-10-02 | F59, F60, F47 | active — **S13: R1 carried explicitly by every cell; the config-default switch is deferred (D29)** |
+| D25 | X5 and X6 are not run as standalone frozen arms: X5's correctness change joins the lean arm (Y3); X6 is deferred (linear proxy shows the H18a ∧ ¬H18b pattern) | 2026-10-02 | F61, F70 | active — **deviation recorded** |
+| D26 | Every run reports a training-rows session κ (embedding and each pathway output) beside the held-out session metrics; it may guard a design choice, never replace held-out confirmation | 2026-10-02 | F69 | active — **implemented in S13** (`evaluation.session_probe`) |
+| D27 | Before the next Kaggle session: fix the final-epoch checkpoint race, ignore the dataset symlink in the dirty flag, re-score the unscored X2 cell; the next GPU round is S13, frozen in `preregistration_s12.json` | 2026-10-02 | F71 | **implemented in S13** (F72); the X2 re-score runs in the S13 Kaggle session |
+| D28 | S13 runs as a **single-seed screen**: seeds 3 → 1 (seed 0), every arm, control, protocol contrast and grouped fold kept; recorded as a hashed amendment (`preregistration_s13.json`); outcomes are screening verdicts and passing arms are replicated at seeds 1–2 before any claim | 2026-10-02 | F60, S12 §9 | active — **deviation recorded** (PI-approved, before any S13 run) |
+| D29 | P0 and the S13 arms as implemented: atomic checkpoint writes + end-of-stage barriers, `dataset_*`, late-fusion scorer, κ default-on, Y2/Y3 behind default-off keys (G-neutral); D24's default switch deferred | 2026-10-02 | F72 | active — **deviation recorded** |
 
 ---
 
@@ -306,3 +313,107 @@ execution detail that no hypothesis depends on).
 **Reverse if** an X1 or X4 run logs `grad_norm/clip_fraction > 0.01` — the partition then mattered at clip 50 and
 the run is a `legacy`-partition result, to be read as such (S10 P0.5's rollback condition, unchanged).
 
+### D23 · Route A: representation and data, not capacity or regime (S12)
+**Context.** H12a and H12b rejected (F59): fitting 0.98 instead of 0.90 of the training kernels moved no held-out number;
+H16 supported (F61): capacity is ample; H14b rejected (F64). S09's frozen rule: *H12a rejected → read X2; H14b rejected →
+the representation binds (route A)*. S12 adds why: the extra fit is memorisation (F60), errors are systematic (F62),
+the network is at the level of a linear model on kernel statistics across bundles (F67), and the component supplying its
+within-acquisition advantage is the session channel (F64, F69).
+**Decision.** No further capacity or optimisation-regime arms. The next GPU round (S13, `preregistration_s12.json`) tests
+representation changes that address the session channel (Y1 decoupled pathways, Y2 masked MixStyle) and removes what
+does not work (Y3), plus the within-acquisition tier (Y4). Data/protocol items — RGB morphology (FW-18), the band budget
+(FW-03), transfer standards (FW-29), more acquisitions (FW-12) — are where S12 places the larger headroom.
+**Alternatives rejected.** Wider/deeper networks or longer schedules (H16, F60); session-adversarial heads, GroupDRO or
+last-layer re-training (they need session to vary within class in training; under `grouped` it never does); redesigning
+the network around the 3-D pathway (it is the session channel).
+**Reverse if** an S13 arm raises grouped F1 by ≥ 2σ_ref (0.020) through an optimisation change alone, or a capacity
+change does — the representation would then not be what binds.
+
+### D24 · R1 is the reference regime for new arms (S12)
+**Context.** X1 vs the shipped regime: grouped +0.001 (CI −0.010…+0.011), stratified +0.015 (CI −0.012…+0.041); stratified
+seed sd 0.006 vs 0.033 (F60); no margin, so the training loss means what it says (F47); clean fit ≈ 1. Cost: up to 200
+epochs instead of 150 (X1 cells stopped at 131–200).
+**Decision.** New arms (S13) run under R1 and compare with the X1 cells. The ArcFace margin is dropped from the default
+path (the cosine head stays, m = 0); mixup 30 epochs; clip 50 as an fp16 spike guard. The config default changes when
+the S13 code lands, behind G-neutral for every other default.
+**Deviation.** S10's `regime_rule` says X5/X6 "run under the shipped regime" when H12a is rejected; that rule is kept for
+X5/X6 if they are ever run as frozen (D25), but no new arm uses the shipped regime.
+**Alternatives rejected.** Keeping the shipped regime (equal held-out, 5.7× the stratified variance, a margin with no
+measured benefit); a 150-epoch R1 (untested).
+**Reverse if** an S13 arm run under both regimes ranks differently under them.
+**S13 note (D29).** The S13 cells carry R1 explicitly, read from the frozen file; the config default itself is not yet
+switched (D29 deviation 1).
+
+### D25 · X5 and X6 are not run as standalone arms (S12) — deviation recorded
+**Context.** S10 froze X5 (tail stride 1, H17) and X6 (log-reflectance level block, H18a/b) to run after X1. X4 showed
+capacity is ample (F61), so X5's capacity motive is gone; its correctness motive (327,680 untrainable parameters, F48)
+remains. For X6, the linear proxy on the same rows shows exactly the pattern X6's guard was designed to catch: +0.02–0.04
+F1, −0.02…−0.08 cross-session recall, +0.05–0.13 attraction (F70).
+**Decision.** X5's change is part of Y3 (lean architecture, non-inferiority, H21). X6 is deferred until a design needs a
+level channel; H17 and H18 stay `not run` (their frozen text is unchanged).
+**Alternatives rejected.** Running X6 as frozen (2.7 GPU-pair-hours for a predicted session gain); running X5 alone
+(a correctness fix with no expected effect).
+**Reverse if** S13 or a later CPU control shows level raising cross-session recall, not lowering it.
+
+### D26 · A training-rows session κ is reported for every run (S12)
+**Context.** F69: class-disjoint session decodability on training rows ranks held-out attraction across linear
+representations (ρ 0.93) and separates spectral-only from spatial networks (r 0.80), but does not rank among networks
+with the spatial pathway (ρ 0.23).
+**Decision.** The final report adds the κ of the embedding and of each pathway output (training rows, eval mode). It may
+guard a design choice made on calib (e.g. "the candidate must not raise κ by > 0.05"); it never replaces a held-out
+confirmation and never selects among close networks.
+**Reverse if** a run's κ and its held-out attraction disagree in direction against the reference by more than their noise.
+
+### D27 · Infrastructure before the next Kaggle session (S12)
+**Context.** F71: a final-epoch best checkpoint races the reload (one X2 cell unscored); `dirty` is true on every Kaggle
+run because of the dataset symlink.
+**Decision.** (1) A barrier after the stage and an atomic `best_stage1.pth` write (tmp + `os.replace`), with a 2-rank
+regression test where the best epoch is the last; (2) `.gitignore` → `dataset_*`; (3) re-score
+`X2/spatial_only__f1_s0` through the pipeline's re-score path (training is finished; only the final evaluation runs);
+(4) the late-fusion scorer and the κ report (D26). These are P0 of `preregistration_s12.json`.
+**Reverse if** — not applicable (housekeeping, no scientific choice).
+
+### D28 · S13 runs as a single-seed screen (S13) — deviation recorded
+**Context.** `preregistration_s12.json` (`88b377c5…`) froze S13 as 30 runs (Y1 12, Y2 6, Y3 9, Y4 3; seeds 0, 1, 2)
+≈ 12.5 GPU-pair-hours. Before any S13 code had run on GPU, the PI asked for "a fast screening study using one seed
+only … keep all scientifically necessary arms, controls, protocol contrasts and grouped folds, but remove repeated
+random seeds; use one fixed seed consistently across S13 … successful arms can be replicated across multiple seeds
+later". Run-to-run variance under R1 is already measured on this data and code path (X1: grouped sd 0.0099, stratified
+0.0058; F60) — the frozen margins were set from it.
+**Decision.** Every S13 cell runs at **seed 0**: 10 GPU runs (Y1 4 + 2 CPU fused cells, Y2 2, Y3 3, Y4 1). Everything
+else is as frozen — R1, each arm's change, grouped folds 0/1 and the stratified contrast, the reference (6-run X1 mean),
+every margin and threshold, the decision-rule logic, the guards, the held-out rule. The change is recorded as a
+**hashed amendment**, `evidence/S13_representation_screening/preregistration_s13.json` (`ef598213…`), that names the
+parent's hash;
+the parent is not edited, and the runner verifies both hashes. Seed 0 is the first seed of every frozen design, fixed
+before any run, and gives each cell an already-scored seed-matched R1 cell (X1 seed 0) for deltas reported beside.
+**Consequence for reading.** A 2-run grouped mean has SE ≈ 0.007 (≈ 0.004 at 6 runs): the 0.020 margins sit ≈ 2.9 SE
+from an estimate instead of ≈ 5, and gate G3 (Δ > 2σ over folds × seeds) cannot be met. Every outcome is therefore a
+**screening verdict**: the frozen rule's *adopt* reads *passes the screen* — the arm is replicated at seeds 1 and 2 under
+a new frozen file (FW-35) and may be the provisional base of later screening arms, but is not the reference form,
+SeedNet v5 or a paper claim until replicated.
+**Alternatives rejected.** Editing the parent file (moves its hash and erases what was frozen); keeping 3 seeds for
+some arms (the PI asked for one seed consistently); dropping a fold or the stratified contrast instead (folds and
+protocols are design factors, seeds are replication).
+**Reverse if** the screen proves uninformative — e.g. an arm's two fold estimates straddle its threshold by more than
+the margin — then that arm is replicated before its verdict is read, not after.
+
+### D29 · P0 and the S13 arms as implemented (S13) — two deviations recorded
+**Context.** `preregistration_s12.json → p0_before_any_arm` and its arms Y2/Y3 leave some execution details open;
+D24 says the config default switches to R1 "when the S13 code lands, behind G-neutral".
+**Decision.** As specified: atomic `best_stage{s}.pth` + sidecar writes (tmp + `os.replace`) and a barrier at the end
+of the single stage, with a 2-rank regression test (F72); `.gitignore` → `dataset_*`; the late-fusion scorer
+(`experiments/fusion.py`, calib-chosen weight, model-shaped `run.json`); the session κ in every single-stage report
+(`evaluation.session_probe`, default on — reads only training rows); Y2/Y3 behind default-off keys, gated by
+G-neutral against `413a11e` with both arms as detected sensitivity controls. Choices the frozen text leaves open:
+MixStyle runs between GELU and the mask multiplication with the area-pooled mask as pixel weights (the same affine map
+as after ×α, background held at zero), with detached statistics, a pass-through for a kernel without foreground, and
+outside `torch.compile`; CBAM placement is computed from the cube's real patch side (passed by the pipeline) and a
+mismatched input is refused; the κ probe uses the selected weights.
+**Deviation 1.** D24's switch of the config default to R1 is **deferred**. Every S13 cell carries R1 explicitly from
+the frozen file, so no S13 number depends on the default; switching now would re-compose S11's X2 cells (which inherit
+the shipped regime from the defaults, including the P0 re-score) and void G-neutral's shipped regime.
+**Deviation 2.** The barrier is also placed after each stage of the three-stage pipeline (A8's path), which reloads
+checkpoints the same way.
+**Reverse if** a later study needs `python train.py` to run R1 by default — switch it then, with S11's X2 cells given
+explicit shipped overrides and G-neutral re-run on the R1 regime.

@@ -25,3 +25,7 @@ save_artifacts: true
 # D18. The selected weights' logits (float16) for the reported split AND calib,
 # ±TTA, with row ids and targets: `results/logits_<split>_<variant>.npz`.
 save_logits: true
+# D26 (S12 F69). The training-rows session κ of the selected weights' embedding
+# and of each live pathway: `results/session_probe.json`, `run.json → session_probe`.
+# Reads training rows only, after the held-out scoring; decides nothing.
+session_probe: true

@@ -295,6 +295,26 @@ class ModelConfig:
     #: S11 compose to the shipped network unchanged.
     pathways: list[str] = field(default_factory=lambda: ["spatial", "spectral"])
 
+    # ── S13 arms (preregistration_s12.json; defaults = the shipped network) ─
+    #: SpectralSeedNet only, S13 Y3. The spectral pathway's descriptor:
+    #: ``full`` = ``[index bank | continuum depths | SNV | D₁ | D₂ | morph]``
+    #: (shipped); ``snv_morph`` = ``[SNV | morph]`` — the blocks S10 F49 found
+    #: inert are not built at all.
+    spectral_descriptor: str = "full"
+    #: SpectralSeedNet only, S13 Y3. Strides of the spatial tail's four
+    #: ResBlocks. ``[2, 2, 2, 2]`` (shipped) ends at 1 × 1 with 327,680 untrainable
+    #: parameters (S10 F48); ``[2, 2, 2, 1]`` ends at 2 × 2.
+    spatial_tail_strides: list[int] = field(default_factory=lambda: [2, 2, 2, 2])
+    #: SpectralSeedNet only, S13 Y3. A tail CBAM gate is kept only after a block
+    #: whose output map is at least this many pixels on a side (else
+    #: ``nn.Identity``). ``0`` (shipped) keeps all three; ``3`` drops the gates on
+    #: ≤ 2 × 2 maps (S10 B8).
+    cbam_min_hw: int = 0
+    #: SpectralSeedNet only, S13 Y2. Masked MixStyle after 3-D stem blocks 1 and
+    #: 2 (p 0.5, Beta(0.1, 0.1), foreground statistics, training only). ``false``
+    #: (shipped) builds no module and draws no random number.
+    spatial_mixstyle: bool = False
+
 
 # ══════════════════════════════════════════════════════════════════════
 #  STAGE 1 — 3-phase progressive augmentation  (CONFIG: s1_*, aux_loss_weight_*)
@@ -606,6 +626,13 @@ class EvaluationConfig:
     #: (D18). Calibration, margin and probability analyses need them; argmax
     #: predictions alone cannot supply them. No metric is computed from calib.
     save_logits: bool = True
+    #: The training-rows session κ (S12 F69, D26): class-disjoint session
+    #: decodability of the selected weights' embedding and of each live pathway's
+    #: output, on the fold's training rows (eval mode, no augmentation), written
+    #: to ``results/session_probe.json`` and ``run.json → session_probe``. Runs
+    #: after the held-out scoring and reads no held-out row; needs the session map
+    #: (``data.scan_table_path``). Single-stage pipeline only.
+    session_probe: bool = True
 
 
 # ══════════════════════════════════════════════════════════════════════

@@ -75,12 +75,18 @@ def describe(model: nn.Module) -> ModelIdentity:
     )
 
 
-def build_model(cfg: ExperimentConfig | Any, physical_wl: torch.Tensor) -> nn.Module:
+def build_model(
+    cfg: ExperimentConfig | Any, physical_wl: torch.Tensor, input_side: int | None = None
+) -> nn.Module:
     """Construct the architecture named by ``cfg.model.arch``.
 
     Args:
         cfg: Composed experiment config.
         physical_wl: Min-max normalised wavelength vector, ``(num_bands,)``.
+        input_side: The patch side the model will see. ``SpectralSeedNet`` reads
+            it only to place the spatial tail's CBAM gates under
+            ``model.cbam_min_hw > 0`` (S13 Y3); ``None`` means the pipeline's
+            64-pixel patch. Ignored by ``SpectralQuadNet``.
 
     Raises:
         ValueError: ``cfg.model.arch`` is not a known architecture.
@@ -98,6 +104,8 @@ def build_model(cfg: ExperimentConfig | Any, physical_wl: torch.Tensor) -> nn.Mo
         raise ValueError(
             f"Unknown model.arch {arch!r}. Expected one of: {', '.join(ARCHITECTURES)}."
         )
+    if arch == SpectralSeedNet.ARCH:
+        return SpectralSeedNet.from_config(cfg, physical_wl, input_side=input_side)
     return builder(cfg, physical_wl)
 
 

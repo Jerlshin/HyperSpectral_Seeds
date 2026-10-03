@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | **running** — part 1 (code, instrumentation, validation) complete; part 2 (the GPU arms X1, X2, X4) not yet run. No held-out row has been read by anything on this page |
+| **Status** | **complete** — part 1 (code, instrumentation, validation) on this page; part 2 ran on Kaggle on 2026-10-02 (22/23 cells scored at `413a11e`) and is **read in [S12](../S12_frozen_arms_reading/README.md)**, not here. No held-out row is read on this page |
 | **Dates** | 2026-10-01 → |
 | **Commits** | base `8050ba2` (S09). The S11 code, the S10 analysis it implements and this page are **uncommitted at the time of writing**; every S11 run records its own commit and dirty flag in `results/run.json → run.code`, which is the authoritative record. Commit and push before a Kaggle session clones `main` |
 | **Data** | none for part 1 beyond the S08 sweep's checkpoints and *training* rows (`clean_fit_reproduction.py`) and synthetic cubes. Part 2: `dataset_u430k32` (refl-215 axis, uniform430 k = 32), grouped folds 0/1 and stratified |

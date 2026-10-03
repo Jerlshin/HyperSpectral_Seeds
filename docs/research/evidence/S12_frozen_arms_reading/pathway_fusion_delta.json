@@ -1,0 +1,18 @@
+{
+ "macro_f1": {
+  "delta": 0.006286533790531013,
+  "lo": 7.162232510127642e-05,
+  "hi": 0.012398912472791651
+ },
+ "cross_recall": {
+  "delta": 0.018110021786492386,
+  "lo": 0.008067467865130814,
+  "hi": 0.027737080007361584
+ },
+ "cells": [
+  "f0",
+  "f0",
+  "f1"
+ ],
+ "note": "test-set sampling only (3 matched fold/seed cells); seed variance not included"
+}

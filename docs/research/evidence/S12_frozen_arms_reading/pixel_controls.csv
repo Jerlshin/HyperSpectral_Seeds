@@ -1,0 +1,22 @@
+representation,n_features,protocol,fold,calib_f1,heldout_f1,same_recall,cross_recall,attraction_cross
+mean + morph (S09 best linear),40,grouped,0,0.522231,0.431927,0.503549,0.182026,0.318573
+mean + morph (S09 best linear),40,grouped,1,0.513296,0.439793,0.524827,0.150735,0.330061
+mean + morph (S09 best linear),40,stratified,0,0.538019,0.491212,0.530982,,
+mean + sd + morph,72,grouped,0,0.663858,0.503453,0.611463,0.119608,0.463715
+mean + sd + morph,72,grouped,1,0.656671,0.509591,0.62028,0.127451,0.42454
+mean + sd + morph,72,stratified,0,0.641911,0.610502,0.653954,,
+quantiles 10/50/90 + morph,104,grouped,0,0.712268,0.516992,0.639865,0.0898693,0.544895
+quantiles 10/50/90 + morph,104,grouped,1,0.687172,0.518697,0.646237,0.0894608,0.480982
+quantiles 10/50/90 + morph,104,stratified,0,0.657146,0.639377,0.697431,,
+core + rim + morph,72,grouped,0,0.62375,0.494812,0.586572,0.165359,0.400984
+core + rim + morph,72,grouped,1,0.643222,0.495018,0.604929,0.133578,0.393865
+core + rim + morph,72,stratified,0,0.611795,0.578641,0.62824,,
+pixel-SNV mean + sd + morph,72,grouped,0,0.636173,0.475462,0.579772,0.115605,0.499385
+pixel-SNV mean + sd + morph,72,grouped,1,0.645449,0.476566,0.590555,0.105392,0.441718
+pixel-SNV mean + sd + morph,72,stratified,0,0.59636,0.585271,0.638292,,
+mean + log-cov + morph,568,grouped,0,0.649242,0.478533,0.597479,0.0514706,0.659287
+mean + log-cov + morph,568,grouped,1,0.653396,0.474686,0.594948,0.0453431,0.614724
+mean + log-cov + morph,568,stratified,0,0.613566,0.58984,0.652066,,
+all pixel statistics + morph,824,grouped,0,0.724363,0.510706,0.636614,0.0588235,0.670357
+all pixel statistics + morph,824,grouped,1,0.745935,0.514858,0.643292,0.057598,0.63681
+all pixel statistics + morph,824,stratified,0,0.698017,0.655296,0.709644,,

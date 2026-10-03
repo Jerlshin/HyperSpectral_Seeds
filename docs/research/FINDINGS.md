@@ -47,8 +47,8 @@ training bundle · `held-out` = the other acquisition bundle (`val ∪ test`), s
 | F30 | SpectralSeedNet (u430k32): grouped 0.530 ± 0.009, stratified 0.712 ± 0.033 macro-F1; seed σ 4× larger within-acquisition | S09 | held-out / strat | E4 | standing |
 | F31 | 63 % of the grouped macro-recall shortfall is already lost in-distribution; cross-session varieties cap grouped at 0.84 | S09 | held-out vs strat | E3 | standing |
 | F32 | The 2.85 M-param network adds only +0.035–0.054 macro-F1 over LDA on mean spectrum + 8 morphometrics | S09 | held-out / strat | E3 | standing |
-| F33 | Morphometrics are acquisition-invariant (0.167 grouped vs 0.174 strat) and alone reach cross-session recall 0.124 (network 0.152) | S09 | held-out | E3 | standing |
-| F34 | Within-acquisition, run-level F1 tracks training fit (r = −0.98); across bundles no link is detectable (r = −0.32, n = 6) | S09 | strat / held-out | E3 | standing |
+| F33 | Morphometrics are acquisition-invariant (0.167 grouped vs 0.174 strat) and alone reach cross-session recall 0.124 (network 0.152) | S09 | held-out | E3 | standing — **attribution refined by F63** (the network's 0.15 does not come from the morph scalars) |
+| F34 | Within-acquisition, run-level F1 tracks training fit (r = −0.98); across bundles no link is detectable (r = −0.32, n = 6) | S09 | strat / held-out | E3 | **challenged by F60** — a correlation across seeds, not a lever |
 | F35 | The network under-fits: clean training accuracy 0.76–0.87; the margin phase drives training loss above ln 90 in 10/12 runs | S09 | train | E4 | standing — **refined by F45, F47** (eval-mode clean fit 0.87–0.95; the loss rise is the margin, not chance) |
 | F36 | The backbone gradient is clipped on 100 % of steps at clip 5.0 (pre-clip median 8.9, up to ≈ 44) | S09 | — | E4 | standing — **refined by F53** (≥ 82.5 % of steps per epoch after epoch 30; under Adam a re-weighting, not a step-size cut) |
 | F37 | Grouped ≈ 0.005 + 0.73 × stratified macro-F1 across 18 model/input pairs (r = 0.94); the network sits on the line | S09 | held-out vs strat | E3 | standing |
@@ -60,12 +60,12 @@ training bundle · `held-out` = the other acquisition bundle (`val ∪ test`), s
 | F43 | Prior 78–96 % results on this dataset are within-acquisition (random kernel splits) and rely on high-resolution RGB morphology | S09 | — | E1 | standing |
 | F44 | The clean-label phase (epochs 111–150) gets 3.6 % of the cumulative LR; switching mixup off lifts calib F1 in 12/12 runs at 18 % of peak LR | S10 | train / calib | E4 | standing |
 | F45 | Clean fit (D18 definition: eval mode, no augmentation, margin 0) of the selected checkpoints is 0.87–0.95 (mean 0.90 grouped, 0.91 stratified); train–calib gap ≈ 0.19 in every run | S10 | train / calib | E4 | standing — refines F35 |
-| F46 | Within acquisition, held-out F1 rises ≈ 1 : 1 with clean training accuracy (r = 0.99, slope 1.01, n = 6); across bundles r = 0.36 | S10 | train vs strat / held-out | E3 | standing — strengthens F34 |
+| F46 | Within acquisition, held-out F1 rises ≈ 1 : 1 with clean training accuracy (r = 0.99, slope 1.01, n = 6); across bundles r = 0.36 | S10 | train vs strat / held-out | E3 | **challenged by F60** — under intervention (X1) the realised slope is 0.18 |
 | F47 | The margin phase's loss is the margin, not chance: on the same training kernels plain-cosine CE 0.15–0.39 vs margin-penalised 2.9–6.7; 0–52 % satisfy m = 0.30; LS at s = 32 fixes the cosine gap at 0.21–0.24 | S10 | train | E4 | standing — refines F35 |
 | F48 | The spatial tail reduces the kernel to 1 × 1; the last 3 × 3 stride-2 conv sees a 2 × 2 map, so 327,680 parameters (11.5 %) never receive a gradient | S10 | — | E4 | standing |
 | F49 | The spectral pathway is in effect SNV(32) + morphometrics: the learned index bank never left uniform; index, continuum, D₁, D₂ carry ≈ 1 % of the descriptor's normalised variance | S10 | train / calib | E4 | standing |
 | F50 | Reflectance level reaches the learned layers only through the 6-parameter ECA gate; a ±20–25 % gain flips 8–18 % of calib predictions | S10 | calib | E4 | standing |
-| F51 | Eval-time on calib: morphometrics at the train mean cost 0.22 macro-F1; spatial path off → 0.19–0.21; spectral path off → 0.42–0.48 | S10 | calib | E2 | standing — X2 tests it by retraining |
+| F51 | Eval-time on calib: morphometrics at the train mean cost 0.22 macro-F1; spatial path off → 0.19–0.21; spectral path off → 0.42–0.48 | S10 | calib | E2 | standing — retrained (X2): −0.040 / −0.081 / −0.099 held-out (F63, F64) |
 | F52 | Linear probes (train → calib): fused embedding ≈ network (0.70 / 0.72); spatial output 0.54 / 0.56; spectral output 0.42 / 0.44, below its own input (0.62 / 0.59); the aux head fits 0.53–0.81 of training kernels | S10 | train / calib | E2 | standing |
 | F53 | The backbone clip-group norm is set by two small modules — the stem's first Conv3d (1,008 params) and the spectral MLP — not the 1.9 M-param tail; the margin triples every main-path gradient; under AdamW the clip re-weights batches, it does not shrink steps | S10 | train | E2 | standing |
 | F54 | The applied auxiliary weight is 0.65 → 0.25 (`stage1.aux_loss_weight_*`), not the configured and logged 0.2, in every SpectralSeedNet run | S10 | — | E4 | standing |
@@ -73,6 +73,20 @@ training bundle · `held-out` = the other acquisition bundle (`val ∪ test`), s
 | F56 | EMA leads live by +0.03–0.04 calib F1 under mixup and ≈ 0 after epoch 130; EMA and Adam memory span 25–36 epochs | S10 | calib | E2 | standing |
 | F57 | The S11 instrumentation moves no training number (identical per-step losses, 222/222 checkpoint tensors and held-out predictions before/after, 3 regimes); the same gate detects a real change; the clean-fit probe equals S10's offline clean fit on the full training set and is within 0.017 of it on its 1,000-kernel subset | S11 | train (synthetic + S08 checkpoints) | E4 | standing |
 | F58 | Before S11 a 2-rank evaluation scored the sampler's padding kernel twice: every grouped S08 run wrote one extra held-out prediction (Δ macro-F1 ≤ 1.7 × 10⁻⁴); the frozen S09 reference (0.530) is already the once-per-kernel value | S11 | held-out (re-scored, no new inference) | E4 | standing |
+| F59 | Fit-first (X1) fits 0.98 / 0.99 of training kernels (H13) but moves held-out by +0.001 grouped (CI −0.010…+0.011) and +0.015 stratified (CI −0.012…+0.041): H12a, H12b rejected | S12 | train / held-out | E4 | standing |
+| F60 | The extra fit is memorisation: calib accuracy at the selected checkpoint is unchanged (0.714 → 0.714 grouped); F46's slope predicted stratified 0.794, X1 gave 0.727 (realised slope 0.18; grouped 0.01); X1's stratified seed sd is 0.006 (S08 0.033) | S12 | train / calib / held-out | E4 | standing |
+| F61 | Capacity is ample — X4 fits 1.000 (H16) — and the softeners are load-bearing: without them −0.090 grouped / −0.174 stratified (TTA; −0.064 / −0.113 no-TTA, fold 0, one seed); TTA lowers an augmentation-free network's score | S12 | train / held-out | E3 | standing |
+| F62 | Errors stay systematic under X1: a 3-seed ensemble adds +0.013 grouped / +0.015 stratified; 80 % of grouped errors are shared by all seeds; per-class change vs S08 has sd 0.04 | S12 | held-out | E4 | standing |
+| F63 | Morphometric scalars add same-session accuracy (−0.040 F1 without them, CI −0.056…−0.025) but not cross-session recall (0.144 vs 0.152): H14a rejected | S12 | held-out | E4 | standing — refines F33 |
+| F64 | The spatial 3-D pathway adds +0.10 F1 (H14b rejected) and is the session channel: spectral-only reaches cross-session recall 0.214 (+0.054, CI +0.025…+0.082) with attraction 0.265 vs 0.47 | S12 | held-out | E4 (F1) / E3 (attraction) | standing |
+| F65 | Joint training adds nothing over late fusion of separately trained pathways (F1 +0.006 for fusion, CI 0.000…+0.012); fusion keeps cross-session recall (+0.018) and lowers attraction (0.46 → 0.39), which a 2-seed full ensemble does not; the joint network follows its spatial pathway on cross-session kernels | S12 | held-out (post hoc) | E3 | standing — re-tested by Y1 (H19) |
+| F66 | The spectral-only network behaves as shrinkage LDA on SNV + morph (0.431 / 0.214 / 0.265 vs 0.416 / 0.202 / 0.252); the same/cross-session trade-off follows how much a model trusts low-variance directions | S12 | held-out (linear controls) | E3 | standing |
+| F67 | Shrinkage LDA on within-kernel pixel quantiles + morph (104 numbers) matches the network on grouped (0.518 vs 0.519–0.523 no-TTA) and calib (0.70); spread statistics carry the session (attraction 0.44–0.65); network − linear is +0.09 stratified but +0.01 grouped | S12 | calib / held-out | E3 | standing |
+| F68 | Detector noise steps +25–30 % at session 5 and is the most session-decodable within-kernel statistic (κ 0.35), but equalising the noise floor leaves the session information in within-kernel spread intact (κ 0.369 → 0.358) | S12 | train / held-out | E4 (step) / E3 | standing |
+| F69 | A training-rows class-disjoint session κ ranks held-out attraction across 13 linear representations (ρ 0.93) and separates spectral-only networks (κ 0.13–0.18) from spatial-pathway networks (0.31–0.36; r 0.80, ρ 0.23 within); inside joint networks the spatial output is 2–4× more session-decodable than the spectral output | S12 | train (validated on held-out) | E3 | standing |
+| F70 | Reflectance level added to a level-blind representation buys +0.02–0.04 F1 and costs 0.02–0.08 cross-session recall and +0.05–0.13 attraction (linear, both LDA estimators) — the H18a ∧ ¬H18b pattern | S12 | held-out (linear controls) | E3 | standing |
+| F71 | Infrastructure: a best checkpoint saved at the final epoch races the other rank's reload (non-atomic save, no barrier) → one X2 cell unscored; `dirty: true` on Kaggle is the dataset symlink; clip 50 bound on ≤ 18 group-steps per X1/X4 run | S12 | — | E4 | standing — (a), (b) fixed in S13 (F72) |
+| F72 | The S13 code at its defaults moves no training number (G-neutral vs `413a11e`: 3 regimes, 30/30 step losses, 222/222 tensors, held-out ±TTA identical) and the gate detects both new arms (Y2 212, Y3 214 tensors differ); F71a reproduces on `413a11e` as rank 1's `EOFError` and is gone with atomic writes + an end-of-stage barrier — without the barrier rank 1 silently reloads the previous epoch | S13 | synthetic | E4 | standing |
 
 ---
 
@@ -446,3 +460,104 @@ predictions kept the pad. A 2-rank run on a 91-kernel held-out split wrote 92 pr
 run moves by ≤ 1.7 × 10⁻⁴; the grouped TTA mean goes 0.530068 (`run.json`) → 0.530033 — which is the value S09 froze
 (its extraction counted each kernel once). The S11 arms, de-duplicated natively, therefore compare with the frozen
 reference without correction. → `ddp_dedup.json`, `reference_dedup.csv`
+
+### F59 · Fitting the training set no longer moves held-out
+X1 (mixup 30 epochs, no margin, clip 50, 200 epochs) classifies 0.980 (grouped) / 0.992 (stratified) of its fixed
+training subset at the selected checkpoint (0.992 / 0.998 at the last epoch; H13 supported) — against 0.90 / 0.91 for
+the shipped regime (F45). Held-out: grouped 0.531 vs 0.530 (Δ +0.001, hierarchical-bootstrap CI −0.010…+0.011),
+stratified 0.727 vs 0.712 (Δ +0.015, CI −0.012…+0.041); H12a and H12b rejected. **Caveat:** one grouped cell stopped at
+epoch 131 (D21 guard 4); without it the grouped mean is 0.533. → `evidence/S12_frozen_arms_reading/hypotheses.json`,
+`cells.csv`
+
+### F60 · The extra fit is memorisation; F46 was a correlation, not a lever
+Calib accuracy at the selected checkpoint — unseen kernels of the training bundle — is 0.714 for S08 and 0.714 for X1
+(stratified 0.720 / 0.723). The S08 seed-level line (slope 1.01, r 0.99) predicted X1 stratified 0.794; X1 delivered
+0.727: realised slope 0.18 (grouped 0.01). X1's stratified seed sd is 0.006 against S08's 0.033 — the S08 spread was
+optimisation noise, and the seeds that fitted better were the ones that had also learnt more transferable features.
+→ `ladder_summary.csv`, `fit_transfer.json`
+
+### F61 · Capacity is ample; the regularisers are what generalise
+X4 (no mixup, label smoothing, aux term, dropout or augmentation) fits 1.000 of its training kernels (H16 supported)
+and scores −0.090 grouped (CI −0.107…−0.072) and −0.174 stratified below X1 on fold 0 (TTA); without TTA −0.064 /
+−0.113, because test-time views hurt a network never trained on augmented inputs. Its calib F1 peaks at epochs
+36–46, then declines. **Caveat:** one seed per protocol. → `arm_summary.csv`, `calib_saturation.csv`
+
+### F62 · What remains is bias, not variance
+Averaging the logits of three X1 seeds adds +0.013 grouped and +0.015 stratified (TTA; +0.021 / +0.029 no-TTA); 80 % of
+grouped errors are made by all three seeds; X1 − S08 per-class recall has sd 0.04 with 4 of 90 classes beyond ±0.10.
+Held-out probabilities are over-confident under the bundle shift (ECE 0.15 grouped, 0.04 stratified).
+→ `ensembles.csv`, `calibration.csv`, `per_class_x1_vs_s08.csv`
+
+### F63 · The morphometric scalars are not where cross-session recall comes from
+Retrained without them, the network loses 0.040 F1 (CI −0.056…−0.025) and keeps its cross-session recall (0.144 vs
+0.152 / 0.160 matched; Δ −0.016, CI −0.039…+0.007): H14a rejected. The scalars buy same-session accuracy. → `hypotheses.json`
+
+### F64 · The spatial pathway carries variety information and the session
+Spectral-only scores 0.099 below the matched full network (CI 0.087…0.112; H14b rejected under either definition of
+"full"). Spatial-only scores 0.081 below. But spectral-only has cross-session recall 0.214 (+0.054 over full, CI
++0.025…+0.082) and attraction 0.265 vs 0.467 — the highest cross-session recall measured on this dataset — and rescues
+kernels imaged in sessions 0 and 1 that no full network ever classifies (0.34 / 0.17 vs 0.00).
+→ `arm_summary.csv`, `cross_per_class.csv`, `cross_direction.csv`
+
+### F65 · Joint fusion buys nothing late fusion does not, and loses robustness
+On the three fold/seed cells where both single-pathway networks were scored, equal-weight log-probability fusion gives
+0.533 vs the joint network's 0.527 (+0.006, paired kernel bootstrap CI 0.000…+0.012), cross-session recall +0.018
+(+0.008…+0.028) and attraction 0.391 vs 0.464; a calib-chosen weight (≈ 0.48 spectral) gives the same. Ensembling two
+full networks gives +0.009 F1, +0.003 cross-session and no attraction change. On cross-session kernels only the
+spectral network gets right, the joint network is right 27 % of the time; on those only the spatial network gets right,
+66 %. **Caveat:** post hoc on existing predictions (no tuning on held-out), 3 cells, shipped regime — re-tested by Y1.
+→ `pathway_fusion.csv`, `pathway_fusion_delta.json`, `pathway_complementarity.csv`, `ensemble_session.csv`
+
+### F66 · The spectral pathway is a regularised linear discriminant
+Spectral-only network: F1 0.431, same 0.501, cross 0.214, attraction 0.265. Shrinkage LDA on SNV + morph: 0.416, 0.483,
+0.202, 0.252. Un-shrunk LDA on the same 40 features: 0.449, 0.561, 0.073, 0.480. With one session per class in
+training, session differences look discriminative in low-variance directions; shrinkage discounts them.
+→ `linear_controls.csv`, `frontier.csv`
+
+### F67 · Within-kernel statistics hold the network's extra power — and the session
+Shrinkage LDA, fit on train: mean + morph 0.436 grouped / calib 0.518; + per-band sd 0.507 / 0.660; per-band quantiles
+(10/50/90) + morph 0.518 / 0.700; all pixel statistics (824 numbers) 0.513 / 0.735. The network: 0.519–0.523 no-TTA,
+calib 0.70–0.72. Every spread family raises attraction (0.44–0.65 vs 0.32) and session κ (0.37–0.45 vs 0.25).
+Network − quantile-LDA: +0.09 stratified (0.727 vs 0.639), +0.01 grouped. → `pixel_controls.csv`, `session_probe.csv`
+
+### F68 · Detector noise is a session fingerprint, but not the one that matters most
+Median per-kernel high-frequency residual (3 × 3, bands 8–23): 0.0146–0.0166 in sessions 0–4, 0.0198–0.0206 in
+sessions 5–8. As a feature it has the highest class-disjoint session κ of any within-kernel family (0.35) and transfers
+nothing (cross 0.039, attraction 0.53). Topping every kernel's noise up to a common floor (99th percentile of training
+kernels) drives its κ to 0.005 but leaves mean + sd (0.369 → 0.358) and quantiles (0.378 → 0.373) as session-laden as
+before, at a calib cost of ≈ 0.015. → `noise_channel.csv`, `noise_by_session.csv`, `noise_equalisation_pretest.csv`
+
+### F69 · Session reliance can be measured on training rows
+Predict the acquisition session from a representation with a classifier fitted on some classes and scored on others
+(GroupKFold by class, shrinkage LDA, κ). Across 13 linear representations κ ranks held-out cross-session attraction with
+Spearman 0.93 (Pearson 0.88). On 11 fold-0 checkpoints, embeddings of spectral-only networks score κ 0.13–0.18 and every
+network with the spatial pathway 0.31–0.36 (Pearson 0.80 with attraction; Spearman 0.23 — no ranking within that
+group). Inside the joint networks, spatial-pathway outputs score 0.26–0.32 and spectral-pathway outputs 0.08–0.15.
+**Caveat:** session and variety relatedness are partly confounded in the probe; one fold for networks.
+→ `session_probe_validation.json`, `embed_probe.csv`
+
+### F70 · Level is session information as much as variety information
+On the same rows and estimators: SNV + morph → raw + morph (per-band level) and SNV + morph → SNV + log-level + morph
+both raise F1 by 0.02–0.04 and lower cross-session recall by 0.02–0.08 with attraction +0.05–0.13. A linear proxy for
+X6, not X6. → `linear_controls.csv`
+
+### F71 · Three infrastructure defects behind the S11 cells
+(a) `save_ckpt` writes `best_stage1.pth` on rank 0 synchronously and non-atomically; after the last epoch rank 1 reloads
+it with no barrier. When the best epoch is the last, rank 1 reads a truncated file (`EOFError`) and rank 0's next
+collective pairs with rank 1's error-path barrier (received size `0x3F80000000000000`). `X2/spatial_only__f1_s0` was
+never scored. (b) `run.code.dirty` is true on every Kaggle run because the README's `ln -sfn … dataset_u430k32` creates
+an untracked symlink that `.gitignore`'s `dataset_*/` does not match. (c) Clip 50 bound on 5–18 of 11,004–24,000
+group-steps per X1/X4 run (epoch 1 and fp16-overflow epochs) — D22's trigger fires literally; the effect is
+negligible. → `integrity.json`, `cells.csv`
+
+### F72 · The S13 code is neutral at its defaults, and the checkpoint race is fixed — by the barrier, not by atomicity
+S11's G-neutral gate, run between `413a11e` and the S13 tree (all telemetry and the κ probe on): identical per-step
+losses (30/30, max |Δ| = 0), checkpoint tensors (222/222) and held-out predictions ±TTA in the shipped, clip-binds and
+R1-like regimes; S11's two sensitivity controls and two new ones are detected (`model.spatial_mixstyle=true`: 212
+tensors, Δloss ≤ 2.21; the Y3 keys: 214 tensors, Δloss ≤ 2.24). The race, as a 2-rank gloo test of `run_single_stage`
+with the best epoch last and rank 0's write slowed: on `413a11e` rank 1 fails with `EOFError: Ran out of input` (the
+Kaggle failure); on S13 both ranks reload the final epoch; with the barrier removed but atomic writes kept, rank 1
+reloads the **previous** epoch's checkpoint without error — atomicity turns a crash into a silent wrong-weights read, the
+barrier is what fixes it. Every arm also runs on a real 2-rank `torchrun` job with each held-out kernel scored once.
+→ `evidence/S13_representation_screening/g_neutral.json`, `ddp_arms.json`, `tests/unit/test_checkpoint_race.py`
+
