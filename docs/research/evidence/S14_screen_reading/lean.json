@@ -1,0 +1,181 @@
+{
+ "rank_joint_p_f1_above_all_x1_runs": 0.015625,
+ "rank_note": "Y3 beats every X1 run of its fold/protocol on F1 in all three cells; under exchangeability each has probability 1/4, jointly 1/64 \u2248 0.016 (seed-to-seed spread only; not a held-out-free test).",
+ "per_class": {
+  "n_up_gt_0_10": 7,
+  "n_down_lt_m0_10": 1,
+  "mean_delta_same": 0.026001876891147354,
+  "mean_delta_cross": 0.0363562091503268,
+  "sd_delta": 0.05635656964513047,
+  "cross_classes_up": [
+   {
+    "cls": 60,
+    "x1": 0.417,
+    "y3": 0.469,
+    "delta": 0.052
+   },
+   {
+    "cls": 4,
+    "x1": 0.0,
+    "y3": 0.052,
+    "delta": 0.052
+   },
+   {
+    "cls": 64,
+    "x1": 0.385,
+    "y3": 0.448,
+    "delta": 0.063
+   },
+   {
+    "cls": 66,
+    "x1": 0.01,
+    "y3": 0.094,
+    "delta": 0.083
+   },
+   {
+    "cls": 78,
+    "x1": 0.875,
+    "y3": 0.958,
+    "delta": 0.083
+   },
+   {
+    "cls": 22,
+    "x1": 0.359,
+    "y3": 0.456,
+    "delta": 0.097
+   },
+   {
+    "cls": 61,
+    "x1": 0.125,
+    "y3": 0.333,
+    "delta": 0.208
+   }
+  ],
+  "cross_classes_down": [
+   {
+    "cls": 65,
+    "x1": 0.115,
+    "y3": 0.062,
+    "delta": -0.052
+   }
+  ]
+ },
+ "cross_by_session": [
+  {
+   "fold": 0,
+   "session": 1,
+   "n": 96,
+   "y3_acc": 0.0,
+   "x1_acc": 0.0
+  },
+  {
+   "fold": 0,
+   "session": 3,
+   "n": 48,
+   "y3_acc": 0.0,
+   "x1_acc": 0.0
+  },
+  {
+   "fold": 0,
+   "session": 5,
+   "n": 240,
+   "y3_acc": 0.083,
+   "x1_acc": 0.092
+  },
+  {
+   "fold": 0,
+   "session": 8,
+   "n": 429,
+   "y3_acc": 0.294,
+   "x1_acc": 0.247
+  },
+  {
+   "fold": 1,
+   "session": 0,
+   "n": 48,
+   "y3_acc": 0.021,
+   "x1_acc": 0.0
+  },
+  {
+   "fold": 1,
+   "session": 2,
+   "n": 48,
+   "y3_acc": 0.312,
+   "x1_acc": 0.229
+  },
+  {
+   "fold": 1,
+   "session": 3,
+   "n": 48,
+   "y3_acc": 0.0,
+   "x1_acc": 0.0
+  },
+  {
+   "fold": 1,
+   "session": 4,
+   "n": 47,
+   "y3_acc": 0.0,
+   "x1_acc": 0.0
+  },
+  {
+   "fold": 1,
+   "session": 5,
+   "n": 240,
+   "y3_acc": 0.133,
+   "x1_acc": 0.104
+  },
+  {
+   "fold": 1,
+   "session": 7,
+   "n": 48,
+   "y3_acc": 0.0,
+   "x1_acc": 0.0
+  },
+  {
+   "fold": 1,
+   "session": 8,
+   "n": 336,
+   "y3_acc": 0.318,
+   "x1_acc": 0.232
+  }
+ ],
+ "error_overlap": "{('X1 s0', 'X1 s1'): 0.7675, ('X1 s0', 'X1 s2'): 0.7613, ('X1 s1', 'X1 s2'): 0.7655, ('Y3', 'X1 s0'): 0.7063, ('Y3', 'X1 s1'): 0.7048, ('Y3', 'X1 s2'): 0.7253}",
+ "ece": {
+  "Y3 f0": 0.09782653358814418,
+  "Y3 f1": 0.1106986851762331,
+  "X1 s0 f0": 0.12442689597592832,
+  "X1 s0 f1": 0.15053548474520978,
+  "Y3 strat": 0.018616697156493778,
+  "X1 s0 strat": 0.03220362943443116
+ },
+ "pathway_use": {
+  "f0": {
+   "x1_influence_spatial": 61.6796,
+   "y3_influence_spatial": 75.0828,
+   "x1_kappa": {
+    "embedding": 0.335875,
+    "spatial": 0.317271,
+    "spectral": 0.132861
+   },
+   "y3_kappa": {
+    "embedding": 0.372035,
+    "spatial": 0.36079,
+    "spectral": 0.0747106
+   }
+  },
+  "f1": {
+   "x1_influence_spatial": 64.1816,
+   "y3_influence_spatial": 73.7867,
+   "x1_kappa": {
+    "embedding": 0.358446,
+    "spatial": 0.333748,
+    "spectral": 0.130978
+   },
+   "y3_kappa": {
+    "embedding": 0.333623,
+    "spatial": 0.346843,
+    "spectral": 0.0634546
+   }
+  }
+ }
+}

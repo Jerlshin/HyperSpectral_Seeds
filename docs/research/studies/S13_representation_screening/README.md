@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | **part 1 complete** — P0 (FW-34) and the Y2/Y3 model changes implemented behind default-off keys, the one-seed amendment frozen, everything validated (§5). **Part 2 (the 10 GPU cells) not yet run.** No held-out row has been read by anything on this page |
+| **Status** | **complete.** Part 1 (P0, Y2/Y3 code, the one-seed amendment, validation — §5) 2026-10-02; **part 2 (10 GPU cells + 2 fused cells) ran on Kaggle 2026-10-03 at `aed5257`, all scored, and is read in [S14](../S14_screen_reading/README.md)** (Y3 passes; Y1, Y2 rejected; H15 supported). The P0.3 re-score was skipped (S11 output not attached) |
 | **Dates** | 2026-10-02 → |
 | **Commits** | base `413a11e` (S11 code; the S12 analysis is uncommitted). The S13 code, the amendment and this page are **uncommitted at the time of writing**; the **S13 commit** is the one that lands them, and every cell records its commit and dirty flag in `results/run.json → run.code`. Commit and push before the Kaggle session — it clones `main --depth 1` |
 | **Data** | part 1: synthetic cubes; the S11 cells' `metrics.jsonl` for timing only. Part 2: `dataset_u430k32` (refl-215 axis, uniform430 k = 32), grouped folds 0, 1 and the stratified contrast, **seed 0** |

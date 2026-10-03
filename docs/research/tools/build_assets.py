@@ -1016,6 +1016,137 @@ def fig_s12() -> None:
           "(bands 8–23, per-kernel 3 × 3 high-frequency residual)")
 
 
+def fig_s14() -> None:
+    s = "S14_screen_reading"
+    ev = EVIDENCE / s
+    if not (ev / "arm_summary.csv").exists():
+        print("  skip    s14 (no arm_summary.csv — run the study's code/ scripts first)")
+        return
+    arm = pd.read_csv(ev / "arm_summary.csv").set_index("arm")
+    seed_sd = {"f1": 0.009933, "same": 0.013873, "cross": 0.009823, "attraction": 0.020362}
+
+    def interval(a: str, k: str, strat: bool = False) -> tuple[float, float, float]:
+        r = arm.loc[a]
+        se_k = (r[f"{k}_hi"] - r[f"{k}_lo"]) / 3.92
+        hw = 1.96 * np.sqrt(se_k ** 2 + (0.005806 if strat else seed_sd[k]) ** 2 / r.n_runs)
+        return r[k], r[k] - hw, r[k] + hw
+
+    # 1 · The screen: every frozen quantity against its threshold (screen interval = kernels + X1 seed sd).
+    rows = [("Y1 fused (calib w)", "Y1 fused", BLUE), ("Y2 mixstyle", "Y2 MixStyle", ORANGE),
+            ("Y3 lean grouped", "Y3 lean", AQUA)]
+    panels = [("f1", "grouped macro-F1", 0.5108, 0.530786, "≥ 0.511 (H19a, H21a)", {"Y2 mixstyle"}),
+              ("cross", "cross-session recall", 0.1666, 0.146637, "≥ 0.167 (H19b, H20)", {"Y3 lean grouped"}),
+              ("attraction", "cross-session attraction (lower = less session)", 0.4240, 0.463958, "≤ 0.424 (H19b)",
+               {"Y2 mixstyle", "Y3 lean grouped"})]
+    fig, axes = plt.subplots(1, 4, figsize=(13.4, 3.4), gridspec_kw={"width_ratios": [1, 1, 1, 0.9]})
+    for ax, (k, title, thr, ref, thr_lab, beside) in zip(axes[:3], panels, strict=True):
+        yy = np.arange(len(rows))[::-1]
+        for yi, (a, _lab, col) in zip(yy, rows, strict=True):
+            v, lo, hi = interval(a, k)
+            ax.plot([lo, hi], [yi, yi], color=col, lw=2, solid_capstyle="round", zorder=2)
+            ax.plot([v], [yi], "o", color=col, ms=9, mec=SURFACE, mew=2, zorder=3)
+            for pf in str(arm.loc[a, f"{k}_per_fold"]).split():
+                ax.plot([float(pf)], [yi + 0.22], "|", color=col, ms=8, mew=1.5, zorder=3)
+            ax.annotate(f"{v:.3f}" + ("  (beside)" if a in beside else ""), (v, yi), xytext=(0, -14),
+                        textcoords="offset points", ha="center", fontsize=7.5, color=INK_2, bbox=dict(fc=SURFACE, ec="none", pad=0.5))
+        ax.axvline(thr, color=INK_2, lw=1.2, ls=(0, (4, 3)), zorder=1)
+        ax.axvline(ref, color=MUTED, lw=1.2, zorder=1)
+        ax.annotate(thr_lab, (thr, len(rows) - 0.45), xytext=(4, 0), textcoords="offset points", fontsize=7.5,
+                    color=INK_2, ha="left", bbox=dict(fc=SURFACE, ec="none", pad=0.5))
+        ax.text(ref, -0.75, f"X1 ref {ref:.3f}", fontsize=7.5, color=MUTED, ha="center", bbox=dict(fc=SURFACE, ec="none", pad=0.5))
+        ax.set_yticks(yy, [lab for _, lab, _ in rows] if ax is axes[0] else [""] * len(rows), fontsize=8.5)
+        ax.set_ylim(-1.0, len(rows) - 0.2)
+        ax.grid(axis="y", visible=False)
+        ax.set_title(title, fontsize=9.5)
+    ax = axes[3]
+    srows = [("Y3 lean stratified", "Y3 lean (strat)", AQUA), ("Y4 80/20", "Y4 80/20", YELLOW)]
+    yy = np.arange(len(srows))[::-1]
+    for yi, (a, _lab, col) in zip(yy, srows, strict=True):
+        v, lo, hi = interval(a, "f1", strat=True)
+        ax.plot([lo, hi], [yi, yi], color=col, lw=2, solid_capstyle="round", zorder=2)
+        ax.plot([v], [yi], "o", color=col, ms=9, mec=SURFACE, mew=2, zorder=3)
+        ax.annotate(f"{v:.3f}", (v, yi), xytext=(0, -14), textcoords="offset points", ha="center", fontsize=7.5,
+                    color=INK_2)
+    ax.axvline(0.7090, color=INK_2, lw=1.2, ls=(0, (4, 3)))
+    ax.axvline(0.726984 + 0.03, color=INK_2, lw=1.2, ls=(0, (1, 2)))
+    ax.axvline(0.726984, color=MUTED, lw=1.2)
+    ax.annotate("≥ 0.709 (H21b)", (0.7090, 1.75), xytext=(4, 0), textcoords="offset points", fontsize=7.5,
+                color=INK_2, ha="left", bbox=dict(fc=SURFACE, ec="none", pad=0.5))
+    ax.annotate("≤ 0.757\n(H15)", (0.757, 1.55), xytext=(-4, 0), textcoords="offset points", fontsize=7.5,
+                color=INK_2, ha="right", bbox=dict(fc=SURFACE, ec="none", pad=0.5))
+    ax.text(0.726984, -0.75, "X1 ref 0.727", fontsize=7.5, color=MUTED, ha="center", bbox=dict(fc=SURFACE, ec="none", pad=0.5))
+    ax.set_yticks(yy, [lab for _, lab, _ in srows], fontsize=8.5)
+    ax.set_ylim(-1.0, 2.1)
+    ax.grid(axis="y", visible=False)
+    ax.set_title("stratified macro-F1 (one run)", fontsize=9.5)
+    fig.suptitle("S13 screen (seed 0): Y3 passes every bar it faces; Y1 keeps F1 but not robustness; Y2 moves nothing",
+                 x=0.01, ha="left", fontsize=11, fontweight="bold", y=1.04)
+    _save(fig, s, "s14_screen.png", "evidence/S14_screen_reading/{arm_summary.csv, hypotheses.json} — dot = mean of "
+          "seed-0 cells, ticks = folds, bar = kernel bootstrap combined with X1 seed sd (95 %); dashed = frozen threshold")
+
+    # 2 · The same/cross-session plane: regime moves single pathways along the frontier; Y3 moves off it.
+    c12 = pd.read_csv(EVIDENCE / "S12_frozen_arms_reading" / "cells.csv")
+    c14 = pd.read_csv(ev / "cells.csv")
+    fig, ax = plt.subplots(figsize=(8.6, 5.4))
+    x1 = c12[(c12.arm == "X1") & (c12.variant == "grouped")]
+    groups = [("X1 joint (R1, 6 runs)", x1, BLUE),
+              ("Y3 lean (R1)", c14[c14.variant == "lean_grouped"], AQUA),
+              ("Y2 MixStyle (R1)", c14[c14.variant == "mixstyle"], ORANGE),
+              ("Y1 fused, calib w (R1)", c14[c14.variant == "fused"], YELLOW)]
+    for lab, g, col in groups:
+        ax.scatter(g.same_recall_tta, g.cross_recall_tta, s=24, color=col, alpha=0.55, edgecolor="none", zorder=3)
+        mx, my = g.same_recall_tta.mean(), g.cross_recall_tta.mean()
+        ax.scatter([mx], [my], s=100, color=col, edgecolor=SURFACE, lw=2, zorder=4, label=lab)
+        ax.annotate(lab.split(" (")[0], (mx, my), xytext={"Y1 fused, calib w (R1)": (8, -10),
+                                                         "Y2 MixStyle (R1)": (-78, -4)}.get(lab, (8, 4)),
+                    textcoords="offset points", fontsize=8.5, color=INK_2)
+    for pw, lab in (("spectral_only", "spectral-only"), ("spatial_only", "spatial-only")):
+        a = c12[(c12.arm == "X2") & (c12.variant == pw) & c12.f1_tta.notna()]
+        b = c14[c14.variant == pw]
+        p0 = (a.same_recall_tta.mean(), a.cross_recall_tta.mean())
+        p1 = (b.same_recall_tta.mean(), b.cross_recall_tta.mean())
+        ax.scatter(*p0, s=70, facecolor="none", edgecolor=MUTED, lw=1.6, zorder=3)
+        ax.scatter(*p1, s=70, color=MUTED, edgecolor=SURFACE, lw=1.5, zorder=3)
+        ax.annotate("", p1, p0, arrowprops=dict(arrowstyle="-|>", color=MUTED, lw=1.2, shrinkA=6, shrinkB=6))
+        ax.annotate(f"{lab}: shipped to R1", p1, xytext=(8, -12), textcoords="offset points", fontsize=8,
+                    color=INK_2)
+    ax.scatter([], [], s=60, facecolor="none", edgecolor=MUTED, lw=1.6, label="single pathway, shipped (X2)")
+    ax.scatter([], [], s=60, color=MUTED, label="single pathway, R1 (Y1)")
+    ax.set_xlabel("same-session macro-recall (73 varieties, held-out bundle, TTA)")
+    ax.set_ylabel("cross-session macro-recall (17 varieties, TTA)")
+    ax.set_xlim(0.45, 0.72)
+    ax.set_ylim(0.07, 0.24)
+    ax.legend(loc="upper right", fontsize=7.5)
+    ax.set_title("Fitting more slides single pathways along the frontier; the lean network moves up and right",
+                 fontsize=10)
+    _save(fig, s, "s14_frontier.png", "evidence/S14_screen_reading/cells.csv, evidence/S12_frozen_arms_reading/"
+          "cells.csv (grouped; small dots = runs, large = mean; X2 spatial-only f1 s0 unscored)")
+
+    # 3 · The fusion weight: calib picks the session-carrying pathway.
+    g = pd.read_csv(ev / "fusion_grid.csv").groupby("w_spectral")[["calib_f1", "heldout_f1", "heldout_cross"]].mean()
+    fig, axes = plt.subplots(1, 3, figsize=(12.6, 3.3))
+    for ax, (k, title, thr, ref) in zip(axes, (
+            ("calib_f1", "calib macro-F1 (what chooses w)", None, None),
+            ("heldout_f1", "held-out macro-F1 (diagnostic)", 0.5108, 0.530786),
+            ("heldout_cross", "held-out cross-session recall (diagnostic)", 0.1666, 0.146637)), strict=True):
+        ax.plot(g.index, g[k], color=BLUE, lw=2)
+        ax.axvline(0.30, color=INK_2, lw=1.2, ls=(0, (4, 3)))
+        ax.axvline(0.48, color=MUTED, lw=1.2, ls=(0, (1, 2)))
+        if thr is not None:
+            ax.axhline(thr, color=INK_2, lw=1, ls=(0, (2, 2)))
+            ax.axhline(ref, color=MUTED, lw=1)
+            ax.text(0.01, thr, " frozen threshold", fontsize=7, color=INK_2, va="bottom")
+            ax.text(0.01, ref, " X1 ref", fontsize=7, color=MUTED, va="bottom")
+        ax.set_xlabel("w on the spectral network (1 − w on the spatial)")
+        ax.set_title(title, fontsize=9.5)
+    axes[0].text(0.31, axes[0].get_ylim()[0] + 0.01, "R1 calib choice 0.30", fontsize=7.5, color=INK_2, bbox=dict(fc=SURFACE, ec="none", pad=0.5))
+    axes[0].text(0.49, axes[0].get_ylim()[0] + 0.04, "shipped-regime\ncalib choice ≈ 0.48", fontsize=7.5, color=MUTED)
+    fig.suptitle("Calib rewards the session-carrying spatial network; only a spectral-heavy weight calib cannot find "
+                 "reaches 0.167 cross-session recall", x=0.01, ha="left", fontsize=11, fontweight="bold", y=1.05)
+    _save(fig, s, "s14_fusion_weight.png", "evidence/S14_screen_reading/fusion_grid.csv (Y1, grouped, mean of f0/f1, "
+          "TTA). Held-out curves are post hoc and chose nothing")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--figures", action="store_true", help="skip the evidence snapshot")
@@ -1023,7 +1154,7 @@ def main() -> None:
     if not a.figures:
         snapshot_evidence()
     print("figures:")
-    for f in (fig_s01, fig_s04, fig_s05, fig_s06, fig_s07, fig_s09, fig_s10, fig_s12):
+    for f in (fig_s01, fig_s04, fig_s05, fig_s06, fig_s07, fig_s09, fig_s10, fig_s12, fig_s14):
         f()
 
 

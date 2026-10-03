@@ -1,0 +1,80 @@
+{
+ "frozen_at": "2026-10-03",
+ "study": "S14 (reading of the S13 single-seed screen) → S15 (replication of the one arm that passed, Y3, and its dissection)",
+ "repo_commit": "aed5257 (the S13 code every S13 cell ran on). The S14 analysis, its evidence and this file are uncommitted when it is frozen. S15 needs a runner change only (per-cell seeds; see implementation) — no model or training code.",
+ "depends_on": {
+  "S12": {"file": "evidence/S12_frozen_arms_reading/preregistration_s12.json", "sha256": "88b377c5bc32f31a9ccb95356a88eb0be35e8cb51216b035c88f1761919ae7f4",
+          "role": "parent design of Y1–Y4: regime R1, the reference, H21a/H21b and their decision rule are taken from it unchanged"},
+  "S13": {"file": "evidence/S13_representation_screening/preregistration_s13.json", "sha256": "ef5982131df48c2ba8105c751fcf21f527a01ea2c0addf4ad59380f1a0989460",
+          "role": "the single-seed amendment (D28). Its 'replication' clause is executed here for the one arm whose verdict was 'pass' (Y3)"}
+ },
+ "motivating_evidence": "S14 findings F73–F81 (evidence/S14_screen_reading/). Every S13 held-out row was scored once by its own cell's final evaluation (Y1's fused cells with a calib-chosen weight) and aggregated in S14; nothing was tuned on it. Y3 passed H21a/H21b and, beyond its frozen hypotheses, scored above every X1 run in all three of its cells (F74). The new hypotheses H21c–H21e and the dissection H22a/H22b are MOTIVATED BY THOSE SEED-0 RESULTS; to limit the winner's curse, H21c–H21e are read on the fresh seeds (1, 2) only — the seed-0 cells that motivated them do not enter them. H21a/H21b are the parent's and are read on seeds 0–2 exactly as the parent froze them.",
+ "regime": {
+  "name": "R1 (unchanged; read from preregistration_s12.json → regime.overrides)",
+  "overrides": "single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0 single.epochs=200 single.patience=40"
+ },
+ "reference": {
+  "parent": "preregistration_s12.json → reference (X1, commit 413a11e): grouped 0.530786 (sd 0.009933), same 0.648493, cross 0.146637 (sd 0.009823), attraction 0.463958 (sd 0.020362), stratified 0.726984 (sd 0.005806); margins 2·max(sd, 0.009)",
+  "fresh_seed_reference": "X1 cells at the same folds and seeds as the fresh Y3 cells (evidence/S12_frozen_arms_reading/cells.csv): grouped seeds 1–2, folds 0–1 (4 runs) F1 0.528496, cross 0.145363, attraction 0.467445; stratified seeds 1–2 (2 runs) F1 0.728593",
+  "dissection_reference": "X1 grouped seed 0 (f0 0.535325, f1 0.535409) and Y3 grouped seed 0 (f0 0.564614, f1 0.558945); evidence/S14_screen_reading/cells.csv"
+ },
+ "metric": "as the parent: macro-F1 on val ∪ test, TTA, mean over runs (no-TTA beside); same/cross-session macro-recall and cross-session attraction from reporting/session.py; checkpoint chosen on calib only; every held-out kernel scored once. Differences of means carry a hierarchical bootstrap CI (2,000 resamples: runs within fold, held-out kernels within fold shared by both arms), as S12 hypotheses.py.",
+ "arms": {
+  "Y3_replication": {
+   "change": "None. The S13 arm Y3 exactly (model.spectral_descriptor=snv_morph model.spatial_tail_strides=[2,2,2,1] model.cbam_min_hw=3, R1) at seeds 1 and 2.",
+   "runs": "grouped folds 0,1 × seeds 1,2 (4) + stratified seeds 1,2 (2) = 6 runs; with S13's seed-0 cells the parent's 9-run design"
+  },
+  "Y5_dissection": {
+   "change": "Y3's three removals split in two, each alone on the shipped architecture, R1: Y5 desc_only = model.spectral_descriptor=snv_morph (tail [2,2,2,2], every CBAM); Y5 spatial_repair = model.spatial_tail_strides=[2,2,2,1] model.cbam_min_hw=3 (full descriptor). The CBAM removal goes with the tail because both concern the 2 × 2 map (S10 B8, F48); cbam_min_hw=3 removes the same gate under either tail.",
+   "runs": "grouped folds 0,1 × seed 0 = 4 runs (a screen, D28 semantics), seed-matched to X1 s0 and Y3 s0"
+  }
+ },
+ "hypotheses": {
+  "H21a": "(parent, unchanged) Y3 grouped macro-F1, mean of 6 runs (folds 0,1 × seeds 0,1,2) ≥ 0.5108",
+  "H21b": "(parent, unchanged) Y3 stratified macro-F1, mean of 3 runs (seeds 0,1,2) ≥ 0.7090",
+  "H21c": "Superiority on fresh seeds: Y3 grouped mean (seeds 1,2; 4 runs) − X1 grouped mean (same folds/seeds; 0.528496) ≥ +0.020 AND the hierarchical bootstrap 95 % CI of the difference excludes 0",
+  "H21d": "Session robustness on fresh seeds: Y3 grouped (seeds 1,2) cross-session recall mean ≥ 0.1666 AND cross-session attraction mean ≤ 0.4240 (the H19b/H20 bars)",
+  "H21e": "Within-acquisition superiority on fresh seeds: Y3 stratified mean (seeds 1,2) − X1 stratified mean (seeds 1,2; 0.728593) ≥ +0.018",
+  "H22a": "Dissection (screen): Y5 desc_only grouped mean (seed 0, 2 runs) ≥ 0.530786 + 0.020 = 0.5508",
+  "H22b": "Dissection (screen): Y5 spatial_repair grouped mean (seed 0, 2 runs) ≥ 0.5508"
+ },
+ "decision_rule": {
+  "H21a and H21b": "the parent's adopt applies: the lean architecture becomes the reference form (SeedNet v5) and the base of every later arm; the config defaults switch to R1 + the lean keys behind G-neutral (D24, D29 deviation 1 closed); the paper drops the index-bank/continuum/derivative claims",
+  "not (H21a and H21b)": "S13's Y3 verdict was a false screening pass: X1's architecture stays the reference; F74 is marked challenged",
+  "H21c": "the paper may claim the lean network raises grouped macro-F1 over X1 (gate G3 met on fresh seeds); ¬H21c → 'non-inferior; gain not confirmed'",
+  "H21d": "the paper may claim the lean network raises cross-session recall and lowers attraction; ¬H21d → 'robustness gain not confirmed'",
+  "H21e": "the within-acquisition gain is confirmed; ¬H21e → not claimed",
+  "H22a xor H22b": "the passing component carries Y3's gain; the paper attributes it to that component and describes the other as housekeeping",
+  "H22a and H22b": "either removal alone suffices (non-additive); both are kept, attribution reported as redundant",
+  "neither H22": "the gain needs both changes (interaction) or Y3 seed 0 was favourable; attribution undetermined — read together with H21c",
+  "reading order": "H22a/H22b are read as attribution only if H21a and H21b hold; otherwise they are reported descriptively. A dissection pass is a screening verdict (D28) and is not replicated unless a later frozen file needs it",
+  "combination": "nothing else is combined with Y3 in this round; Y1 and Y2 were screening rejections (S14) and are not replicated"
+ },
+ "guards": [
+  "The parent's guards, unchanged (dirty / commit; clip fraction > 0.01 outside epoch 1 and overflow epochs reported; stop epoch < 160 reported)",
+  "Code identity: the S15 commit may change only the runner. `git diff aed5257 <S15 commit> -- src/spectralquadnet/models src/spectralquadnet/engine src/spectralquadnet/data src/spectralquadnet/config` must be empty, or G-neutral must pass for the default AND the Y3 keys against aed5257 before any cell runs",
+  "Same runtime as S11/S13 (Kaggle T4 × 2, torch 2.10.0+cu128); a different environment is reported, and its cells are compared with X1 only through the seed-0 Y3 cells re-run there"
+ ],
+ "cells": {
+  "base_overrides": "runtime=kaggle_t4x2 tracking=console_jsonl (as S11/S13; torchrun, one directory per cell)",
+  "output_root": "outputs/experiments_u430k32/s15/<arm>/<variant>__f<fold>_s<seed>/",
+  "gpu": [
+   {"cell": "Y3/lean_grouped__f0_s1", "data": "ablation/u430k32_grouped", "fold": 0, "seed": 1, "arm_overrides": "model.spectral_descriptor=snv_morph model.spatial_tail_strides=[2,2,2,1] model.cbam_min_hw=3"},
+   {"cell": "Y3/lean_grouped__f0_s2", "data": "ablation/u430k32_grouped", "fold": 0, "seed": 2, "arm_overrides": "model.spectral_descriptor=snv_morph model.spatial_tail_strides=[2,2,2,1] model.cbam_min_hw=3"},
+   {"cell": "Y3/lean_grouped__f1_s1", "data": "ablation/u430k32_grouped", "fold": 1, "seed": 1, "arm_overrides": "model.spectral_descriptor=snv_morph model.spatial_tail_strides=[2,2,2,1] model.cbam_min_hw=3"},
+   {"cell": "Y3/lean_grouped__f1_s2", "data": "ablation/u430k32_grouped", "fold": 1, "seed": 2, "arm_overrides": "model.spectral_descriptor=snv_morph model.spatial_tail_strides=[2,2,2,1] model.cbam_min_hw=3"},
+   {"cell": "Y3/lean_stratified__f0_s1", "data": "ablation/u430k32_stratified", "fold": 0, "seed": 1, "arm_overrides": "model.spectral_descriptor=snv_morph model.spatial_tail_strides=[2,2,2,1] model.cbam_min_hw=3"},
+   {"cell": "Y3/lean_stratified__f0_s2", "data": "ablation/u430k32_stratified", "fold": 0, "seed": 2, "arm_overrides": "model.spectral_descriptor=snv_morph model.spatial_tail_strides=[2,2,2,1] model.cbam_min_hw=3"},
+   {"cell": "Y5/desc_only__f0_s0", "data": "ablation/u430k32_grouped", "fold": 0, "seed": 0, "arm_overrides": "model.spectral_descriptor=snv_morph"},
+   {"cell": "Y5/desc_only__f1_s0", "data": "ablation/u430k32_grouped", "fold": 1, "seed": 0, "arm_overrides": "model.spectral_descriptor=snv_morph"},
+   {"cell": "Y5/spatial_repair__f0_s0", "data": "ablation/u430k32_grouped", "fold": 0, "seed": 0, "arm_overrides": "model.spatial_tail_strides=[2,2,2,1] model.cbam_min_hw=3"},
+   {"cell": "Y5/spatial_repair__f1_s0", "data": "ablation/u430k32_grouped", "fold": 1, "seed": 0, "arm_overrides": "model.spatial_tail_strides=[2,2,2,1] model.cbam_min_hw=3"}
+  ],
+  "optional": "P0.3 re-score of X2/spatial_only__f1_s0 if the S11 notebook output is attached (decides nothing; S13 §8)",
+  "run_count": {"gpu_training_runs": 10},
+  "runtime_estimate": "from the S13 cells' own wall clock on the same runtime (evidence/S14_screen_reading/cells.csv → wall_min): Y3 grouped 25.3 min × 4, Y3 stratified 31.7 × 2, desc_only ≈ X1 grouped 25.7 × 2, spatial_repair ≈ Y3 grouped 25.3 × 2 → ≈ 267 min ≈ 4.4 h (≤ 4.8 h if every cell runs 200 epochs); one Kaggle session"
+ },
+ "implementation": "No model, data or training code. The S13 runner reads one seed for every cell (deviation.seed); S15 needs each cell's own seed (cells.gpu[*].seed) and this file's hash registered — a runner-only change (e.g. experiments/s15.py reusing experiments/s13.py's cell builder), verified by --check/--cfg-job as in S13.",
+ "not_in_this_round": "Y1/Y2 replication (screening rejections); the lean 80/20 tier (FW-37, after H21a ∧ H21b); X6 level block (D25); the CPU-first track FW-27/FW-28/FW-29 (each needs its own frozen file); RGB morphology FW-18 (needs the raw archive).",
+ "heldout_use": "Each cell is scored once on val ∪ test. No arm, epoch, threshold or hyperparameter is chosen by a held-out score. S14's post-hoc diagnostics (e.g. the held-out fusion-weight grid) chose nothing and feed nothing here."
+}

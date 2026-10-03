@@ -20,7 +20,7 @@ rule or an earlier plan said, the entry says so under *Deviation*.
 | D02 | Fit and select on a calibration split carved from train; score `val ∪ test` once | 2026-08-13 | F04, F21 | active |
 | D03 | Report mean ± range over 2 folds × 3 seeds with bootstrap CIs; never a maximum | 2026-08-13 | F04 | active |
 | D04 | The default input is the full acquired cube — no band selection on the primary path | 2026-08-14 | F03, F12 | active — **under review** (F17) |
-| D05 | SpectralSeedNet (two pathways, 3.0 M) replaces SpectralQuadNet (four branches, 5.2 M) as primary | 2026-08-13 | F06, F07 | active — A3 not yet run; S10: 11.5 % of params untrainable (F48), spectral blocks inert (F49); **S12: the spatial pathway adds +0.10 and is the session channel (F64); joint fusion ≈ late fusion (F65); lean version frozen as Y3** |
+| D05 | SpectralSeedNet (two pathways, 3.0 M) replaces SpectralQuadNet (four branches, 5.2 M) as primary | 2026-08-13 | F06, F07 | active — A3 not yet run; S10: 11.5 % of params untrainable (F48), spectral blocks inert (F49); **S12: the spatial pathway adds +0.10 and is the session channel (F64); joint fusion ≈ late fusion (F65); lean version frozen as Y3**; **S14: the lean version passes its screen (+0.026 grouped, F74) — replication frozen (S15); joint fusion stays (F76)** |
 | D06 | One training stage replaces three | 2026-08-13 | F05 | active — **under review** (F35, F47: the margin is met by 0–52 % of training kernels at < 4 % of the LR); **S12: margin removed with R1 (D24)** |
 | D07 | Objective & optimiser fixes: one aux head at fixed 0.2, GradNorm off, clip 5.0, K = 1, AMP kept on, TF32 off | 2026-08-13 | F07, F08 | active — **under review** (F36, F53); **not executed as written: aux weight was 0.65 → 0.25, not 0.2 (F54)** |
 | D08 | Band studies select inside the fold, decide on calib, include null methods and the full budget | 2026-08-13 | F03, F11 | active |
@@ -39,12 +39,16 @@ rule or an earlier plan said, the entry says so under *Deviation*.
 | D21 | Interpretation guards on S09's frozen plan (file unchanged): H13's baseline is 0.90/0.91 under its own definition; an X1 gain is credited to mixup/margin/epochs, not the clip; the aux schedule stays `legacy` for X1/X2 | 2026-10-01 | F45, F53, F54 | active — guard 3 enforced by the code default and a test (S11) |
 | D22 | S10's P0 implemented as specified except: the model-declared clip partition is opt-in (`clip_partition=legacy` default); the frozen commands run under `torchrun` with one output directory per cell; X5/X6 not implemented (D19) | 2026-10-01 | F57, F58, S10 §6, §9 | active; **S12: reversal trigger fired literally (clip 50 bound on ≤ 18 group-steps per run, F71c) — X1/X4 read as legacy-partition results, effect negligible** |
 | D23 | Route A, per the frozen S09 rule (H12a rejected, H14b rejected): no further capacity or regime work; next = representation (session-robust, sample-efficient) and data/protocol | 2026-10-02 | F59–F67 | active |
-| D24 | R1 (= X1: mixup 30 epochs, margin 0, clip 50, 200 epochs, patience 40) is the reference regime for new arms; credited with parsimony and lower variance, not with a gain | 2026-10-02 | F59, F60, F47 | active — **S13: R1 carried explicitly by every cell; the config-default switch is deferred (D29)** |
+| D24 | R1 (= X1: mixup 30 epochs, margin 0, clip 50, 200 epochs, patience 40) is the reference regime for new arms; credited with parsimony and lower variance, not with a gain | 2026-10-02 | F59, F60, F47 | **active — under review** (S14, D31): its trigger fired on the cross-session axis (fusion vs joint flips between regimes, F77/F78); F1 ranks unchanged; R1 stays the reference. S13: config-default switch deferred (D29) |
 | D25 | X5 and X6 are not run as standalone frozen arms: X5's correctness change joins the lean arm (Y3); X6 is deferred (linear proxy shows the H18a ∧ ¬H18b pattern) | 2026-10-02 | F61, F70 | active — **deviation recorded** |
-| D26 | Every run reports a training-rows session κ (embedding and each pathway output) beside the held-out session metrics; it may guard a design choice, never replace held-out confirmation | 2026-10-02 | F69 | active — **implemented in S13** (`evaluation.session_probe`) |
-| D27 | Before the next Kaggle session: fix the final-epoch checkpoint race, ignore the dataset symlink in the dirty flag, re-score the unscored X2 cell; the next GPU round is S13, frozen in `preregistration_s12.json` | 2026-10-02 | F71 | **implemented in S13** (F72); the X2 re-score runs in the S13 Kaggle session |
-| D28 | S13 runs as a **single-seed screen**: seeds 3 → 1 (seed 0), every arm, control, protocol contrast and grouped fold kept; recorded as a hashed amendment (`preregistration_s13.json`); outcomes are screening verdicts and passing arms are replicated at seeds 1–2 before any claim | 2026-10-02 | F60, S12 §9 | active — **deviation recorded** (PI-approved, before any S13 run) |
+| D26 | Every run reports a training-rows session κ (embedding and each pathway output) beside the held-out session metrics; it may guard a design choice, never replace held-out confirmation | 2026-10-02 | F69 | active — **implemented in S13** (`evaluation.session_probe`); **S14 (D32): reported only — no ranking power among spatial-pathway networks (F81)** |
+| D27 | Before the next Kaggle session: fix the final-epoch checkpoint race, ignore the dataset symlink in the dirty flag, re-score the unscored X2 cell; the next GPU round is S13, frozen in `preregistration_s12.json` | 2026-10-02 | F71 | **implemented in S13** (F72) except the X2 re-score — **not run** (S11 output not attached; decides nothing; F73) |
+| D28 | S13 runs as a **single-seed screen**: seeds 3 → 1 (seed 0), every arm, control, protocol contrast and grouped fold kept; recorded as a hashed amendment (`preregistration_s13.json`); outcomes are screening verdicts and passing arms are replicated at seeds 1–2 before any claim | 2026-10-02 | F60, S12 §9 | active — **deviation recorded** (PI-approved, before any S13 run); **S14: read — 1 pass (Y3), 2 rejections (Y1, Y2), H15 supported; no fold straddled a threshold** |
 | D29 | P0 and the S13 arms as implemented: atomic checkpoint writes + end-of-stage barriers, `dataset_*`, late-fusion scorer, κ default-on, Y2/Y3 behind default-off keys (G-neutral); D24's default switch deferred | 2026-10-02 | F72 | active — **deviation recorded** |
+| D30 | The S13 screen read as frozen: Y3 passes → replicated (S15) and the provisional base of later *screening* arms only; Y1 and Y2 are screening rejections (not replicated); the joint network stays; Y4's 0.728 is the provisional tier-1 number for the X1 architecture | 2026-10-03 | F74–F80 | active |
+| D31 | D24's trigger fired on the cross-session axis only; R1 stays the reference regime; every session-robustness claim names its regime | 2026-10-03 | F77, F78 | active |
+| D32 | The training-rows κ is reported, never used to select among networks that share the spatial pathway; it guards only against large moves (≥ 0.1) | 2026-10-03 | F81 | active |
+| D33 | S15 frozen (`preregistration_s14.json`, `9e182670…`): Y3 at seeds 1–2 (H21a/b as parent; H21c–e on fresh seeds) + a 4-run dissection (Y5, H22a/b); runner-only code change; one Kaggle session | 2026-10-03 | F74, F75 | active |
 
 ---
 
@@ -343,6 +347,8 @@ measured benefit); a 150-epoch R1 (untested).
 **Reverse if** an S13 arm run under both regimes ranks differently under them.
 **S13 note (D29).** The S13 cells carry R1 explicitly, read from the frozen file; the config default itself is not yet
 switched (D29 deviation 1).
+**S14 note (D31).** The trigger fired on the cross-session axis (fusion vs joint reverses between regimes; F77, F78), not
+on F1. Status: active — under review.
 
 ### D25 · X5 and X6 are not run as standalone arms (S12) — deviation recorded
 **Context.** S10 froze X5 (tail stride 1, H17) and X6 (log-reflectance level block, H18a/b) to run after X1. X4 showed
@@ -363,6 +369,8 @@ with the spatial pathway (ρ 0.23).
 guard a design choice made on calib (e.g. "the candidate must not raise κ by > 0.05"); it never replaces a held-out
 confirmation and never selects among close networks.
 **Reverse if** a run's κ and its held-out attraction disagree in direction against the reference by more than their noise.
+**S14 note (D32).** Not fired: Y3 f0 moved κ +0.036 and attraction −0.025, each within its noise (κ seed noise 0.049). But κ
+has no ranking power among spatial-pathway networks (F81) — it is reported, not used to select.
 
 ### D27 · Infrastructure before the next Kaggle session (S12)
 **Context.** F71: a final-epoch best checkpoint races the reload (one X2 cell unscored); `dirty` is true on every Kaggle
@@ -417,3 +425,51 @@ the shipped regime from the defaults, including the P0 re-score) and void G-neut
 checkpoints the same way.
 **Reverse if** a later study needs `python train.py` to run R1 by default — switch it then, with S11's X2 cells given
 explicit shipped overrides and G-neutral re-run on the R1 regime.
+
+### D30 · The S13 screen, read as frozen (S14)
+**Context.** S13 ran all 10 GPU cells and 2 fused cells at seed 0 (F73). Verdicts: H19a supported, H19b rejected,
+H20 rejected, H21a and H21b supported, H15 supported — every verdict *clear* against its screen interval except H20's
+same-session half, which does not decide it; no arm's folds straddle a threshold (D28's reversal check).
+**Decision.** As the frozen rules and D28 say: **Y3 passes the screen** — it is replicated (D33) and may be the base of
+later *screening* arms, but is not SeedNet v5, the config default or a paper claim until H21a/H21b hold on 3 seeds.
+**Y1** (H19a ∧ ¬H19b) → no adoption, the joint network stays, "decoupling does not buy session robustness under R1".
+**Y2** (H20 rejected, not a frontier move) → "instance statistics are not separable into session and variety here".
+Neither rejection is replicated. **Y4** (H15 supported) → 0.728 is the provisional within-acquisition tier for the X1
+architecture; the paper's tier-1 row waits for the reference architecture (FW-37).
+**Alternatives rejected.** Adopting Y3 now on its seed-0 strength (D28 forbids it; one seed); replicating Y1 because
+H19a passed (the rule needs H19a ∧ H19b; F78 shows calib cannot find a passing weight).
+**Reverse if** S15's H21a or H21b fails → Y3's pass was false; X1's architecture stays.
+
+### D31 · D24 under review: the regime matters for the claim, not for the score (S14)
+**Context.** D24's trigger: "an S13 arm run under both regimes ranks differently under them". Y1's pathways were run
+under both (X2 shipped, Y1 R1). Fusion vs the joint network: F1 +0.006 (shipped) and +0.010 (R1) — same ranking;
+cross-session recall +0.018 (shipped) and −0.015 (R1) — reversed (F77, F78). Y3, the one arm that improved
+cross-session recall, did so under R1.
+**Decision.** R1 stays the reference regime for new arms (the primary metric ranks the same; changing regime mid-series
+would void every matched comparison). D24 becomes *active — under review*. A claim about session robustness names
+the regime it holds under; S12's F65 is challenged as regime-specific.
+**Alternatives rejected.** Reverting to the shipped regime (higher variance, no F1 benefit, and Y3's gain is an R1
+result); running every robustness arm under both regimes (doubles cost for a secondary axis).
+**Reverse if** an arm's *primary-metric* ranking against its reference differs between regimes.
+
+### D32 · The κ probe is a report, not a selector (S14)
+**Context.** F81: the in-pipeline κ is reproducible, but seed noise reaches 0.049 and among 16 spatial-pathway networks it
+does not rank held-out attraction (ρ 0.05); Y3 raised κ on fold 0 while lowering attraction.
+**Decision.** D26 stands as reporting. κ is never used to choose among networks that share the spatial pathway, and a
+guard built on it uses a threshold ≥ 0.1 (twice the seed noise) — enough to catch a spectral → spatial-scale move
+(Δκ ≈ 0.15), not the differences between S13 arms. FW-27's guard is restated accordingly.
+**Reverse if** a validation on ≥ 3 seeds per arm shows within-group ranking (ρ ≥ 0.6).
+
+### D33 · S15: replicate Y3 and dissect it, frozen (S14)
+**Context.** D28's replication clause for passing arms; F74's gain is larger than the frozen non-inferiority question asked,
+and F75 cannot attribute it.
+**Decision.** `evidence/S14_screen_reading/preregistration_s14.json` (SHA-256 `9e182670…`), frozen before any S15 cell
+or runner exists: Y3 at seeds 1–2 (grouped f0/f1, stratified; 6 runs) and Y5 = Y3's changes split in two
+(`desc_only`, `spatial_repair`; grouped f0/f1 at seed 0; 4 runs) — 10 runs ≈ 4.4 h. H21a/H21b are read on seeds 0–2 as the
+parent froze them; the new superiority/robustness hypotheses H21c–H21e are read on the **fresh seeds only** (the seed-0
+cells motivated them); H22a/H22b attribute the gain only if H21a ∧ H21b. Code: a runner with per-cell seeds; model,
+engine, data and config code must be identical to `aed5257` (or G-neutral re-run).
+**Alternatives rejected.** Replication alone (the paper would claim a lean network without knowing what makes it better);
+dissection at 3 seeds (the attribution question is coarse — ≈ 0.026 to split — and a screen answers "roughly which");
+adding the lean 80/20 tier now (it is wasted if Y3 fails).
+**Reverse if** — not applicable (a design; its outcomes are read in S16).

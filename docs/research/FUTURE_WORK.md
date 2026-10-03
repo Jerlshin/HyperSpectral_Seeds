@@ -10,49 +10,41 @@ ID and leave the row in place.
 
 ---
 
-## Priority 0 — S13: route-A representation arms → **[S13](studies/S13_representation_screening/README.md), single-seed screen (D28)**
+## Priority 0 — S15: replicate the one arm that passed (Y3) and dissect it → frozen in [S14](studies/S14_screen_reading/README.md) (D33)
 
-S12 found the bottleneck has moved from optimisation to representation under acquisition shift (D23): the network fits
-everything, generalises within an acquisition no better than before, and its 3-D pathway is the session channel.
-Frozen in `evidence/S12_frozen_arms_reading/preregistration_s12.json` (30 runs); **amended before any run** to one seed
-(seed 0): `evidence/S13_representation_screening/preregistration_s13.json`. Reference = X1 (R1). **10 GPU runs ≈ 4.4 h
-on Kaggle T4 × 2 (one session)**: `python scripts/run_s13.py --nproc-per-node 2 --stream` (S13 §8). Code implemented and
-validated (S13 part 1); not yet run.
+S13's single-seed screen (read in S14): the lean network Y3 passed and beat every X1 run (F74, F75); decoupled fusion (Y1)
+and masked MixStyle (Y2) are screening rejections (F76–F79); the 80/20 tier equals 70/30 (F80). Frozen in
+`evidence/S14_screen_reading/preregistration_s14.json` (`9e182670…`). **10 GPU runs ≈ 4.4 h on Kaggle T4 × 2 (one
+session).** Needs a runner with per-cell seeds first (no model code; S14 §9.1).
 
-### FW-34 · P0 before the next Kaggle session (D27) — **done in S13** (F72)
-Barrier + atomic write of `best_stage1.pth` with a 2-rank best-epoch-is-last regression test (F71a); `.gitignore`
-`dataset_*` (F71b); a late-fusion scorer over two cells' logits (weight on calib); the training-rows session κ in the
-final report (D26). **Remaining:** re-score `X2/spatial_only__f1_s0` (rerun the S11 cell — the finished stage is detected
-and only the final evaluation runs) in the S13 Kaggle session; it decides nothing.
+### FW-35 · Replicate Y3 at seeds 1, 2 (H21a–H21e) — **frozen for S15**
+- **Builds on** D28, F74. Y3 grouped f0/f1 × seeds 1, 2 and stratified seeds 1, 2 (6 runs). H21a/H21b on seeds 0–2 as the
+  parent froze them; H21c (grouped superiority ≥ +0.020, CI excluding 0), H21d (cross ≥ 0.1666 and attraction ≤ 0.4240),
+  H21e (stratified superiority ≥ +0.018) on the fresh seeds only.
+- **If H21a ∧ H21b:** SeedNet v5 = the lean network; switch the config defaults to R1 + lean keys behind G-neutral (closes
+  D29 deviation 1); FW-37 next. **If not:** F74 was a false screening pass; X1 stays the reference. Y1/Y2/Y4 are not
+  replicated (D30).
 
-### FW-31 · Y1 — decoupled pathways + calib-weighted late fusion (H19a, H19b)
-- **Builds on** F64, F65; Wang et al. CVPR 2020, Du et al. ICML 2023 (uni-modal ensembles when paired features are few).
-- **Design.** `model.pathways=[spectral]` and `[spatial]` under R1, grouped 2 folds × seed 0 (4 runs, D28; frozen 2 × 3);
-  fuse log-probabilities with a weight chosen on calib (`experiments/fusion.py`). No model code.
-- **If H19a ∧ H19b:** the joint fusion is retired; every later arm is a pair of single-pathway networks.
+### FW-36 · Dissect Y3 (H22a, H22b) — **frozen for S15**
+- **Builds on** F75 (three removals at once; attribution unknown). `desc_only` (SNV + morph descriptor alone) and
+  `spatial_repair` (tail [2,2,2,1] + no CBAM on 2 × 2 alone), grouped f0/f1, seed 0 (4 runs, screen).
+- **Reading:** exactly one passes (≥ 0.5508) → that change carries the gain; both → either suffices; neither → interaction or
+  a favourable seed 0. Read as attribution only if H21a ∧ H21b.
 
-### FW-32 · Y2 — masked MixStyle in the 3-D stem (H20)
-- **Builds on** F67–F69; Zhou et al. ICLR 2021, Li et al. ICLR 2022. Foreground-masked instance statistics per (channel,
-  spectral slice), stem blocks 1–2, p 0.5, Beta(0.1, 0.1), training only; key `model.spatial_mixstyle` (default off).
-  Grouped 2 folds × seed 0 (2 runs, D28). Implemented (S13).
-- **If H20 holds:** the session in early feature statistics is separable from variety; adopt. **If only cross-session
-  rises:** a frontier move, reported as such.
+### FW-37 · The paper's within-acquisition tier on the reference architecture
+- **Builds on** F80 (80/20 = 70/30 for X1, one seed). After S15: 80/20 with the lean network, seeds 0–2, under its own
+  frozen file — the D16 tier-1 row. Not before Y3 is confirmed (wasted otherwise).
 
-### FW-33 · Y3 — lean architecture (H21a, H21b)
-- **Builds on** F48, F49, F66. Descriptor = SNV + morph; tail strides [2,2,2,1]; no CBAM on ≤ 2 × 2 maps. Grouped 2 folds +
-  stratified, seed 0 (3 runs, D28; frozen 2 × 3 + 3). Non-inferiority; if it passes the screen and its replication
-  (FW-35), SeedNet v5 is the base of every later arm. Implemented (S13).
+### FW-34 · P0 before the S13 session (D27) — **done in S13** (F72) except the X2 re-score
+The re-score of `X2/spatial_only__f1_s0` was skipped (S11 output not attached; F73). It decides nothing; its training-rows
+κ is computed in S14. Optional in the S15 session (attach the S11 notebook output).
 
-### FW-35 · Replicate every S13 arm that passes its screen (seeds 1, 2)
-- **Builds on** D28: S13's verdicts are single-seed screens (margins ≈ 2.9 SE; gate G3 unmet).
-- **Design.** For each arm whose screening verdict is *pass*, the same cells at seeds 1 and 2 — same overrides, code
-  path and thresholds — under a new frozen file naming `preregistration_s13.json` and the S13 results that motivated it;
-  read on the 3-seed means exactly as `preregistration_s12.json` frozen them. Cost per arm: 2× its S13 runs
-  (Y1 8, Y2 4, Y3 6, Y4 2; ≈ 0.9 h per 2 grouped runs). `experiments/s13.py` builds cells from a hashed file in the
-  amendment's format (`cells.gpu`, `deviation.seed`), so a replication file in that format needs only its hash
-  registered there.
-- **If replicated:** the parent's *adopt* applies (reference form / SeedNet v5). **If not:** the screen was a false
-  pass; record it and keep the S12 reference.
+### Read in S14 (screening rejections — not replicated, D30)
+- **FW-31 · Y1 decoupled pathways + calib-weighted fusion** — H19a supported, H19b rejected (F76). The robustness S12 saw
+  came from under-fitted single pathways (F77), and calib-chosen weights favour the session-carrying pathway (F78).
+- **FW-32 · Y2 masked MixStyle** — H20 rejected; the spatial pathway gets weaker without losing its session (F79).
+- **FW-33 · Y3 lean architecture** — **passes** (F74, F75) → FW-35, FW-36.
+- **FW-17 · X3/Y4 80/20 tier** — H15 supported at one seed (F80) → FW-37.
 
 ## Priority 0c — CPU-first representation track (no held-out until each has its own frozen file)
 
@@ -64,11 +56,14 @@ and only the final evaluation runs) in the S13 Kaggle session; it decides nothin
   kernel), gated-attention + mean pooling, morphometrics after pooling; trainable on CPU. Train → calib only.
 - **Gate to a GPU arm:** calib macro-F1 ≥ quantile-LDA + 0.03 (≥ 0.73) **and** embedding κ no higher than the
   spectral-only network's + 0.05. If it passes only the first, within-kernel spread is session-laden for any learner.
+  **S14 (D32):** κ's seed noise is ≈ 0.05 and it does not rank among spatial-style networks — keep the κ clause only as a
+  coarse check (≥ 0.1); the decisive comparison is now against Y3 (calib F1 0.71–0.74), not X1.
 
 ### FW-28 · TabPFN-3 on kernel summaries — the strongest tabular baseline
 - **Builds on** F32, F67. TabPFN-3 (2026) reports first place on many-class tabular data and handles ≤ 200 features;
   inputs: mean + morph (40), quantiles + morph (104). Calib first; held-out once, in the paper's baseline table. If it
-  matches the network on grouped, the network's claim must be stated against it, not against LDA.
+  matches the network on grouped, the network's claim must be stated against it, not against LDA. **S14:** the network
+  bar is now the lean network (grouped 0.562 at seed 0, F74), +0.033 over quantile-LDA no-TTA.
 
 ### FW-29 · A transfer-standard protocol tier (calibration transfer)
 - **Builds on** F66, F68–F70; EPO (Roger et al. 2003), di-PLS. Estimate the session nuisance subspace from the
@@ -137,7 +132,7 @@ augmentation, no margin) on a fixed 1,000-kernel training subset. None changes a
   retrained arms are the test.
 
 ### FW-17 · X3 — the within-acquisition tier (H15, D16)
-> **Status: scheduled as S13 Y4** under R1 (`preregistration_s12.json`).
+> **Status: run as S13 Y4 (one seed): 0.728 = the 70/30 level, H15 supported (F80). The 3-seed tier-1 row moves to FW-37.**
 - `data=ablation/u430k32_stratified data.split_eval_frac=0.2`, seeds 0–2, under X1's chosen regime. The
   literature-comparable number, labelled as tier 1. H15 checks the S09 prediction that 80/20 adds ≤ 0.03.
 
@@ -334,3 +329,4 @@ then the band-budget result; publish the negative results (F05, F09, F18, F25).
 | FW-02 σ, FW-04 leakage gap (first neural sweep, u430k32) | S08 (run) → S09 (analysis) |
 | FW-19 instrumentation (D18, D20) + X2's pathway switch + the frozen-arm runner | S11 |
 | FW-15 X1, FW-16 X2, FW-20 X4 (run S11, read) | S12 |
+| FW-31 Y1, FW-32 Y2, FW-33 Y3, FW-17 Y4, FW-34 P0 (run S13, read) | S13 → S14 |

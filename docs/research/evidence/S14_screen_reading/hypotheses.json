@@ -1,0 +1,188 @@
+{
+ "H19a": {
+  "frozen": "Y1 fused grouped macro-F1 (TTA, mean of fused cells) \u2265 0.530786 \u2212 0.020 = 0.5108",
+  "value": 0.5450851699626551,
+  "threshold": 0.5108,
+  "direction": ">=",
+  "met": true,
+  "screen_interval": [
+   0.5290428294554289,
+   0.5611275104698813
+  ],
+  "clarity": "clear",
+  "ci_kernels": [
+   0.5351230066080772,
+   0.551614595413744
+  ],
+  "per_fold": [
+   0.5557047670673156,
+   0.5344655728579946
+  ],
+  "outcome": "supported"
+ },
+ "H19b": {
+  "frozen": "Y1 fused cross-session recall \u2265 0.1666 AND cross-session attraction \u2264 0.4240",
+  "cross": {
+   "value": 0.1343954248366013,
+   "threshold": 0.1666,
+   "direction": ">=",
+   "met": false,
+   "screen_interval": [
+    0.11632368594635441,
+    0.15246716372684818
+   ],
+   "clarity": "clear"
+  },
+  "attraction": {
+   "value": 0.4901395271621428,
+   "threshold": 0.424,
+   "direction": "<=",
+   "met": false,
+   "screen_interval": [
+    0.4527354943874373,
+    0.5275435599368483
+   ],
+   "clarity": "clear"
+  },
+  "per_fold_cross": [
+   0.14011437908496732,
+   0.12867647058823528
+  ],
+  "per_fold_attraction": [
+   0.46371463714637146,
+   0.5165644171779141
+  ],
+  "outcome": "rejected"
+ },
+ "H20": {
+  "frozen": "Y2 cross-session recall \u2265 0.1666 AND same-session recall \u2265 0.6285",
+  "cross": {
+   "value": 0.14330065359477123,
+   "threshold": 0.1666,
+   "direction": ">=",
+   "met": false,
+   "screen_interval": [
+    0.12326425684712011,
+    0.16333705034242235
+   ],
+   "clarity": "clear"
+  },
+  "same": {
+   "value": 0.6408544237183846,
+   "threshold": 0.6285,
+   "direction": ">=",
+   "met": true,
+   "screen_interval": [
+    0.6191013301265436,
+    0.6626075173102257
+   ],
+   "clarity": "marginal"
+  },
+  "per_fold_cross": [
+   0.13096405228758168,
+   0.1556372549019608
+  ],
+  "per_fold_same": [
+   0.6389467937264245,
+   0.6427620537103449
+  ],
+  "frontier_move_test": "cross \u2265 ref + 0.020 (0.1666) but same < ref \u2212 0.020 (0.6285) \u2192 trade-off point",
+  "outcome": "rejected"
+ },
+ "H21a": {
+  "frozen": "Y3 grouped macro-F1 \u2265 0.5108 (non-inferior)",
+  "value": 0.5617796010292053,
+  "threshold": 0.5108,
+  "direction": ">=",
+  "met": true,
+  "screen_interval": [
+   0.5455928706623034,
+   0.5779663313961072
+  ],
+  "clarity": "clear",
+  "ci_kernels": [
+   0.5517847563088082,
+   0.5685358025564122
+  ],
+  "per_fold": [
+   0.5646137367246968,
+   0.5589454653337137
+  ],
+  "outcome": "supported"
+ },
+ "H21b": {
+  "frozen": "Y3 stratified macro-F1 \u2265 0.726984 \u2212 0.018 = 0.7090 (one run)",
+  "value": 0.7456821959163805,
+  "threshold": 0.709,
+  "direction": ">=",
+  "met": true,
+  "screen_interval": [
+   0.7266358487849655,
+   0.7647285430477956
+  ],
+  "clarity": "clear",
+  "ci_kernels": [
+   0.7270239689191552,
+   0.7575778421361451
+  ],
+  "outcome": "supported"
+ },
+ "H15": {
+  "frozen": "(S09, unchanged) Y4 (80/20) \u2212 R1 stratified (0.726984) \u2264 +0.03 (one run)",
+  "value": 0.0007590463411765169,
+  "threshold": 0.03,
+  "direction": "<=",
+  "met": true,
+  "screen_interval": [
+   -0.022172932447032778,
+   0.023691025129385812
+  ],
+  "clarity": "clear",
+  "y4_f1": 0.7277430463411765,
+  "y4_ci_kernels": [
+   0.7036295027808381,
+   0.7431441737534599
+  ],
+  "note": "Y4 is scored on its own 20 % held-out rows (1,725 kernels), not X1's 30 % (2,588): unpaired",
+  "outcome": "supported"
+ },
+ "decision_routes": {
+  "Y1": "H19a \u2227 \u00acH19b \u2192 'no adoption; the joint network stays; record that decoupling does not buy session robustness under R1' \u2014 a screening rejection (not replicated unless a later frozen file gives a reason)",
+  "Y2": "H20 rejected otherwise \u2192 'instance statistics are not separable into session and variety here' \u2014 a screening rejection",
+  "Y3": "H21a \u2227 H21b \u2192 'adopt the lean architecture as the base of every later arm (SeedNet v5)' read under D28 as PASSES THE SCREEN: replicate at seeds 1\u20132 (FW-35) before it becomes the reference, SeedNet v5 or a paper claim; it may serve as the provisional base of later screening arms",
+  "Y4": "H15 supported \u2192 the 80/20 tier is the within-acquisition (D16 tier-1) number; no adoption attached",
+  "D28_reversal_check": {
+   "Y1 fused (calib w)": {
+    "f1": [
+     0.5557047670673156,
+     0.5344655728579946
+    ],
+    "cross": [
+     0.14011437908496732,
+     0.12867647058823528
+    ],
+    "attraction": [
+     0.46371463714637146,
+     0.5165644171779141
+    ]
+   },
+   "Y2 mixstyle": {
+    "cross": [
+     0.13096405228758168,
+     0.1556372549019608
+    ],
+    "same": [
+     0.6389467937264245,
+     0.6427620537103449
+    ]
+   },
+   "Y3 lean grouped": {
+    "f1": [
+     0.5646137367246968,
+     0.5589454653337137
+    ]
+   }
+  },
+  "D28_reversal_note": "D28: replicate before reading if an arm's two fold estimates straddle its threshold by more than the margin. No arm's folds straddle any threshold (see per-fold values)."
+ }
+}

@@ -1,0 +1,237 @@
+{
+ "joint_vs_fused": [
+  {
+   "regime": "R1",
+   "fold": 0,
+   "joint_f1": 0.535325,
+   "joint_cross": 0.15866,
+   "joint_attraction": 0.441574,
+   "fused_calib_w": 0.3,
+   "fused_f1": 0.555705,
+   "fused_cross": 0.140114,
+   "fused_attraction": 0.463715,
+   "eq_f1": 0.560198,
+   "eq_cross": 0.159559,
+   "eq_attraction": 0.415744,
+   "seed": NaN
+  },
+  {
+   "regime": "R1",
+   "fold": 1,
+   "joint_f1": 0.535409,
+   "joint_cross": 0.139706,
+   "joint_attraction": 0.472393,
+   "fused_calib_w": 0.3,
+   "fused_f1": 0.534466,
+   "fused_cross": 0.128676,
+   "fused_attraction": 0.516564,
+   "eq_f1": 0.540489,
+   "eq_cross": 0.137255,
+   "eq_attraction": 0.509202,
+   "seed": NaN
+  },
+  {
+   "regime": "shipped",
+   "fold": 0,
+   "joint_f1": 0.517829,
+   "joint_cross": 0.18317,
+   "joint_attraction": 0.461255,
+   "fused_calib_w": 0.55,
+   "fused_f1": 0.538126,
+   "fused_cross": 0.186846,
+   "fused_attraction": 0.371464,
+   "eq_f1": 0.535428,
+   "eq_cross": 0.181944,
+   "eq_attraction": 0.384994,
+   "seed": 0.0
+  },
+  {
+   "regime": "shipped",
+   "fold": 0,
+   "joint_f1": 0.530086,
+   "joint_cross": 0.132271,
+   "joint_attraction": 0.473555,
+   "fused_calib_w": 0.55,
+   "fused_f1": 0.532804,
+   "fused_cross": 0.164788,
+   "fused_attraction": 0.403444,
+   "eq_f1": 0.529833,
+   "eq_cross": 0.162092,
+   "eq_attraction": 0.412054,
+   "seed": 1.0
+  },
+  {
+   "regime": "shipped",
+   "fold": 1,
+   "joint_f1": 0.533234,
+   "joint_cross": 0.161765,
+   "joint_attraction": 0.457669,
+   "fused_calib_w": 0.35,
+   "fused_f1": 0.531219,
+   "fused_cross": 0.171569,
+   "fused_attraction": 0.402454,
+   "eq_f1": 0.534748,
+   "eq_cross": 0.1875,
+   "eq_attraction": 0.37546,
+   "seed": 1.0
+  }
+ ],
+ "calib_chosen_w": {
+  "f0": 0.3,
+  "f1": 0.3
+ },
+ "shipped_calib_w_mean": 0.4833333333333334,
+ "heldout_grid_mean_over_folds": [
+  {
+   "w_spectral": 0.0,
+   "calib_f1": 0.6847,
+   "heldout_f1": 0.4858,
+   "heldout_cross": 0.0986,
+   "heldout_attraction": 0.5191
+  },
+  {
+   "w_spectral": 0.05,
+   "calib_f1": 0.7039,
+   "heldout_f1": 0.4973,
+   "heldout_cross": 0.1017,
+   "heldout_attraction": 0.5178
+  },
+  {
+   "w_spectral": 0.1,
+   "calib_f1": 0.7098,
+   "heldout_f1": 0.5085,
+   "heldout_cross": 0.1041,
+   "heldout_attraction": 0.5141
+  },
+  {
+   "w_spectral": 0.15,
+   "calib_f1": 0.7201,
+   "heldout_f1": 0.5214,
+   "heldout_cross": 0.1134,
+   "heldout_attraction": 0.5117
+  },
+  {
+   "w_spectral": 0.2,
+   "calib_f1": 0.7359,
+   "heldout_f1": 0.5311,
+   "heldout_cross": 0.1214,
+   "heldout_attraction": 0.5067
+  },
+  {
+   "w_spectral": 0.25,
+   "calib_f1": 0.7402,
+   "heldout_f1": 0.5392,
+   "heldout_cross": 0.1294,
+   "heldout_attraction": 0.4944
+  },
+  {
+   "w_spectral": 0.3,
+   "calib_f1": 0.7452,
+   "heldout_f1": 0.5451,
+   "heldout_cross": 0.1344,
+   "heldout_attraction": 0.4901
+  },
+  {
+   "w_spectral": 0.35,
+   "calib_f1": 0.7423,
+   "heldout_f1": 0.5482,
+   "heldout_cross": 0.1375,
+   "heldout_attraction": 0.4834
+  },
+  {
+   "w_spectral": 0.4,
+   "calib_f1": 0.7407,
+   "heldout_f1": 0.5508,
+   "heldout_cross": 0.1417,
+   "heldout_attraction": 0.4754
+  },
+  {
+   "w_spectral": 0.45,
+   "calib_f1": 0.7339,
+   "heldout_f1": 0.552,
+   "heldout_cross": 0.1453,
+   "heldout_attraction": 0.4686
+  },
+  {
+   "w_spectral": 0.5,
+   "calib_f1": 0.727,
+   "heldout_f1": 0.5503,
+   "heldout_cross": 0.1484,
+   "heldout_attraction": 0.4625
+  },
+  {
+   "w_spectral": 0.55,
+   "calib_f1": 0.7176,
+   "heldout_f1": 0.547,
+   "heldout_cross": 0.1569,
+   "heldout_attraction": 0.449
+  },
+  {
+   "w_spectral": 0.6,
+   "calib_f1": 0.6996,
+   "heldout_f1": 0.5407,
+   "heldout_cross": 0.16,
+   "heldout_attraction": 0.4367
+  },
+  {
+   "w_spectral": 0.65,
+   "calib_f1": 0.6829,
+   "heldout_f1": 0.5317,
+   "heldout_cross": 0.1607,
+   "heldout_attraction": 0.4219
+  },
+  {
+   "w_spectral": 0.7,
+   "calib_f1": 0.6667,
+   "heldout_f1": 0.5238,
+   "heldout_cross": 0.1656,
+   "heldout_attraction": 0.409
+  },
+  {
+   "w_spectral": 0.75,
+   "calib_f1": 0.6419,
+   "heldout_f1": 0.512,
+   "heldout_cross": 0.1669,
+   "heldout_attraction": 0.39
+  },
+  {
+   "w_spectral": 0.8,
+   "calib_f1": 0.621,
+   "heldout_f1": 0.4977,
+   "heldout_cross": 0.165,
+   "heldout_attraction": 0.3698
+  },
+  {
+   "w_spectral": 0.85,
+   "calib_f1": 0.6082,
+   "heldout_f1": 0.4845,
+   "heldout_cross": 0.1687,
+   "heldout_attraction": 0.3556
+  },
+  {
+   "w_spectral": 0.9,
+   "calib_f1": 0.584,
+   "heldout_f1": 0.47,
+   "heldout_cross": 0.1687,
+   "heldout_attraction": 0.3397
+  },
+  {
+   "w_spectral": 0.95,
+   "calib_f1": 0.5685,
+   "heldout_f1": 0.4581,
+   "heldout_cross": 0.1668,
+   "heldout_attraction": 0.3262
+  },
+  {
+   "w_spectral": 1.0,
+   "calib_f1": 0.554,
+   "heldout_f1": 0.4405,
+   "heldout_cross": 0.1638,
+   "heldout_attraction": 0.3096
+  }
+ ],
+ "any_weight_meets_H19a_and_H19b_on_heldout": true,
+ "max_heldout_cross_over_grid": 0.16866830065359478,
+ "w_at_max_cross": 0.85,
+ "note": "The held-out grid is a post-hoc diagnostic of whether the weight could explain H19b's rejection. No weight is chosen from it; the frozen reading uses the calib-chosen w only."
+}

@@ -1,0 +1,13 @@
+model,cell,fold,seed,representation,balanced_acc,kappa
+Y3 lean_grouped (validation),s13/Y3/lean_grouped__f0_s0,0,0,embedding,0.390315,0.377942
+Y3 lean_grouped (validation),s13/Y3/lean_grouped__f0_s0,0,0,spatial,0.378205,0.371645
+Y3 lean_grouped (validation),s13/Y3/lean_grouped__f0_s0,0,0,spectral,0.160355,0.0739643
+Y1 spectral_only (validation),s13/Y1/spectral_only__f1_s0,1,0,embedding,0.231178,0.20922
+Y1 spectral_only (validation),s13/Y1/spectral_only__f1_s0,1,0,spectral,0.239016,0.207344
+X1 grouped,s11/X1/grouped__f1_s0,1,0,embedding,0.354864,0.358446
+X1 grouped,s11/X1/grouped__f1_s0,1,0,spatial,0.333906,0.333748
+X1 grouped,s11/X1/grouped__f1_s0,1,0,spectral,0.187295,0.130978
+X2 spectral_only,s11/X2/spectral_only__f1_s0,1,0,embedding,0.225155,0.196622
+X2 spectral_only,s11/X2/spectral_only__f1_s0,1,0,spectral,0.23059,0.195177
+X2 spatial_only,s11/X2/spatial_only__f1_s0,1,0,embedding,0.304066,0.298081
+X2 spatial_only,s11/X2/spatial_only__f1_s0,1,0,spatial,0.303842,0.295651

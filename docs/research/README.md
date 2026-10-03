@@ -14,7 +14,7 @@ describes *what we have learned and why the code is the way it is*.
 
 ## 1 · Where the research stands today
 
-*Last revised 2026-10-02 (after S13 part 1). Update this section whenever a finding or decision changes status.*
+*Last revised 2026-10-03 (after S14). Update this section whenever a finding or decision changes status.*
 
 **The question.** 90 rice varieties, 8,624 single-kernel hyperspectral patches (Zenodo 3241923).
 Can a model identify the *variety* of a kernel — and how much of what a model scores on this
@@ -64,31 +64,35 @@ dataset is variety recognition rather than recognition of *how and when the kern
 11. **The 3-D spatial pathway is where the network's extra accuracy comes from — and where the session lives.** Without
     it the network has the best cross-session recall measured on this dataset (0.214) and much less session attraction;
     the morphometric scalars are not what carries cross-session recall; training the two pathways jointly adds nothing
-    over fusing them afterwards. Across bundles the network is no better than a linear model on within-kernel pixel
+    over fusing them afterwards (under the shipped regime — S14 found this robustness does not survive R1). Across bundles the network is no better than a linear model on within-kernel pixel
     statistics. **The bottleneck is representation under acquisition shift (route A):** no more capacity or regime
     work; the next round tests decoupled pathways, style randomisation and a leaner architecture, and the larger
     headroom is in new information (RGB shape, more bands, transfer standards). [F63–F71](FINDINGS.md) ·
     [D23–D27](DECISIONS.md)
-12. **The next round is ready to run, as a single-seed screen.** The four route-A arms (decoupled pathways, style
-    randomisation in the 3-D stem, a lean architecture, the 80/20 tier) run at one seed — 10 GPU runs, ≈ 4.4 h, one
-    Kaggle command — with every arm, control, protocol contrast and grouped fold of the frozen design; a pass sends an
-    arm to multi-seed replication, not into the paper. The code that runs them is bit-identical to the S11 network at
-    its defaults, and the checkpoint race that lost an S11 cell is fixed. [F72](FINDINGS.md) · [D28, D29](DECISIONS.md)
-    · [S13](studies/S13_representation_screening/README.md)
+12. **A leaner network is the first change since the audit that moves every held-out number at once — at one seed so
+    far.** Removing what S10 found inert or broken (the chemometric descriptor blocks, the 1 × 1 tail end, a CBAM on a
+    2 × 2 map) gave grouped **0.562** and stratified **0.746**, above every run of the current reference in all three
+    cells, with same- *and* cross-session recall up (0.678 / 0.186) and session attraction down — off the trade-off
+    frontier S12 thought only new data could leave. It is a screening result (one seed); replication and a dissection
+    of which removal carries it are frozen (S15). [F74, F75](FINDINGS.md) · [D30, D33](DECISIONS.md) ·
+    [S14](studies/S14_screen_reading/README.md)
+13. **The two session-robustness ideas failed the screen, for informative reasons.** Training the pathways separately
+    and fusing them keeps the score but loses its robustness under the fit-first regime: fitting more moves each single
+    pathway toward session recognition, and a fusion weight chosen on calib — which shares the training session —
+    favours the session-carrying pathway. Mixing the 3-D stem's feature statistics across kernels weakens that pathway
+    without removing its session. The 80/20 split scores the same as 70/30 (0.728). The training-rows session κ is
+    reproducible but cannot rank networks that share the spatial pathway. [F76–F81](FINDINGS.md) · [D31, D32](DECISIONS.md)
 
-**What we do not know yet** (frozen in `evidence/S12_frozen_arms_reading/preregistration_s12.json`, run as S13's
-single-seed screen per `evidence/S13_representation_screening/preregistration_s13.json`, unless marked CPU):
+**What we do not know yet** (frozen in `evidence/S14_screen_reading/preregistration_s14.json` for S15, unless marked CPU):
 
-- Do decoupled single-pathway networks, fused on calib, keep the joint network's score while buying cross-session
-  robustness? → [FW-31](FUTURE_WORK.md)
-- Can randomising the 3-D pathway's early feature statistics move a model *off* the same/cross-session frontier rather
-  than along it? → [FW-32](FUTURE_WORK.md)
-- Is a lean SpectralSeedNet (SNV + morph descriptor, no dead taps) non-inferior? → [FW-33](FUTURE_WORK.md)
-- Can a per-pixel set encoder extract the within-kernel information with less session than the 3-D CNN (CPU)?
-  → [FW-27](FUTURE_WORK.md)
-- What do high-resolution RGB shape and the 215-band cube add — the levers with the most headroom? → [FW-18,
+- Does the lean network's gain replicate at seeds 1–2, and is it a gain (≥ +0.02, CI excluding 0) and a robustness gain
+  on fresh seeds? → [FW-35](FUTURE_WORK.md)
+- Which removal carries it — the spectral descriptor or the spatial repair? → [FW-36](FUTURE_WORK.md)
+- Does a tabular foundation model or a per-pixel set encoder beat the lean network on kernel summaries (CPU)?
+  → [FW-28, FW-27](FUTURE_WORK.md)
+- What do high-resolution RGB shape and the 215-band cube add — still the levers with the most headroom? → [FW-18,
   FW-03](FUTURE_WORK.md)
-- What is the within-acquisition (80/20) tier? → [FW-17](FUTURE_WORK.md)
+- What is the within-acquisition (80/20) tier of the reference architecture, at 3 seeds? → [FW-37](FUTURE_WORK.md)
 
 **The two most important figures so far** — the session confound, and how little the network adds:
 
@@ -112,7 +116,7 @@ docs/research/
 ├── GLOSSARY.md        the project's vocabulary (bundle, session, grouped, calib, uniform430 …)
 ├── studies/
 │   ├── _TEMPLATE.md   copy this to start a new study
-│   └── S00 … S13/     one folder per study, each with its own README.md
+│   └── S00 … S14/     one folder per study, each with its own README.md
 ├── figures/<study>/   every figure the log shows (generated or copied — never hand-edited)
 ├── evidence/<study>/  snapshot of the raw results each claim rests on (outputs/ is git-ignored)
 └── tools/build_assets.py   regenerates evidence/ and figures/ from outputs/ and dataset/
@@ -140,7 +144,8 @@ study stays *modular* (it can be read, revised or superseded on its own).
 | [S10](studies/S10_training_architecture_review/README.md) | Training & architecture review: why it under-fits, what to change first | 2026-10-01 | complete (specification); X4–X6 frozen | 3.6 % of the LR on clean labels; aux weight not as documented; dead tail; level-blind |
 | [S11](studies/S11_frozen_arms_execution/README.md) | Executing the frozen diagnostics (X1, X2, X4) | 2026-10-01 → 10-02 | complete — instrumentation validated; 22/23 cells run and scored (read in S12) | neutral instrumentation (G-neutral); clean-fit probe; pathway switch; `run_frozen.py` |
 | [S12](studies/S12_frozen_arms_reading/README.md) | Reading X1, X2, X4: what binds now that the network fits | 2026-10-02 | complete (analysis); S13 arms frozen | fit solved, held-out unmoved; the 3-D pathway is the session channel; route A |
-| [S13](studies/S13_representation_screening/README.md) | Route-A arms Y1–Y4 as a single-seed screen | 2026-10-02 → | part 1 complete (code, amendment, validation); GPU run pending | one seed, all arms/folds/contrasts (D28); P0 fixed (F72); 10 runs ≈ 4.4 h, one command |
+| [S13](studies/S13_representation_screening/README.md) | Route-A arms Y1–Y4 as a single-seed screen | 2026-10-02 → | complete — run 2026-10-03 (10 + 2 cells), read in S14 | one seed, all arms/folds/contrasts (D28); P0 fixed (F72) |
+| [S14](studies/S14_screen_reading/README.md) | Reading the S13 screen: what passed, what failed and why | 2026-10-03 | complete (analysis); S15 frozen | lean network passes (grouped 0.562, stratified 0.746, cross 0.186); decoupling and MixStyle rejected; Y3 replication + dissection frozen |
 
 ## 4 · Conventions
 

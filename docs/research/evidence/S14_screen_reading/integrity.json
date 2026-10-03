@@ -1,0 +1,133 @@
+{
+ "preregistration_hashes": "both match (S12 88b377c5\u2026, S13 ef598213\u2026)",
+ "cells": {
+  "Y1/fused__f0_s0": {
+   "commit_is_s13": true,
+   "dirty": false,
+   "inputs": null
+  },
+  "Y1/fused__f1_s0": {
+   "commit_is_s13": true,
+   "dirty": false,
+   "inputs": null
+  },
+  "Y1/spatial_only__f0_s0": {
+   "commit_is_s13": true,
+   "dirty": false,
+   "regime_deviations": [],
+   "guard_clip_fraction_gt_0.01_outside_ep1_and_overflow": 10,
+   "guard_stop_before_160": false,
+   "n_eval": 4311,
+   "attraction_rederived_matches": true
+  },
+  "Y1/spatial_only__f1_s0": {
+   "commit_is_s13": true,
+   "dirty": false,
+   "regime_deviations": [],
+   "guard_clip_fraction_gt_0.01_outside_ep1_and_overflow": 5,
+   "guard_stop_before_160": false,
+   "n_eval": 4309,
+   "attraction_rederived_matches": true
+  },
+  "Y1/spectral_only__f0_s0": {
+   "commit_is_s13": true,
+   "dirty": false,
+   "regime_deviations": [],
+   "guard_clip_fraction_gt_0.01_outside_ep1_and_overflow": 0,
+   "guard_stop_before_160": false,
+   "n_eval": 4311,
+   "attraction_rederived_matches": true
+  },
+  "Y1/spectral_only__f1_s0": {
+   "commit_is_s13": true,
+   "dirty": false,
+   "regime_deviations": [],
+   "guard_clip_fraction_gt_0.01_outside_ep1_and_overflow": 0,
+   "guard_stop_before_160": false,
+   "n_eval": 4309,
+   "attraction_rederived_matches": true
+  },
+  "Y2/mixstyle__f0_s0": {
+   "commit_is_s13": true,
+   "dirty": false,
+   "regime_deviations": [],
+   "guard_clip_fraction_gt_0.01_outside_ep1_and_overflow": 1,
+   "guard_stop_before_160": false,
+   "n_eval": 4311,
+   "attraction_rederived_matches": true
+  },
+  "Y2/mixstyle__f1_s0": {
+   "commit_is_s13": true,
+   "dirty": false,
+   "regime_deviations": [],
+   "guard_clip_fraction_gt_0.01_outside_ep1_and_overflow": 0,
+   "guard_stop_before_160": false,
+   "n_eval": 4309,
+   "attraction_rederived_matches": true
+  },
+  "Y3/lean_grouped__f0_s0": {
+   "commit_is_s13": true,
+   "dirty": false,
+   "regime_deviations": [],
+   "guard_clip_fraction_gt_0.01_outside_ep1_and_overflow": 0,
+   "guard_stop_before_160": false,
+   "n_eval": 4311,
+   "attraction_rederived_matches": true
+  },
+  "Y3/lean_grouped__f1_s0": {
+   "commit_is_s13": true,
+   "dirty": false,
+   "regime_deviations": [],
+   "guard_clip_fraction_gt_0.01_outside_ep1_and_overflow": 0,
+   "guard_stop_before_160": false,
+   "n_eval": 4309,
+   "attraction_rederived_matches": true
+  },
+  "Y3/lean_stratified__f0_s0": {
+   "commit_is_s13": true,
+   "dirty": false,
+   "regime_deviations": [],
+   "guard_clip_fraction_gt_0.01_outside_ep1_and_overflow": 0,
+   "guard_stop_before_160": false,
+   "n_eval": 2588
+  },
+  "Y4/within_8020__f0_s0": {
+   "commit_is_s13": true,
+   "dirty": false,
+   "regime_deviations": [],
+   "guard_clip_fraction_gt_0.01_outside_ep1_and_overflow": 0,
+   "guard_stop_before_160": false,
+   "n_eval": 1725
+  }
+ },
+ "p0_3_rescore_X2_spatial_only_f1_s0": "NOT done \u2014 outputs/experiments_u430k32/s11/X2/spatial_only__f1_s0/results/ does not exist (the S11 outputs were not attached to the Kaggle session; S13 \u00a78's conditional skipped it). Decides nothing.",
+ "summary": {
+  "n_cells": 12,
+  "n_scored": 12,
+  "all_commit_s13": true,
+  "any_dirty": false,
+  "regime_deviations": 0,
+  "clip_guard_cells": [
+   "Y1/spatial_only__f0_s0",
+   "Y1/spatial_only__f1_s0",
+   "Y2/mixstyle__f0_s0"
+  ],
+  "stop_before_160": [],
+  "skipped_batches": 0,
+  "nonfinite_steps_per_run": [
+   9.0,
+   8.0,
+   4.0,
+   4.0,
+   8.0,
+   8.0,
+   5.0,
+   5.0,
+   5.0,
+   9.0
+  ],
+  "wall_clock_gpu_min": 274.2024499972661,
+  "runtime_estimate_min": "266 typical \u00b7 287 cap (S13 \u00a78)",
+  "torch_compile": "auto-disabled on T4 (sm_75 pre-Ampere) in every cell \u2014 eager mode, as in S11; S13 risk 5 moot"
+ }
+}

@@ -128,14 +128,37 @@ seeds 1–2 (FW-35) before its decision rule is read as confirmatory.
 
 | ID | Hypothesis (as frozen) | Experiment | Decision it drives | Status |
 |---|---|---|---|---|
-| H19a | Decoupled pathways fused on calib: grouped F1 ≥ 0.5108 | Y1 (FW-31) | retire joint fusion (with H19b) | not run — S13 screen, 2 fused cells, seed 0 (D28) |
-| H19b | …and cross-session recall ≥ 0.1666 and attraction ≤ 0.4240 | Y1 | decoupling buys session robustness | not run — S13 screen (D28) |
-| H20 | Masked MixStyle in the 3-D stem: cross-session ≥ 0.1666 and same-session ≥ 0.6285 | Y2 (FW-32) | a move off the frontier, not along it | not run — S13 screen, 2 runs (D28) |
-| H21a | Lean architecture (SNV + morph descriptor, tail [2,2,2,1], no CBAM on ≤ 2 × 2): grouped ≥ 0.5108 | Y3 (FW-33) | adopt SeedNet v5 (with H21b) | not run — S13 screen, 2 runs (D28) |
-| H21b | …and stratified ≥ 0.7090 | Y3 | non-inferior within acquisition | not run — S13 screen, 1 run (D28) |
-| H15 | (S09, unchanged) 80/20 − R1 stratified ≤ +0.03 | Y4 | D16 tier 1 | not run — S13 screen, 1 run (D28) |
+| H19a | Decoupled pathways fused on calib: grouped F1 ≥ 0.5108 | Y1 (FW-31) | retire joint fusion (with H19b) | **supported (screen)** — 0.545 (folds 0.556 / 0.535), clear (F76) |
+| H19b | …and cross-session recall ≥ 0.1666 and attraction ≤ 0.4240 | Y1 | decoupling buys session robustness | **rejected (screen)** — cross 0.134, attraction 0.490; every fold fails both (F76–F78) → joint network stays |
+| H20 | Masked MixStyle in the 3-D stem: cross-session ≥ 0.1666 and same-session ≥ 0.6285 | Y2 (FW-32) | a move off the frontier, not along it | **rejected (screen)** — cross 0.143 (same 0.641 met); not a frontier move (F79) |
+| H21a | Lean architecture (SNV + morph descriptor, tail [2,2,2,1], no CBAM on ≤ 2 × 2): grouped ≥ 0.5108 | Y3 (FW-33) | adopt SeedNet v5 (with H21b) | **supported (screen)** — 0.562 (0.565 / 0.559), clear; above every X1 run (F74) → replicate (§7) |
+| H21b | …and stratified ≥ 0.7090 | Y3 | non-inferior within acquisition | **supported (screen)** — 0.746, one run (F74) |
+| H15 | (S09, unchanged) 80/20 − R1 stratified ≤ +0.03 | Y4 | D16 tier 1 | **supported (screen)** — +0.001 (0.728), one run (F80) |
 
-## 7 · Adding a hypothesis
+**S14 (reading).** Read exactly as frozen, as screening verdicts (`evidence/S14_screen_reading/hypotheses.json`); each
+verdict carries a *screen interval* (kernel bootstrap combined with X1's run-level sd / √n). No arm's two folds straddle
+its threshold, so D28's "replicate before reading" clause does not apply. Routes: Y3 passes → §7; Y1, Y2 screening
+rejections (D30).
+
+## 7 · S14 → S15: Y3 replication and dissection, frozen
+
+`evidence/S14_screen_reading/preregistration_s14.json`, SHA-256
+`9e182670755e13a6ead29a761123841094a9b9fb6fae18392553893d65c1f3da`, frozen 2026-10-03 before any S15 cell or runner
+exists. H21a/H21b are the parent's and are read on seeds 0–2 as frozen there. **H21c–H21e and H22a/H22b are motivated by
+Y3's seed-0 results** (F74, F75); H21c–H21e are read on the fresh seeds (1, 2) only, against X1's cells at the same folds
+and seeds (grouped 0.528496, stratified 0.728593).
+
+| ID | Hypothesis (as frozen) | Experiment | Decision it drives | Status |
+|---|---|---|---|---|
+| H21a | (parent) Y3 grouped F1, 6 runs (seeds 0–2) ≥ 0.5108 | Y3 replication (FW-35) | adopt SeedNet v5 (with H21b): defaults → R1 + lean keys | not run |
+| H21b | (parent) Y3 stratified F1, 3 runs ≥ 0.7090 | Y3 replication | as above | not run |
+| H21c | Y3 − X1 grouped F1 on seeds 1–2 ≥ +0.020 and its hierarchical-bootstrap CI excludes 0 | Y3 replication | the paper may claim a grouped gain (G3) | not run |
+| H21d | Y3 grouped cross-session recall ≥ 0.1666 and attraction ≤ 0.4240 on seeds 1–2 | Y3 replication | the paper may claim cross-session robustness | not run |
+| H21e | Y3 − X1 stratified F1 on seeds 1–2 ≥ +0.018 | Y3 replication | within-acquisition gain | not run |
+| H22a | `desc_only` (SNV + morph descriptor alone) grouped F1, seed 0 ≥ 0.5508 | Y5 dissection (FW-36) | which removal carries the gain (only if H21a ∧ H21b) | not run |
+| H22b | `spatial_repair` (tail [2,2,2,1] + no CBAM on 2 × 2 alone) grouped F1, seed 0 ≥ 0.5508 | Y5 dissection | as above | not run |
+
+## 8 · Adding a hypothesis
 
 Write it here *before* the run, with: the exact claim, the metric and split, the threshold, what
 outcome supports it, and which decision or finding it would change. If held-out data will be

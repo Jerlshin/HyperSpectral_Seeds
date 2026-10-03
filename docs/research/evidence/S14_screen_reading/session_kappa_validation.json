@@ -1,0 +1,110 @@
+{
+ "validation": {
+  "Y3/lean_grouped__f0_s0:embedding": {
+   "offline": 0.377942,
+   "in_pipeline": 0.372035,
+   "abs_diff": 0.005906999999999996
+  },
+  "Y3/lean_grouped__f0_s0:spatial": {
+   "offline": 0.371645,
+   "in_pipeline": 0.36079,
+   "abs_diff": 0.010855000000000004
+  },
+  "Y3/lean_grouped__f0_s0:spectral": {
+   "offline": 0.0739643,
+   "in_pipeline": 0.0747106,
+   "abs_diff": 0.0007463000000000053
+  },
+  "Y1/spectral_only__f1_s0:embedding": {
+   "offline": 0.20922,
+   "in_pipeline": 0.199625,
+   "abs_diff": 0.009594999999999992
+  },
+  "Y1/spectral_only__f1_s0:spectral": {
+   "offline": 0.207344,
+   "in_pipeline": 0.18636,
+   "abs_diff": 0.020984000000000003
+  }
+ },
+ "kappa_noise_between_seeds": 0.048655000000000004,
+ "attraction_noise_sd": 0.020362,
+ "x1_reference": {
+  "f0": {
+   "kappa": 0.335875,
+   "attraction": 0.441574
+  },
+  "f1": {
+   "kappa": 0.358446,
+   "attraction": 0.472393
+  }
+ },
+ "d26_pairs": [
+  {
+   "cell": "Y1 spatial_only f0",
+   "d_kappa": 0.027381000000000044,
+   "d_attraction": 0.08487100000000003,
+   "agree": true,
+   "beyond_noise": false
+  },
+  {
+   "cell": "Y1 spatial_only f1",
+   "d_kappa": 0.011145000000000016,
+   "d_attraction": 0.038036000000000014,
+   "agree": true,
+   "beyond_noise": false
+  },
+  {
+   "cell": "Y1 spectral_only f0",
+   "d_kappa": -0.14576499999999998,
+   "d_attraction": -0.134071,
+   "agree": true,
+   "beyond_noise": true
+  },
+  {
+   "cell": "Y1 spectral_only f1",
+   "d_kappa": -0.158821,
+   "d_attraction": -0.15950999999999999,
+   "agree": true,
+   "beyond_noise": true
+  },
+  {
+   "cell": "Y2 mixstyle f0",
+   "d_kappa": 0.015037999999999996,
+   "d_attraction": 0.029520999999999964,
+   "agree": true,
+   "beyond_noise": false
+  },
+  {
+   "cell": "Y2 mixstyle f1",
+   "d_kappa": -0.038603,
+   "d_attraction": 0.028219999999999967,
+   "agree": false,
+   "beyond_noise": false
+  },
+  {
+   "cell": "Y3 lean_grouped f0",
+   "d_kappa": 0.036160000000000025,
+   "d_attraction": -0.02460000000000001,
+   "agree": false,
+   "beyond_noise": false
+  },
+  {
+   "cell": "Y3 lean_grouped f1",
+   "d_kappa": -0.024822999999999984,
+   "d_attraction": -0.051534000000000024,
+   "agree": true,
+   "beyond_noise": false
+  }
+ ],
+ "d26_trigger_fires_for": [],
+ "kappa_vs_attraction_all_networks": {
+  "n": 21,
+  "spearman": 0.5662337662337662,
+  "pearson": 0.8394721701530425
+ },
+ "kappa_vs_attraction_networks_with_spatial_pathway": {
+  "n": 16,
+  "spearman": 0.049999999999999996,
+  "pearson": 0.03932576732209738
+ }
+}

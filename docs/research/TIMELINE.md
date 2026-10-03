@@ -217,3 +217,28 @@ reproduces on `413a11e` and is fixed — by the barrier: atomic writes alone tur
 as implemented; D24's config-default switch deferred); D26, D27 implemented. The Kaggle run is one command,
 ≈ 4.4 h (S13 §8).
 
+
+### S13 part 2 · The screen runs — 2026-10-03
+**Did:** the 10 GPU cells on Kaggle T4 × 2 at commit `aed5257` in one session (05:04–09:40 UTC, 274 min of training against
+an estimate of 266), then Y1's two fused cells on CPU — `scripts/run_s13.py --nproc-per-node 2 --stream`. All 12 scored,
+`dirty: false`. The optional P0.3 re-score was skipped (S11 output not attached). Read in S14.
+
+### S14 · Reading the S13 screen — 2026-10-03
+**Triggered by:** the S13 cells — six frozen hypotheses to read as screening verdicts (D28), and a next round that depends
+on *why* each arm landed where it did.
+**Did:** read H19a–H21b and H15 exactly as frozen, each with a screen interval (kernel bootstrap combined with X1's seed sd);
+checked every cell's regime, guards and provenance; validated the new in-pipeline session κ against S12's offline probe
+and computed the fold-1 references S12 lacked; compared the single-pathway networks under R1 and the shipped regime cell
+by cell; traced the fusion weight's calib curve (and, choosing nothing, its held-out grid); and took the lean network
+apart from its saved artifacts — rank among X1 runs, ladder, per-class and per-session change, error overlap, pathway
+influence and κ, calibration. No training or model code was changed.
+**Found:** the cells are clean (F73). The lean network passes and beats every X1 run in all three cells — grouped 0.562,
+stratified 0.746 — with both same- and cross-session recall up and attraction down: off S12's frontier (F74, F75).
+Decoupled fusion keeps F1 but not robustness under R1 (F76), because the fit-first regime moves single pathways along the
+frontier (F77) and calib picks the session-carrying pathway's weight (F78). Masked MixStyle weakens the spatial pathway
+without removing its session (F79). 80/20 equals 70/30 (F80). The κ probe is reproducible but blind among
+spatial-pathway networks (F81).
+**Changed:** D30 (Y3 passes → replicate; Y1/Y2 rejected; joint network stays); D31 (D24 under review — the regime matters
+for the cross-session claim, not the score); D32 (κ reported, not used to select); D33 (S15 frozen: Y3 at seeds 1–2 with
+fresh-seed superiority/robustness hypotheses, plus a 4-run dissection; `preregistration_s14.json`). F65 challenged; F67,
+F69 annotated.

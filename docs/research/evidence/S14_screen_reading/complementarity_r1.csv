@@ -1,0 +1,9 @@
+fold,subset,n,share,joint_x1_right,fused_right
+0,spectral only right,103,0.126691,0.368932,0.281553
+0,spatial only right,34,0.0418204,0.735294,0.911765
+0,both right,43,0.0528905,0.976744,1
+0,neither,633,0.778598,0.0363349,0.0157978
+1,spectral only right,81,0.0993865,0.37037,0.234568
+1,spatial only right,44,0.0539877,0.545455,0.863636
+1,both right,39,0.0478528,1,1
+1,neither,651,0.798773,0.0322581,0.0138249
