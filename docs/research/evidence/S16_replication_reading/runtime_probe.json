@@ -1,0 +1,57 @@
+{
+ "method": "The S17 runtime estimate scales measured S13/S15 wall clocks (Kaggle T4 \u00d7 2) by each arm's per-step cost relative to v5 at k = 32. GPU and CPU differ in absolute speed, not much in the ratio between two configurations of the same network: this measures that ratio \u2014 one training step (forward + backward, batch 32, 64 \u00d7 64 patches, a random cube and mask) of each built model, median of 4 after 2 warm-up steps, 8 threads.",
+ "arms": {
+  "X1 (shipped architecture), k32": {
+   "bands": 32,
+   "tail": "[2,2,2,2]",
+   "tail_sides": [
+    8,
+    4,
+    2,
+    1
+   ],
+   "parameters": 2849478,
+   "step_s": 0.9615960419178009,
+   "relative_to_v5_k32": 1.08908157053052
+  },
+  "v5, k32": {
+   "bands": 32,
+   "tail": "[2,2,2,1]",
+   "tail_sides": [
+    8,
+    4,
+    2,
+    2
+   ],
+   "parameters": 2725700,
+   "step_s": 0.8829421669943258,
+   "relative_to_v5_k32": 1.0
+  },
+  "v5, k64 (Z2)": {
+   "bands": 64,
+   "tail": "[2,2,2,1]",
+   "tail_sides": [
+    8,
+    4,
+    2,
+    2
+   ],
+   "parameters": 2733960,
+   "step_s": 1.5077511669369414,
+   "relative_to_v5_k32": 1.7076443093317921
+  },
+  "v5, 4x4 end map (Z3), k32": {
+   "bands": 32,
+   "tail": "[2,2,1,1]",
+   "tail_sides": [
+    8,
+    4,
+    4,
+    4
+   ],
+   "parameters": 2742182,
+   "step_s": 0.8729925829684362,
+   "relative_to_v5_k32": 0.98873132986755
+  }
+ }
+}

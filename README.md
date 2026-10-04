@@ -1,6 +1,6 @@
-# SpectralSeedNet — rice-variety classification from full-spectrum VIS-NIR hyperspectral seed images
+# SpectralSeedNet — acquisition-aware HSI and RGB rice-variety research
 
-90 rice varieties · 8,624 single-kernel patches · **256 bands, 383–1006 nm** · 64×64 spatial.
+90 rice varieties · 8,624 paired kernels · 180 scans · acquired 256 bands, common valid 215 · HSI 64×64 and foreground RGB 224×224.
 Source: [Zenodo 3241923](https://zenodo.org/records/3241923) (Vu et al., Strathclyde).
 
 ```bash
@@ -9,8 +9,32 @@ python train.py
 ```
 
 Training on Kaggle's two T4s: [§10 · Kaggle — GPU T4 x2](#kaggle--gpu-t4-x2).
-**Next run — S15** (replicate the lean network Y3 at seeds 1–2 and dissect it; 10 runs ≈ 4.4 h, one session):
-`python scripts/run_s15.py --nproc-per-node 2 --stream` — the Kaggle cells are in [§10](#kaggle--gpu-t4-x2) under *S15 in one session*.
+**Current reference — SeedNet v5** (S16, D35): the lean network under R1 — grouped 0.571, stratified 0.745 macro-F1 at
+3 seeds. Until the default switch lands (S17 part 1, D36) it is selected with the overrides
+`single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0
+single.epochs=200 single.patience=40 model.spectral_descriptor=snv_morph 'model.spatial_tail_strides=[2,2,2,1]'
+model.cbam_min_hw=3`.
+**Next run — [S22](docs/research/studies/S22_complementary_v5/README.md):** six v5 GPU fits
+on validated complementary acquisition folds, then fixed RGB fusion. Prepared and
+CPU-profiled; GPU training has not run. S17/S18 remain reserved historical work.
+
+**Completed RGB phase:** [S20](docs/research/studies/S20_rgb_pathway/README.md) establishes
+all 8,624 paired crops/masks and compact full spectra; [S21](docs/research/studies/S21_complementary_rgb/README.md)
+runs 24 CPU arms on exhaustive complementary folds. RGB probe F1 **.451**, HSI32 **.535**,
+equal fusion **.592**. RGB is informative; reliable cross-session gains over v5 are
+still unproven. A coverage audit found the historical two grouped folds repeated some
+scans; old results are preserved, new studies use explicit corrected row plans.
+
+Start/resume at [RESEARCH_PROGRESS.md](docs/research/RESEARCH_PROGRESS.md).
+[Data/cache reproduction](docs/research/studies/S20_rgb_pathway/reproduce.md) documents
+`prepare_multimodal.py`, offline DINO caching and immutable CPU runners. Install the
+`prep` extra for preprocessing. Raw data, model weights and large derived arrays stay
+local and ignored; compact scientific evidence, predictions and figures are tracked.
+
+The engineering narrative below includes the project's earlier no-band-selection
+rationale. Current measured inputs are white-tile reflectance (215 common valid
+bands); v5 uses uniform430 k32 and the multimodal builder retains full compact
+measurements. The research log governs current claims and experiment priority.
 
 ---
 
@@ -914,7 +938,7 @@ the next version, and restore it before Cell 3:
 !cp -rn /kaggle/input/<this-notebook-slug>/HyperSpectral_Seeds/outputs /kaggle/working/HyperSpectral_Seeds/
 ```
 
-**S15 in one session — the next run** (after Cell 1; the 2-epoch smoke run is optional). The code must be on GitHub
+**S15 in one session** (done 2026-10-03, 10/10 cells; read in S16 — kept as the template for S17's cells; after Cell 1, the 2-epoch smoke run is optional). The code must be on GitHub
 `main` (Cell 2 prints the commit). Only the 10 frozen S15 cells run; nothing from S11/S13 is repeated and no S11/S13
 output needs to be attached.
 

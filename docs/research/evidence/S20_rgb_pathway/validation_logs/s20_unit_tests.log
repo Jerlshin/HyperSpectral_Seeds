@@ -1,0 +1,217 @@
+..................................F......sss...........sssssssss........ [  6%]
+.................................s......s..s............................ [ 12%]
+............ssssssssssssssssssssssssssssssssssssssssssssss..........ssss [ 19%]
+sssssssssssssssssssssssFs.ssssssssssssssssssssssssssssssssssssssssssssss [ 25%]
+ssssssss............................s.........F......................... [ 32%]
+........................................................................ [ 38%]
+...........sss..sssssssssssssss........sssssssssss.............sssssssss [ 45%]
+ssssssssss.....................ssssssssssssssssssssssssssssssssss....... [ 51%]
+s....................................................................... [ 58%]
+........................................................................ [ 64%]
+........................................................................ [ 71%]
+....................s.......................FF.F.sssssssssssssssssssssss [ 77%]
+sssssssssssssssssss...................................sssssssssss....... [ 83%]
+..................................................sssssssssssssssssssssx [ 90%]
+s.x......sssssssssssssssssss.................F..F....................... [ 96%]
+........sssssssssss................                                      [100%]
+=================================== FAILURES ===================================
+_____ test_branch_cs_power_normalisation_floor_survives_the_autocast_dtype _____
+
+    def test_branch_cs_power_normalisation_floor_survives_the_autocast_dtype() -> None:
+        """The same failure shape as the balance term, one branch upstream.
+    
+        Branch C pools its feature map and takes a *signed square root*, whose
+        derivative ``1 / (2 sqrt(x))`` is unbounded at zero — so the ``1e-8`` clamp
+        under it is load-bearing, not cosmetic. Evaluated at fp16 width the literal
+        rounds to zero (fp16's smallest subnormal is 5.96e-8), the clamp becomes a
+        no-op, and a pooled channel that is exactly zero — ``amax`` over an
+        all-negative map, which is a state and not an accident — backpropagates
+        ``inf``. ``sign() * inf`` at zero is then ``NaN``.
+    
+        The floor is raised per dtype instead: unchanged at fp32 and bf16, which
+        both hold 1e-8 exactly, and fp16's smallest normal where it cannot.
+        """
+        assert _pn_floor(torch.float32) == PN_EPS, "the fp32 path must be bit-identical"
+        assert _pn_floor(torch.bfloat16) == PN_EPS, "bf16 has fp32's exponent range"
+        assert _pn_floor(torch.float16) > PN_EPS
+    
+        for dtype in (torch.float16, torch.bfloat16):
+            dead = torch.zeros(4, dtype=dtype, requires_grad=True)
+            (dead.sign() * dead.abs().clamp(_pn_floor(dtype)).sqrt()).sum().backward()
+            assert torch.isfinite(dead.grad).all(), dtype
+    
+        naive = torch.zeros(4, dtype=torch.float16, requires_grad=True)
+        (naive.sign() * naive.abs().clamp(PN_EPS).sqrt()).sum().backward()
+>       assert torch.isnan(naive.grad).all(), "the NaN the dtype-aware floor removes"
+E       AssertionError: the NaN the dtype-aware floor removes
+E       assert tensor(False)
+E        +  where tensor(False) = <built-in method all of Tensor object at 0x13b7b3980>()
+E        +    where <built-in method all of Tensor object at 0x13b7b3980> = tensor([False, False, False, False]).all
+E        +      where tensor([False, False, False, False]) = <built-in method isnan of type object at 0x107f7d230>(tensor([0., 0., 0., 0.], dtype=torch.float16))
+E        +        where <built-in method isnan of type object at 0x107f7d230> = torch.isnan
+E        +        and   tensor([0., 0., 0., 0.], dtype=torch.float16) = tensor([0., 0., 0., 0.], dtype=torch.float16, requires_grad=True).grad
+
+tests/unit/test_amp_precision.py:486: AssertionError
+_____________ test_every_rank_reloads_the_final_epochs_checkpoint ______________
+
+tmp_path = PosixPath('/private/var/folders/__/t28g3nwn2vg90t4kgqdbghm40000gn/T/pytest-of-jerlshin/pytest-91/test_every_rank_reloads_the_fi0')
+
+    def test_every_rank_reloads_the_final_epochs_checkpoint(tmp_path: Path) -> None:
+>       seen = _run(tmp_path, with_barrier=True)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_checkpoint_race.py:120: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_checkpoint_race.py:115: in _run
+    mp.spawn(_rank, args=(_free_port(), str(tmp_path), with_barrier), nprocs=WORLD, join=True)
+                          ^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _free_port() -> str:
+        with socket.socket() as sock:
+>           sock.bind(("127.0.0.1", 0))
+E           PermissionError: [Errno 1] Operation not permitted
+
+tests/unit/test_checkpoint_race.py:38: PermissionError
+______ test_the_primary_model_constructs_on_every_rank_of_a_two_rank_job _______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x118d74440>
+
+    def test_the_primary_model_constructs_on_every_rank_of_a_two_rank_job(monkeypatch) -> None:
+        """The reported failure, reproduced as a job.
+    
+        Two processes, the project's own ``init_distributed`` and
+        ``wrap_for_training``, and the 215-band model built from a wavelength tensor
+        on each rank's device. On a multi-GPU box that device is ``cuda:${LOCAL_RANK}``
+        and this is the crash verbatim; over gloo it is the construction and
+        buffer-broadcast plumbing without the cross-device comparison, which is
+        still the half a CPU-only runner can check.
+    
+        ``mp.spawn`` re-raises a child's exception here with the child's traceback,
+        so a rank that fails to build fails this test by name.
+        """
+        if torch.cuda.is_available() and torch.cuda.device_count() < WORLD_SIZE:
+            # `init_distributed` refuses to place rank 1 on a one-GPU box, and it is
+            # right to. Hiding the devices from the children runs the same job over
+            # gloo rather than losing the test on a single-GPU machine.
+            monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
+    
+>       mp.spawn(_rank_entrypoint, args=(WORLD_SIZE, _free_port()), nprocs=WORLD_SIZE, join=True)
+                                                     ^^^^^^^^^^^^
+
+tests/unit/test_device_placement.py:237: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _free_port() -> str:
+        with socket.socket() as sock:
+>           sock.bind(("127.0.0.1", 0))
+E           PermissionError: [Errno 1] Operation not permitted
+
+tests/unit/test_device_placement.py:214: PermissionError
+_________________ test_the_code_is_the_code_the_s13_cells_ran __________________
+
+    def test_the_code_is_the_code_the_s13_cells_ran() -> None:
+>       assert s15.check_code_identity() == []
+E       assert ['code identi...5 cell runs.'] == []
+E         
+E         Left contains one more item: "code identity: 131 scoped files digest to d7f876950996…, not aed5257's fade41e5764c… — model/training/data/config cod...n requires it unchanged (or G-neutral re-run on the default and the Y3 keys against aed5257) before any S15 cell runs."
+E         Use -v to get more diff
+
+tests/unit/test_s15_plan.py:114: AssertionError
+_______ test_the_code_guard_sees_a_model_edit_and_ignores_a_runner_edit ________
+
+tmp_path = PosixPath('/private/var/folders/__/t28g3nwn2vg90t4kgqdbghm40000gn/T/pytest-of-jerlshin/pytest-91/test_the_code_guard_sees_a_mod0')
+
+    def test_the_code_guard_sees_a_model_edit_and_ignores_a_runner_edit(tmp_path: Path) -> None:
+        root = frozen.repo_root()
+        for rel in s15.code_files(root):
+            (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(root / rel, tmp_path / rel)
+>       assert s15.check_code_identity(tmp_path) == []
+E       assert ['code identi...5 cell runs.'] == []
+E         
+E         Left contains one more item: "code identity: 131 scoped files digest to d7f876950996…, not aed5257's fade41e5764c… — model/training/data/config cod...n requires it unchanged (or G-neutral re-run on the default and the Y3 keys against aed5257) before any S15 cell runs."
+E         Use -v to get more diff
+
+tests/unit/test_s15_plan.py:126: AssertionError
+______________ test_the_provenance_names_the_role_hashes_and_code ______________
+
+plan = S15Plan(cells=[S15Cell(arm='Y3', variant='lean_grouped', data='ablation/u430k32_grouped', fold=0, seed=1, regime=('sin...51fcf21f527a01ea2c0addf4ad59380f1a0989460', 'S14': '9e182670755e13a6ead29a761123841094a9b9fb6fae18392553893d65c1f3da'})
+
+    def test_the_provenance_names_the_role_hashes_and_code(plan) -> None:
+        cell = plan.cell("Y5/spatial_repair__f1_s0")
+        code = s15.code_digest()
+        record = s15.provenance(cell, cell.spec(), "cmd", plan.hashes, code)
+        assert record["study"] == "S15" and "dissection" in record["role"]
+        assert record["seed"] == 0 and record["arm_overrides"] == ["model.spatial_tail_strides=[2,2,2,1]",
+                                                                   "model.cbam_min_hw=3"]
+        assert record["preregistration_sha256"] == plan.hashes
+>       assert record["code_identity"]["identical"] is True
+E       assert False is True
+
+tests/unit/test_s15_plan.py:158: AssertionError
+________________ test_a_message_is_one_uninterrupted_colour_run ________________
+
+    def test_a_message_is_one_uninterrupted_colour_run() -> None:
+        """The whole line is styled, or none of it — never the left half.
+    
+        ``rich`` reads ``[…]`` in a printed string as a style tag. A message that
+        happens to contain one used to *close* the tracker's colour mid-sentence and
+        reopen a different one, which is the "green up to here, plain after"
+        corruption. The style now rides on ``Console.print``'s ``style=``, outside
+        anything the payload can reach.
+        """
+        out = _coloured_output(
+            lambda t: t.log_message("margins c7: R=0.20 [dim]P=0.10[/dim] and the rest", "success")
+        )
+>       assert out == "\x1b[32mmargins c7: R=0.20 [dim]P=0.10[/dim] and the rest\x1b[0m\n"
+E       AssertionError: assert 'margins c7: ...nd the rest\n' == '\x1b[32mmarg...rest\x1b[0m\n'
+E         
+E         - [32mmargins c7: R=0.20 [dim]P=0.10[/dim] and the rest[0m
+E         ? -----                                                 ----
+E         + margins c7: R=0.20 [dim]P=0.10[/dim] and the rest
+
+tests/unit/test_tracking.py:358: AssertionError
+_________________ test_an_epoch_line_is_styled_as_a_whole_line _________________
+
+    def test_an_epoch_line_is_styled_as_a_whole_line() -> None:
+        """The epoch line carries one colour run: opened once, reset once, at the end."""
+        out = _coloured_output(lambda t: t.log_row("stage1", {"Ph": "P2"}, step=181))
+        row = [line for line in out.splitlines() if "Ph: P2" in line][0]
+>       assert row.startswith("\x1b[36m") and row.endswith("\x1b[0m")
+E       AssertionError: assert (False)
+E        +  where False = <built-in method startswith of str object at 0x14a2c8d50>('\x1b[36m')
+E        +    where <built-in method startswith of str object at 0x14a2c8d50> = '[stage1 | Ep 181]  Time: 00:00:00  ETA: --:--:--  Ph: P2'.startswith
+
+tests/unit/test_tracking.py:396: AssertionError
+=============================== warnings summary ===============================
+tests/unit/test_best_source.py: 10 warnings
+  /opt/homebrew/Caskroom/miniforge/base/lib/python3.13/site-packages/sklearn/metrics/_classification.py:2801: UserWarning: y_pred contains classes not in y_true
+    warnings.warn("y_pred contains classes not in y_true")
+
+tests/unit/test_calib_split.py::test_stage1_fits_on_calib_and_selects_on_val
+tests/unit/test_calib_split.py::test_without_a_calib_split_everything_falls_back_to_val[_run_stage1]
+tests/unit/test_calib_split.py::test_the_phase3_oversampling_weights_are_fitted_on_calib
+  /Users/jerlshin/FieldOfInterest/ResearchWork/HSI_RGB_seeds/Code/src/spectralquadnet/engine/stages/stage1_progressive.py:379: UserWarning: Detected call of `lr_scheduler.step()` before `optimizer.step()`. In PyTorch 1.1.0 and later, you should call them in the opposite order: `optimizer.step()` before `lr_scheduler.step()`.  Failure to do this will result in PyTorch skipping the first value of the learning rate schedule. See more details at https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate
+    scheduler.step()
+
+tests/unit/test_calib_split.py::test_stage2_fits_its_270_parameters_on_calib
+tests/unit/test_calib_split.py::test_without_a_calib_split_everything_falls_back_to_val[_run_stage2]
+  /Users/jerlshin/FieldOfInterest/ResearchWork/HSI_RGB_seeds/Code/src/spectralquadnet/engine/stages/stage2_arcface.py:234: UserWarning: Detected call of `lr_scheduler.step()` before `optimizer.step()`. In PyTorch 1.1.0 and later, you should call them in the opposite order: `optimizer.step()` before `lr_scheduler.step()`.  Failure to do this will result in PyTorch skipping the first value of the learning rate schedule. See more details at https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate
+    scheduler.step()
+
+tests/unit/test_session_report.py::test_final_evaluation_without_a_map_writes_no_breakdown
+  /opt/homebrew/Caskroom/miniforge/base/lib/python3.13/site-packages/sklearn/metrics/_classification.py:534: UserWarning: A single label was found in 'y_true' and 'y_pred'. For the confusion matrix to have the correct shape, use the 'labels' parameter to pass all known labels.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/unit/test_amp_precision.py::test_branch_cs_power_normalisation_floor_survives_the_autocast_dtype
+FAILED tests/unit/test_checkpoint_race.py::test_every_rank_reloads_the_final_epochs_checkpoint
+FAILED tests/unit/test_device_placement.py::test_the_primary_model_constructs_on_every_rank_of_a_two_rank_job
+FAILED tests/unit/test_s15_plan.py::test_the_code_is_the_code_the_s13_cells_ran
+FAILED tests/unit/test_s15_plan.py::test_the_code_guard_sees_a_model_edit_and_ignores_a_runner_edit
+FAILED tests/unit/test_s15_plan.py::test_the_provenance_names_the_role_hashes_and_code
+FAILED tests/unit/test_tracking.py::test_a_message_is_one_uninterrupted_colour_run
+FAILED tests/unit/test_tracking.py::test_an_epoch_line_is_styled_as_a_whole_line
+8 failed, 772 passed, 334 skipped, 2 xfailed, 16 warnings in 35.71s

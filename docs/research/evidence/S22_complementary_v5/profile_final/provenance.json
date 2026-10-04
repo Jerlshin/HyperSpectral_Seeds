@@ -1,0 +1,8 @@
+{
+  "training_plan_sha256": "e9b4a6c01928267aab5b2297551165a7bcd8fefcf420da0f57787473f3271399",
+  "partition_plan_sha256": "e4d1e4a3d469f98c2c4c7e69b023a9835d56a12cda4159c108d4ea2504bf63ca",
+  "action": "profile",
+  "fold": 0,
+  "seed": 0,
+  "gpu_results": false
+}

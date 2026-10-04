@@ -14,93 +14,48 @@ describes *what we have learned and why the code is the way it is*.
 
 ## 1 · Where the research stands today
 
-*Last revised 2026-10-03 (after S15 part 1). Update this section whenever a finding or decision changes status.*
+*Last revised 2026-10-04 after completed S20/S21 and preparation of S22.*
 
-**The question.** 90 rice varieties, 8,624 single-kernel hyperspectral patches (Zenodo 3241923).
-Can a model identify the *variety* of a kernel — and how much of what a model scores on this
-dataset is variety recognition rather than recognition of *how and when the kernel was imaged*?
+**RGB is now an established data pathway and a measured research candidate.** All
+8,624 retained kernels in 180 scans have validated grid identities, native RGB masks,
+foreground crops and exact historical k32 parity. Full215 compact spectral summaries
+and occupied-region spectra are available; strict 214-band excludes pooled-white values.
+[S20 data/experiment report](studies/S20_rgb_pathway/README.md).
 
-**What we know, with evidence:**
+**Current evidence:** on S21's corrected complementary folds, RGB DINOv2 probe
+macro-F1 is **.450520**, HSI32 quantile+morph LDA **.534850**, and equal probability
+fusion **.591820**. Fusion cross-session recall is **.127858**, versus HSI32 **.077941**.
+RGB appearance helps; extra bands and concatenation improve aggregate F1 but reduce
+transfer, and correct kernel pairing offers no advantage over a within-scan shuffle.
+These are fixed-feature CPU screens on reused acquisitions, not neural/external
+replication. [All S21 controls](studies/S21_complementary_rgb/results.md).
 
-1. **The original 0.847 / 87.8 % results do not measure variety recognition.** They came from a
-   patch-level split in which every acquisition bundle was in both training and test, with bands
-   chosen using test labels, and a score maximised over ~944 checkpoints on the split it was
-   reported from. [F02–F05](FINDINGS.md) · [S01](studies/S01_independent_audit/README.md)
-2. **Held out by acquisition bundle, the honest level is far lower** — about 0.42 macro-F1 for a
-   linear model on mean spectra and 0.44–0.46 for a small spatial-spectral CNN. [F21](FINDINGS.md)
-3. **Even that held-out score is almost entirely session recognition.** 73 of 90 varieties had
-   both bundles imaged in the *same session*. On the 17 varieties whose bundles span two
-   sessions, every model we have run scores **≈ 0 recall**. [F23–F25](FINDINGS.md) ·
-   [S06](studies/S06_session_confound/README.md)
-4. **More bands are not better.** For the spatial-spectral proxy, 24–64 evenly spaced bands beat
-   the full cube on both calibration and held-out data, and no supervised band selector beats
-   even spacing on held-out data. [F17–F19](FINDINGS.md) · [S05](studies/S05_band_research/README.md)
-5. **The dataset is now white-tile reflectance (215 bands),** not per-pixel SNV (256 bands),
-   because the illumination's spectral shape is a session fingerprint that SNV cannot remove.
-   Reflectance moved that fingerprint from the lamp peak to a broad NIR offset rather than removing
-   it. [F27, F40](FINDINGS.md) · [S07](studies/S07_reflectance_calibration/README.md)
-6. **The network's first honest numbers** (SpectralSeedNet, k32 reflectance): grouped **0.530 ± 0.009**,
-   stratified 0.712 ± 0.033 macro-F1; cross-session recall 0.152 — but morphometrics *alone* reach 0.124.
-   [F30, F33](FINDINGS.md) · [S09](studies/S09_post_sweep_forensics/README.md)
-7. **What limits it is split.** The network adds only ≈ 0.05 over LDA on its own 40 scalar inputs. Within
-   the acquisition it scores as well as it fits, and it under-fits; 63 % of the grouped shortfall is
-   already there in-distribution. S09 read this as **score → model/training, claim → data/protocol**; S12 tested the
-   first half and revised it (item 10): fitting better did not move the score. [F31–F38](FINDINGS.md) · [D16, D17](DECISIONS.md)
-8. **Why it under-fits: the regime, demonstrably; the architecture, in specific places.** The clean-label objective
-   gets 3.6 % of the learning rate, most of it spent on a margin few training kernels can meet; measured cleanly the
-   network fits 0.87–0.95 of its training kernels, and within the acquisition held-out moves with fit one for one. The
-   regime that ran is not the documented one (aux weight 0.65 → 0.25, not 0.2). The spatial tail collapses to 1 × 1
-   (11.5 % of parameters never train), the spectral path's chemometric blocks are inert, and the network cannot see
-   reflectance level. Training was repaired first (X1, X4) — and fit is no longer the limit (item 10).
-   [F44–F56](FINDINGS.md) · [D19–D21](DECISIONS.md) · [S10](studies/S10_training_architecture_review/README.md)
-9. **The code now measures what the next experiments need, without changing what they are compared against.** Clean
-   fit on a fixed training subset, the aux weight actually applied, per-module gradients, logits, the code revision, and
-   every kernel scored once; a before/after gate shows none of it moves a training number. [F57, F58](FINDINGS.md) ·
-   [D22](DECISIONS.md) · [S11](studies/S11_frozen_arms_execution/README.md)
-10. **Fitting was not the bottleneck after all.** A fit-first regime makes the network classify 0.98–0.99 of its training
-    kernels, and every held-out number stays where it was (grouped 0.531, stratified 0.727); the extra fit is
-    memorisation, and with every regulariser removed the network fits 1.000 and generalises worse. Capacity is ample;
-    the remaining errors are systematic. [F59–F62](FINDINGS.md) · [S12](studies/S12_frozen_arms_reading/README.md)
-11. **The 3-D spatial pathway is where the network's extra accuracy comes from — and where the session lives.** Without
-    it the network has the best cross-session recall measured on this dataset (0.214) and much less session attraction;
-    the morphometric scalars are not what carries cross-session recall; training the two pathways jointly adds nothing
-    over fusing them afterwards (under the shipped regime — S14 found this robustness does not survive R1). Across bundles the network is no better than a linear model on within-kernel pixel
-    statistics. **The bottleneck is representation under acquisition shift (route A):** no more capacity or regime
-    work; the next round tests decoupled pathways, style randomisation and a leaner architecture, and the larger
-    headroom is in new information (RGB shape, more bands, transfer standards). [F63–F71](FINDINGS.md) ·
-    [D23–D27](DECISIONS.md)
-12. **A leaner network is the first change since the audit that moves every held-out number at once — at one seed so
-    far.** Removing what S10 found inert or broken (the chemometric descriptor blocks, the 1 × 1 tail end, a CBAM on a
-    2 × 2 map) gave grouped **0.562** and stratified **0.746**, above every run of the current reference in all three
-    cells, with same- *and* cross-session recall up (0.678 / 0.186) and session attraction down — off the trade-off
-    frontier S12 thought only new data could leave. It is a screening result (one seed); replication and a dissection
-    of which removal carries it are frozen and ready to run — 10 runs, one Kaggle command (S15, F82). [F74, F75](FINDINGS.md) · [D30, D33](DECISIONS.md) ·
-    [S14](studies/S14_screen_reading/README.md)
-13. **The two session-robustness ideas failed the screen, for informative reasons.** Training the pathways separately
-    and fusing them keeps the score but loses its robustness under the fit-first regime: fitting more moves each single
-    pathway toward session recognition, and a fusion weight chosen on calib — which shares the training session —
-    favours the session-carrying pathway. Mixing the 3-D stem's feature statistics across kernels weakens that pathway
-    without removing its session. The 80/20 split scores the same as 70/30 (0.728). The training-rows session κ is
-    reproducible but cannot rank networks that share the spatial pathway. [F76–F81](FINDINGS.md) · [D31, D32](DECISIONS.md)
+**Historical v5 remains the neural reference:** S16's original-prediction grouped
+F1 .570816 (three seeds), stratified .744788, same/cross recall .682841/.199401.
+S20's matched saved-logit fusion increases F1 by .040896 but cross-recall difference
+.009490 has interval [−.039544,.058211]. No established transfer gain over v5.
+Float16 argmax ties explain the tiny reconstructed-baseline difference.
+[S16](studies/S16_replication_reading/README.md), [S20](studies/S20_rgb_pathway/README.md).
 
-**What we do not know yet** (frozen in `evidence/S14_screen_reading/preregistration_s14.json` for S15, unless marked CPU):
+**Protocol correction:** historical grouped folds were individually group-disjoint
+but did not exhaust both scan directions:1,772 rows repeated and 1,776 never held out.
+S21's independently keyed splitter holds all 8,624 rows out exactly once. Historical
+matched comparisons/records remain intact. All17 cross-session bridges still touch
+session8;73 classes remain same-session, and calibration shares training acquisitions.
+New session/lot claims require new crossed acquisitions. [F102](FINDINGS.md).
 
-- Does the lean network's gain replicate at seeds 1–2, and is it a gain (≥ +0.02, CI excluding 0) and a robustness gain
-  on fresh seeds? → [FW-35](FUTURE_WORK.md)
-- Which removal carries it — the spectral descriptor or the spatial repair? → [FW-36](FUTURE_WORK.md)
-- Does a tabular foundation model or a per-pixel set encoder beat the lean network on kernel summaries (CPU)?
-  → [FW-28, FW-27](FUTURE_WORK.md)
-- What do high-resolution RGB shape and the 215-band cube add — still the levers with the most headroom? → [FW-18,
-  FW-03](FUTURE_WORK.md)
-- What is the within-acquisition (80/20) tier of the reference architecture, at 3 seeds? → [FW-37](FUTURE_WORK.md)
+**Next run:** [S22](studies/S22_complementary_v5/README.md), six exact-v5 fits on S21
+partitions followed by fixed RGB fusion. Config, source/input hashes, safe resume,
+exact-row analysis and CPU forward/backward validation are ready; **GPU unrun**.
+Keep k32 and simple fusion/unimodal controls; defer learned fusion and spectrum
+expansion until evidence earns them. S17/S18 remain reserved and unchanged.
 
-**The two most important figures so far** — the session confound, and how little the network adds:
+Read the [master plan](MASTER_RESEARCH_PLAN.md), [current handoff](RESEARCH_PROGRESS.md),
+[S19 rationale/prior art](studies/S19_next_generation_strategy/README.md) and
+[decisions D41–D44](DECISIONS.md). Earlier optimistic scores, SNV-era band preferences
+and architecture proposals remain dated evidence, not current generalization claims.
 
-![same- vs cross-session recall](figures/S06_session_confound/s06_same_vs_cross_recall.png)
-
-![network vs linear](figures/S09_post_sweep_forensics/s09_network_vs_linear.png)
-
----
+![Completed complementary-fold CPU screen](figures/S21_complementary_rgb/rgb_and_fusion.png)
 
 ## 2 · How this log is organised
 
@@ -116,7 +71,7 @@ docs/research/
 ├── GLOSSARY.md        the project's vocabulary (bundle, session, grouped, calib, uniform430 …)
 ├── studies/
 │   ├── _TEMPLATE.md   copy this to start a new study
-│   └── S00 … S15/     one folder per study, each with its own README.md
+│   └── S00 … S16, S19 … S22/     one folder per study, each with its own README.md
 ├── figures/<study>/   every figure the log shows (generated or copied — never hand-edited)
 ├── evidence/<study>/  snapshot of the raw results each claim rests on (outputs/ is git-ignored)
 └── tools/build_assets.py   regenerates evidence/ and figures/ from outputs/ and dataset/
@@ -146,7 +101,12 @@ study stays *modular* (it can be read, revised or superseded on its own).
 | [S12](studies/S12_frozen_arms_reading/README.md) | Reading X1, X2, X4: what binds now that the network fits | 2026-10-02 | complete (analysis); S13 arms frozen | fit solved, held-out unmoved; the 3-D pathway is the session channel; route A |
 | [S13](studies/S13_representation_screening/README.md) | Route-A arms Y1–Y4 as a single-seed screen | 2026-10-02 → | complete — run 2026-10-03 (10 + 2 cells), read in S14 | one seed, all arms/folds/contrasts (D28); P0 fixed (F72) |
 | [S14](studies/S14_screen_reading/README.md) | Reading the S13 screen: what passed, what failed and why | 2026-10-03 | complete (analysis); S15 frozen | lean network passes (grouped 0.562, stratified 0.746, cross 0.186); decoupling and MixStyle rejected; Y3 replication + dissection frozen |
-| [S15](studies/S15_y3_replication/README.md) | Replicating the lean network (Y3) and dissecting it (Y5) | 2026-10-03 → | part 1 complete (runner, tests, validation); GPU run pending | 10 runs ≈ 4.4 h, one command; training code = `aed5257` (digest guard, F82) |
+| [S15](studies/S15_y3_replication/README.md) | Replicating the lean network (Y3) and dissecting it (Y5) | 2026-10-03 | complete — run 2026-10-03 (10/10 cells), read in S16 | 10 runs, one command; training code = `aed5257` (digest guard, F82, F83) |
+| [S16](studies/S16_replication_reading/README.md) | Reading S15: replication, dissection, and the next round | 2026-10-03 | complete (analysis); S17 frozen | Y3 replicates → SeedNet v5 (grouped 0.571, stratified 0.745, cross 0.20); robustness = the spatial repair; S17 = tier-1 row + k64 + 4 × 4 end-map screens |
+| [S19](studies/S19_next_generation_strategy/README.md) | Whole-project and current prior-art reassessment; next-generation strategy | 2026-10-03 | complete synthesis; no new training | paired RGB/full-spectrum opportunity; controlled band/geometry tests; crossed acquisition and paper plan; S17/S18 reserved |
+| [S20](studies/S20_rgb_pathway/README.md) | RGB identity/preprocessing and 30-arm CPU screen | 2026-10-04 | complete | all 8,624 pairs; useful RGB/simple fusion; uncertain v5 transfer gain; legacy fold defect |
+| [S21](studies/S21_complementary_rgb/README.md) | Complementary-fold 24-arm RGB/HSI follow-up | 2026-10-04 | complete | exhaustive coverage; appearance/fusion gates pass; coupling/band transfer gates fail |
+| [S22](studies/S22_complementary_v5/README.md) | v5 rebaseline and fixed RGB fusion | 2026-10-04 | prepared; GPU unrun | six frozen GPU fits; CPU forward/backward passed; H40 unresolved |
 
 ## 4 · Conventions
 

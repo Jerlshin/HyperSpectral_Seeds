@@ -1147,6 +1147,124 @@ def fig_s14() -> None:
           "TTA). Held-out curves are post hoc and chose nothing")
 
 
+def fig_s16() -> None:
+    s = "S16_replication_reading"
+    ev = EVIDENCE / s
+    if not (ev / "arm_summary.csv").exists():
+        print("  skip    s16 (no arm_summary.csv — run the study's code/ scripts first)")
+        return
+    cells = pd.concat([pd.read_csv(ev / "cells.csv"), pd.read_csv(EVIDENCE / "S14_screen_reading" / "cells.csv"),
+                       pd.read_csv(EVIDENCE / "S12_frozen_arms_reading" / "cells.csv")], ignore_index=True)
+    x1 = cells[(cells.arm == "X1") & cells.variant.isin(["grouped", "stratified"])]
+    y3 = cells[cells.variant.isin(["lean_grouped", "lean_stratified"])].drop_duplicates("cell")
+
+    # 1 · The replication: every run, X1 vs v5, in each cell; seed 0 (the S13 screen) hollow.
+    panels = [("f1_tta", "macro-F1 (held-out; stratified = within acquisition)",
+               [("grouped", 0, "grouped f0"), ("grouped", 1, "grouped f1"), ("stratified", 0, "stratified")], None),
+              ("cross_recall_tta", "cross-session recall (17 varieties)",
+               [("grouped", 0, "f0"), ("grouped", 1, "f1")], (0.1666, "H21d ≥ 0.167")),
+              ("attraction_cross_tta", "cross-session attraction (lower = less session)",
+               [("grouped", 0, "f0"), ("grouped", 1, "f1")], (0.4240, "H21d ≤ 0.424"))]
+    fig, axes = plt.subplots(1, 3, figsize=(13.2, 3.7), gridspec_kw={"width_ratios": [1.5, 1, 1]})
+    for ax, (col, title, groups, thr) in zip(axes, panels, strict=True):
+        for i, (proto, fold, _lab) in enumerate(groups):
+            px = x1[(x1.variant == proto) & (x1.fold == fold)]
+            py = y3[(y3.variant == f"lean_{proto}") & (y3.fold == fold)]
+            for off, d, colr in ((-0.16, px, BLUE), (0.16, py, AQUA)):
+                for _, r in d.iterrows():
+                    hollow = colr == AQUA and r.seed == 0
+                    ax.plot([i + off + (r.seed - 1) * 0.05], [r[col]], "o", ms=8, mew=2,
+                            color=colr, mfc=SURFACE if hollow else colr, mec=colr if hollow else SURFACE, zorder=3)
+                m = d[col].mean()
+                ax.plot([i + off - 0.11, i + off + 0.11], [m, m], color=colr, lw=2, solid_capstyle="round", zorder=2)
+        if thr is not None:
+            ax.axhline(thr[0], color=INK_2, lw=1.2, ls=(0, (4, 3)), zorder=1)
+            ax.annotate(thr[1], (len(groups) - 0.55, thr[0]), xytext=(0, 3), textcoords="offset points",
+                        fontsize=7.5, color=INK_2, ha="right", va="bottom", bbox=dict(fc=SURFACE, ec="none", pad=0.5))
+        ax.set_xticks(range(len(groups)), [g[2] for g in groups])
+        ax.set_xlim(-0.6, len(groups) - 0.4)
+        ax.grid(axis="x", visible=False)
+        ax.set_title(title, fontsize=9.5)
+    axes[0].plot([], [], "o", color=BLUE, mec=SURFACE, ms=8, label="X1 (shipped architecture, R1), seeds 0–2")
+    axes[0].plot([], [], "o", color=AQUA, mec=SURFACE, ms=8, label="v5 = Y3 lean, seeds 1–2 (S15)")
+    axes[0].plot([], [], "o", color=AQUA, mfc=SURFACE, mew=2, ms=8, label="v5, seed 0 (S13 screen)")
+    axes[0].legend(loc="upper left", fontsize=7.5)
+    axes[0].set_ylim(0.50, 0.80)
+    fig.suptitle("The lean network replicates: every v5 run beats every X1 run in all three cells, and cross-session "
+                 "recall rises with attraction down", x=0.01, ha="left", fontsize=11, fontweight="bold", y=1.04)
+    _save(fig, s, "s16_replication.png", "evidence/S16_replication_reading/cells.csv, S14 cells.csv (v5 seed 0), S12 "
+          "cells.csv (X1); dots = runs (TTA), bars = means; dashed = frozen bar")
+
+    # 2 · The dissection: Δ vs the seed-matched X1 cell on the same kernels, kernel-bootstrap 95 % CI.
+    a = pd.read_csv(ev / "arm_summary.csv").set_index("arm")
+    rows = [("Y5 desc_only, seed 0 (H22a)", "descriptor removed only", ORANGE),
+            ("Y5 spatial_repair, seed 0 (H22b)", "spatial end map repaired only", VIOLET),
+            ("Y3 grouped, seed 0 (S13)", "both (v5), seed 0", AQUA),
+            ("Y3 grouped, seeds 0–2 (H21a)", "both (v5), seeds 0–2 vs X1 seeds 0–2", AQUA)]
+    mets = [("f1", "Δ macro-F1"), ("same", "Δ same-session recall"), ("cross", "Δ cross-session recall"),
+            ("attraction", "Δ attraction (down = less session)")]
+    fig, axes = plt.subplots(1, 4, figsize=(13.6, 3.0), sharey=True)
+    yy = np.arange(len(rows))[::-1]
+    for ax, (k, title) in zip(axes, mets, strict=True):
+        for yi, (arm, _lab, colr) in zip(yy, rows, strict=True):
+            v, lo, hi = a.loc[arm, f"d_{k}"], a.loc[arm, f"d_{k}_lo"], a.loc[arm, f"d_{k}_hi"]
+            filled = "seeds 0–2" in arm
+            ax.plot([lo, hi], [yi, yi], color=colr, lw=2, solid_capstyle="round", zorder=2)
+            ax.plot([v], [yi], "o", ms=8, mew=2, color=colr, mfc=colr if (filled or "Y5" in arm) else SURFACE,
+                    mec=SURFACE if (filled or "Y5" in arm) else colr, zorder=3)
+            ax.annotate(f"{v:+.3f}", (v, yi), xytext=(0, 7), textcoords="offset points", ha="center", fontsize=7.5,
+                        color=INK_2, bbox=dict(fc=SURFACE, ec="none", pad=0.4))
+        ax.axvline(0, color=MUTED, lw=1.2, zorder=1)
+        ax.set_title(title, fontsize=9.5)
+        ax.grid(axis="y", visible=False)
+        ax.set_ylim(-0.6, len(rows) - 0.3)
+    axes[0].set_yticks(yy, [r[1] for r in rows], fontsize=8.5)
+    fig.suptitle("Dissection (seed 0): the spatial end-map repair alone carries v5's robustness; the descriptor "
+                 "removal alone moves F1 a little and attraction not at all", x=0.01, ha="left", fontsize=11,
+                 fontweight="bold", y=1.07)
+    _save(fig, s, "s16_dissection.png", "evidence/S16_replication_reading/arm_summary.csv — Δ vs X1 seed 0 on the "
+          "same kernels (bottom row: v5 seeds 0–2 vs X1 seeds 0–2, hierarchical bootstrap); bars = 95 % CI")
+
+    # 3 · Who is rescued: cross-session accuracy by the kernel's acquisition session (3-seed means per fold).
+    se = pd.read_csv(ev / "v5_sessions.csv").sort_values(["fold", "session"]).reset_index(drop=True)
+    fig, ax = plt.subplots(figsize=(8.4, 4.4))
+    yy = np.arange(len(se))[::-1]
+    for yi, (_, r) in zip(yy, se.iterrows(), strict=True):
+        ax.plot([r.X1, r.Y3], [yi, yi], color=GRID, lw=3, solid_capstyle="round", zorder=1)
+        ax.plot([r.X1], [yi], "o", color=BLUE, ms=8, mec=SURFACE, mew=2, zorder=3)
+        ax.plot([r.Y3], [yi], "o", color=AQUA, ms=8, mec=SURFACE, mew=2, zorder=3)
+        if r.Y3 - r.X1 > 0.02:
+            ax.annotate(f"{r.Y3 - r.X1:+.2f}", (max(r.Y3, r.X1), yi), xytext=(8, 0), textcoords="offset points",
+                        fontsize=7.5, color=INK_2, va="center")
+    ax.set_yticks(yy, [f"fold {int(r.fold)} · session {int(r.session)} (n {int(r.n)})" for _, r in se.iterrows()], fontsize=8)
+    ax.plot([], [], "o", color=BLUE, mec=SURFACE, ms=8, label="X1, mean of 3 seeds")
+    ax.plot([], [], "o", color=AQUA, mec=SURFACE, ms=8, label="v5, mean of 3 seeds")
+    ax.legend(loc="lower right", fontsize=8)
+    ax.set_xlabel("held-out accuracy on cross-session kernels (TTA)")
+    ax.set_xlim(-0.02, 0.5)
+    ax.grid(axis="y", visible=False)
+    ax.set_title("v5's cross-session gain sits in kernels from sessions 2, 5 and 8;\nkernels imaged in sessions 0, 1, 3, "
+                 "4 and 7 stay at ≈ 0 for both networks", fontsize=10)
+    _save(fig, s, "s16_sessions.png", "evidence/S16_replication_reading/v5_sessions.csv (grouped; the kernel's own "
+          "acquisition session; 17 cross-session varieties)")
+
+
+# S19 writes its descriptive evidence directly, like S09; no raw-output copy needed.
+def fig_s19() -> None:
+    """Regenerate the metadata audit figures using tracked S19 evidence only."""
+    import runpy
+    runpy.run_path(str(EVIDENCE / "S19_next_generation_strategy" / "code" / "draw_figures.py"),
+                   run_name="__main__")
+
+
+def fig_s20() -> None:
+    """Regenerate S20 scientific figures from saved CPU-screen evidence only."""
+    import runpy
+    with plt.rc_context(matplotlib.rcParamsDefault):
+        runpy.run_path(str(EVIDENCE / "S20_rgb_pathway" / "code" / "draw_figures.py"),
+                       run_name="__main__")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--figures", action="store_true", help="skip the evidence snapshot")
@@ -1154,8 +1272,16 @@ def main() -> None:
     if not a.figures:
         snapshot_evidence()
     print("figures:")
-    for f in (fig_s01, fig_s04, fig_s05, fig_s06, fig_s07, fig_s09, fig_s10, fig_s12, fig_s14):
+    for f in (fig_s01, fig_s04, fig_s05, fig_s06, fig_s07, fig_s09, fig_s10, fig_s12, fig_s14, fig_s16, fig_s19, fig_s20, fig_s21):
         f()
+
+
+def fig_s21() -> None:
+    """Regenerate S21 scientific figures from saved complementary-fold evidence."""
+    import runpy
+    with plt.rc_context(matplotlib.rcParamsDefault):
+        runpy.run_path(str(EVIDENCE / "S21_complementary_rgb" / "code" / "draw_figures.py"),
+                      run_name="__main__")
 
 
 if __name__ == "__main__":

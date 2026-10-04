@@ -253,3 +253,64 @@ data or config code changed.
 **Found:** the 10 cells compose exactly as frozen on byte-identical training code; the two dissection arms partition
 Y3's parameter reduction exactly (F82).
 **Changed:** D34 (S15 as implemented, no deviation). The Kaggle run is one command, ≈ 4.4 h.
+
+### S15 part 2 · The replication and dissection run — 2026-10-03
+**Did:** the 10 frozen cells on Kaggle T4 × 2 at commit `52fba4f` (training code = `aed5257` by digest) in one session —
+265 min of training against an estimate of 266 — with `scripts/run_s15.py --nproc-per-node 2 --stream`. All 10 scored,
+`dirty: false`. Read in S16.
+
+### S16 · Reading S15 — 2026-10-03
+**Triggered by:** the S15 cells — seven frozen hypotheses (H21a–H22b) whose outcomes decide whether the lean network
+becomes the reference, what the paper may claim, and which half of it does the work.
+**Did:** checked every cell's provenance, code digest, runtime, seed, parameters, regime and guards; read H21a–H21e with
+hierarchical-bootstrap intervals and H22a/H22b with S14's screen intervals; profiled the dissection beyond its F1 bar
+(robustness, pathway use, κ, per-session rescue, additivity) and v5 at three seeds (separation from X1, ensembles, error
+structure, the linear bar, the ladder); measured the per-step cost of candidate next arms; froze S17. No training or model
+code was changed.
+**Found:** the cells are clean (F83). The lean network replicates — grouped 0.571, stratified 0.745, every run above every
+X1 run, seed 0 its worst seed, G3 met on fresh seeds (F84) — and so does its robustness, though only along session pairs
+that already transferred (F85); the within-acquisition gain is not confirmed (F86). The spatial end-map repair alone
+carries the robustness; the descriptor removal is housekeeping (F87). v5's seeds disagree more, so ensembles gain more but
+do not move robustness (F88); v5 is +0.044 over the best linear control across bundles, where X1 was +0.005 (F89).
+**Changed:** D35 (SeedNet v5 adopted; paper claims: grouped and cross-session gains, not within-acquisition); D36 (the
+config default becomes v5 in S17 part 1, behind G-neutral); D37 (S17 frozen: v5's 80/20 tier-1 row, a 64-band screen, a
+4 × 4 end-map screen; `preregistration_s16.json`). F74 confirmed; F67 superseded for v5; F48, F49, F75, F81 annotated.
+
+### S19 · Whole-project reassessment and next-generation strategy — 2026-10-03
+**Numbering:** S17 execution and S18 reading remain reserved by S16. S19 is a separate synthesis, not an unreported run.
+**Triggered by:** the request to reassess all history and current prior art for the strongest publication-quality route.
+**Did:** created the master plan first; reviewed S00–S16/code/data/evaluation, audited metadata/archive/band/calibration
+sources, verified 39 primary literature records, generated two reproducible figures and wrote the architecture,
+experiment/acquisition and paper plans. No GPU training or new held-out scoring.
+**Found:** RGB assets for all 180 scans now exist; 32/64 share only 8 bands; full 215 adds 20 blue-edge bands; three retained
+white references use pooled session shape; all cross-session bridges touch8; new-session inference is support-limited.
+Current generic RGB–HSI/gated architectures are prior art, and published scores are not directly comparable (F90–F96).
+**Changed:** D38–D40 prioritize complementary geometry/spectra, controlled band information tests and independent
+acquisition evidence; H26–H31 are draft; FW-39–43 define executable gates. Historical studies/frozen plans preserved.
+**Resume:** `MASTER_RESEARCH_PLAN.md`, `RESEARCH_PROGRESS.md`, `studies/S19_next_generation_strategy/README.md`.
+
+### S20 · RGB pathway and CPU complementary-information screen — 2026-10-04
+**Triggered by:** local raw assets and authorization to execute S19's next substantial phase.
+**Did:** verified 17.3-GB archive and all584 members; built/audited all8,624 paired native
+RGB masks/crops and compact full-band spectra; rejected two preprocessing versions
+before scoring; ran four frozen DINO CPU views, 30 arms × two legacy folds, spectral/
+resolution/shape/shuffle controls and fusion with three saved v5 seeds. Preserved
+predictions, probe exports, provenance, intervals, figures and reproducible audits.
+**Found:** RGB contributes information and simple fusion improves F1; v5 cross-session
+improvement remains uncertain. Legacy folds repeat1,772 rows and omit1,776.
+**Changed:** D41/D43; F97–F103; S21 separately frozen to repair coverage. No GPU training.
+
+### S21 · Complementary acquisition folds and RGB/HSI follow-up — 2026-10-04
+**Did:** independent keyed split RNG, exhaustive once-only row coverage, 24 fixed CPU
+arms × two folds using existing assets; no historical v5 checkpoint reuse.
+**Found:** RGB F1 .450520; HSI32 .534850; equal fusion .591820. Appearance/fusion gates
+pass; kernel-coupling and expanded-band transfer gates fail. Concatenation's higher
+F1 comes with lower cross recall. This is adaptive reused-data evidence.
+**Changed:** D42–D44; next run is corrected-fold v5 rebaseline, not learned fusion.
+
+### S22 · Corrected-fold v5 + fixed RGB fusion — prepared 2026-10-04
+**Did:** executable six-cell GPU plan, source/input hashes, opt-in validated training
+partitions, rank-safe output/resume preflight, once-only exact-row fusion analysis,
+and CPU training-only forward/backward profile (2,725,700 parameters, finite gradients).
+**Status:** GPU fits unrun; H40 unresolved. Pre-GPU engineering amendment preserved.
+**Next:** run six frozen cells, return complete outputs, analyze once and update claims.

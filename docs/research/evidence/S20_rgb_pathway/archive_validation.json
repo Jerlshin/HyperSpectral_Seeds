@@ -1,0 +1,11 @@
+{
+  "bytes": 17255958035,
+  "md5": "aeb8e4b9bfbf80550d368c13c766d761",
+  "sha256": "92af3258ba72950e301ee7f4030f59cc88922e21f34d00a06d68debb6b046c14",
+  "expected_md5": "aeb8e4b9bfbf80550d368c13c766d761",
+  "source": "https://zenodo.org/records/3241923",
+  "verified_date": "2026-10-04",
+  "first_bad_crc_member": null,
+  "members": 584,
+  "elapsed_seconds": 107.14187225000933
+}

@@ -1,0 +1,38 @@
+[
+  {
+    "arm": "dino_rgb",
+    "subset": "all",
+    "n": 8624,
+    "accuracy": 0.4577922077922078
+  },
+  {
+    "arm": "dino_rgb",
+    "subset": "residual_gt2",
+    "n": 0,
+    "accuracy": null
+  },
+  {
+    "arm": "hsi_q32",
+    "subset": "all",
+    "n": 8624,
+    "accuracy": 0.5602968460111317
+  },
+  {
+    "arm": "hsi_q32",
+    "subset": "residual_gt2",
+    "n": 0,
+    "accuracy": null
+  },
+  {
+    "arm": "fusion32_equal",
+    "subset": "all",
+    "n": 8624,
+    "accuracy": 0.6142161410018553
+  },
+  {
+    "arm": "fusion32_equal",
+    "subset": "residual_gt2",
+    "n": 0,
+    "accuracy": null
+  }
+]

@@ -31,6 +31,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import numpy.typing as npt
 import torch
 import torch.nn as nn
@@ -197,6 +198,8 @@ def build_run_context(
     cfg: ExperimentConfig | Any,
     tracker: ExperimentTracker,
     dist: DistContext,
+    *,
+    split_override: Splits | None = None,
 ) -> RunContext:
     """Resolve hardware, load data, build the splits, the model and its shadow.
 
@@ -247,7 +250,9 @@ def build_run_context(
     geometry = band_geometry(cfg.data, store)
     tracker.log_message(describe_band_geometry(geometry), level="plain")
 
-    splits = build_split_bundle(cfg)
+    splits = build_split_bundle(cfg) if split_override is None else split_override
+    if split_override is not None:
+        validate_split_override(splits, store.require_labels(), np.load(cfg.data.groups_path))
     for line in splits.report.summary():
         tracker.log_message(line, level="plain")
     assert_protocol_holds(cfg, splits, tracker)
@@ -299,7 +304,7 @@ def build_run_context(
     # gradient, so it needs neither replication nor a compiled graph, and
     # keeping it plain is what lets `save_ckpt` write one schema.
     if plan.channels_last and device.type == "cuda":
-        model = model.to(memory_format=torch.channels_last)  # type: ignore[call-overload]
+        model = model.to(memory_format=torch.channels_last)
 
     _log.info("[CONTEXT] Wrapping model for DDP training ...")
     t0 = time.monotonic()
@@ -333,6 +338,32 @@ def build_run_context(
         calib_loader=calib_loader,
         band_geometry=geometry,
     )
+
+
+def validate_split_override(
+    splits: Splits, labels: npt.NDArray[Any], groups: npt.NDArray[Any]
+) -> None:
+    """Validate explicit frozen rows before fitting morphology or constructing loaders.
+
+    An opt-in research protocol must neither trust a claimed report nor silently
+    substitute partitions after training-dependent preprocessing has been fitted.
+    The default historical split path is unchanged.
+    """
+    if splits.groups is None or not np.array_equal(splits.labels, labels) or not np.array_equal(splits.groups, groups):
+        raise ValueError("Frozen split labels/groups differ from the dataset")
+    parts = [splits.train, splits.calib, splits.val, splits.test]
+    if any(p.ndim != 1 or p.dtype.kind not in "iu" for p in parts):
+        raise ValueError("Frozen split rows must be integer vectors")
+    if not np.array_equal(np.sort(np.concatenate(parts)), np.arange(len(labels))):
+        raise ValueError("Frozen splits must partition all dataset rows exactly once")
+    train, held = np.r_[splits.train, splits.calib], np.r_[splits.val, splits.test]
+    if set(groups[train]) & set(groups[held]):
+        raise ValueError("Frozen split leaks a physical group")
+    classes = np.unique(labels)
+    if any(not np.array_equal(np.unique(labels[p]), classes) for p in [splits.train, splits.calib, held]):
+        raise ValueError("Frozen split lacks class support")
+    if not splits.report.train_eval_group_disjoint:
+        raise ValueError("Frozen split report contradicts the measured protocol")
 
 
 def assert_protocol_holds(

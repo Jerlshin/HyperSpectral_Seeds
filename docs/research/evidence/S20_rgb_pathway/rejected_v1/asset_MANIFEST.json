@@ -1,0 +1,108 @@
+{
+  "schema": 1,
+  "complete": true,
+  "kernels": 8624,
+  "scans": 180,
+  "files": {
+    "build_config.json": {
+      "bytes": 1763,
+      "sha256": "38f11bed054c7eeaa28216191adf76650e1e8cab1511b82f51b91a8d597c036d"
+    },
+    "exclusions.csv": {
+      "bytes": 1143,
+      "sha256": "b0362474b23784e752361469cc74e88a11f56a2bf1de07e279e3260e3821c462"
+    },
+    "groups.npy": {
+      "bytes": 69120,
+      "sha256": "e829e057a6b2b95cafae51cac767962fa75f3bd9c6376185afbe9812c5737a9f"
+    },
+    "hsi_regions.npy": {
+      "bytes": 118666368,
+      "sha256": "f0715e37d07326c6e8da21fa772c24a194b7bb025b8c11539a3297c8abf40114"
+    },
+    "hsi_summary.npy": {
+      "bytes": 37083328,
+      "sha256": "68afbb80b9766ca6133d5fe844515caf5a62239f1fc663cf993b83c8dd933706"
+    },
+    "kernel_manifest.csv": {
+      "bytes": 1933434,
+      "sha256": "063051a0e0edfbd81946a0203a7bea73125f03a1a8c527a7c36f15080086bd8b"
+    },
+    "labels.npy": {
+      "bytes": 69120,
+      "sha256": "20e037429e52ef5bdb52be64179b23ff7521939951ae4fde95c33a1810f7b8c6"
+    },
+    "masks.npy": {
+      "bytes": 70647936,
+      "sha256": "3d10dc4b736f4775491f796a0f54433eb46eeb891ae30d7c5f9ffa029e528e8e"
+    },
+    "morphology.npy": {
+      "bytes": 276096,
+      "sha256": "fb49f1d66a896e42083d250b8e01ef55f88d92deb4cc85446ab205dc878c222d"
+    },
+    "occupancy.npy": {
+      "bytes": 552064,
+      "sha256": "c7872cd862d24bfa71bbde912f2ff30827e9fbb5091157410b288af408a2e958"
+    },
+    "radiometry.json": {
+      "bytes": 2187,
+      "sha256": "ad552413a5d7ab9080d34785c2dcc4457ed0b4abb216a702ad712c7da25ee7ea"
+    },
+    "rgb.npy": {
+      "bytes": 1298153600,
+      "sha256": "e082494ab2c3220a63c7651826264bdef96e4e927bc22a8feb78016193c3ef97"
+    },
+    "rgb_descriptors.npy": {
+      "bytes": 793536,
+      "sha256": "b23b972df5fe10ec04d44b1f278a351bf84fcb5ee368c4775fe1c8590b646e36"
+    },
+    "rgb_morphology.npy": {
+      "bytes": 276096,
+      "sha256": "64ef127dc03d32be543a3ca0ca5266d96619fa627adbe59225457321a20e1420"
+    },
+    "scan_qc.csv": {
+      "bytes": 80953,
+      "sha256": "0cbc5d5bebbac1f35c67d004d45c8b3db73d4805f2e2890ea74d389180f034a1"
+    },
+    "scan_table.csv": {
+      "bytes": 35763,
+      "sha256": "97fc5ed7c73b3233280e28363502e738c90b6014cafe58e6dca1814ca0713deb"
+    },
+    "wavelengths.csv": {
+      "bytes": 3149,
+      "sha256": "82b315ac65ccd88ccd64593acf81e3809e12cd0fac1cabb8d8cf4dff24e235ea"
+    },
+    "white_spectra.npz": {
+      "bytes": 370268,
+      "sha256": "bf92eac31f4cdf5544187a39ba90f4fd29111c33099bc798c38f2324e8fedada"
+    }
+  },
+  "config": {
+    "schema": 1,
+    "crop_size": 224,
+    "orientation": "encoded sensor; ignore EXIF",
+    "source_hashes": {
+      "dataset/scan_table.csv": "97fc5ed7c73b3233280e28363502e738c90b6014cafe58e6dca1814ca0713deb",
+      "dataset/labels.npy": "20e037429e52ef5bdb52be64179b23ff7521939951ae4fde95c33a1810f7b8c6",
+      "dataset/groups.npy": "e829e057a6b2b95cafae51cac767962fa75f3bd9c6376185afbe9812c5737a9f",
+      "dataset/morphology.npy": "fb49f1d66a896e42083d250b8e01ef55f88d92deb4cc85446ab205dc878c222d",
+      "dataset/masks.npy": "3d10dc4b736f4775491f796a0f54433eb46eeb891ae30d7c5f9ffa029e528e8e",
+      "dataset/white_spectra.npz": "bf92eac31f4cdf5544187a39ba90f4fd29111c33099bc798c38f2324e8fedada",
+      "dataset/wavelengths.csv": "82b315ac65ccd88ccd64593acf81e3809e12cd0fac1cabb8d8cf4dff24e235ea",
+      "/Users/jerlshin/FieldOfInterest/ResearchWork/HSI_RGB_seeds/Code/scripts/prepare_multimodal.py": "833130815b3dd87423d43fdb437a740c17927c8bbbbc0d3dcc184e4e812f336c",
+      "src/spectralquadnet/data/prep/rgb.py": "e09d774316e22a991ca406ddb508267ee1a83a0167a8bd568fb33c9fe8510d2d",
+      "src/spectralquadnet/data/prep/multimodal.py": "1cb82e08cb55f3111d37ccf69440f381ab98bc1f993ad211b6d7c210143a0d35",
+      "src/spectralquadnet/data/prep/segmentation.py": "665bd44e3457ad3e83152b9d46e87abea93bc0f344b7ab21a96519f55aff694f",
+      "src/spectralquadnet/data/prep/patch_extraction.py": "abcc2027bcde4407d0c83dfe26e7d86546733148a6f2430b9bd48dec861560d6",
+      "src/spectralquadnet/data/prep/radiometry.py": "c586c9ca96064e7fa314b87014272ec86520d9a8b693d2ed5c15e0e5fda28ce3"
+    },
+    "archive_sha256": "92af3258ba72950e301ee7f4030f59cc88922e21f34d00a06d68debb6b046c14",
+    "full_dense": false,
+    "reference_manifest_sha256": "b2dee5b929befebf609ca317f711ff1379f9b755c4ae6e36c8dbf036b172e3a6"
+  },
+  "python": "3.13.12",
+  "seconds_this_invocation": 265.9029067910742,
+  "calibration": "historical resolved per-scan white; pooled source flags retained; strict probes exclude any non-own wavelength",
+  "dense_reconstruction": false,
+  "pairing": "unique 8x6 grid + homography orientation/residual QC; no pixelwise registration"
+}

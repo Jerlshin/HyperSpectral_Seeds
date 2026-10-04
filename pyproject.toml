@@ -41,6 +41,7 @@ figures = ["matplotlib>=3.7"]
 # never import these, so they stay out of the core dependency set.
 prep = [
     "opencv-python>=4.8",
+    "pillow>=10.0",
     "scikit-image>=0.22",
     "scipy>=1.11",
     "spectral>=0.23",

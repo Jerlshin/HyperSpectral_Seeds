@@ -10,42 +10,114 @@ ID and leave the row in place.
 
 ---
 
-## Priority 0 — S15: replicate the one arm that passed (Y3) and dissect it → frozen in [S14](studies/S14_screen_reading/README.md) (D33)
+## Current priority after S20/S21 (2026-10-04)
 
-S13's single-seed screen (read in S14): the lean network Y3 passed and beat every X1 run (F74, F75); decoupled fusion (Y1)
-and masked MixStyle (Y2) are screening rejections (F76–F79); the 80/20 tier equals 70/30 (F80). Frozen in
-`evidence/S14_screen_reading/preregistration_s14.json` (`9e182670…`). **10 GPU runs ≈ 4.4 h on Kaggle T4 × 2 (one
-session).** Implemented and validated ([S15](studies/S15_y3_replication/README.md) part 1, F82, D34):
-`python scripts/run_s15.py --nproc-per-node 2 --stream` (README §10, *S15 in one session*).
+**Next: [S22's six corrected-fold v5 fits](studies/S22_complementary_v5/README.md),
+then fixed RGB fusion.** Legacy two-fold coverage was not complementary (F102).
+Do not reuse old v5 networks on new partitions or silently amend reserved S17/S18.
 
-### FW-35 · Replicate Y3 at seeds 1, 2 (H21a–H21e) — **→ [S15](studies/S15_y3_replication/README.md), run pending**
-- **Builds on** D28, F74. Y3 grouped f0/f1 × seeds 1, 2 and stratified seeds 1, 2 (6 runs). H21a/H21b on seeds 0–2 as the
-  parent froze them; H21c (grouped superiority ≥ +0.020, CI excluding 0), H21d (cross ≥ 0.1666 and attraction ≤ 0.4240),
-  H21e (stratified superiority ≥ +0.018) on the fresh seeds only.
-- **If H21a ∧ H21b:** SeedNet v5 = the lean network; switch the config defaults to R1 + lean keys behind G-neutral (closes
-  D29 deviation 1); FW-37 next. **If not:** F74 was a false screening pass; X1 stays the reference. Y1/Y2/Y4 are not
-  replicated (D30).
+- FW-39 completed: all8,624 retained pairs, native masks/crops, compact full215 and
+  strict214 measurements, exact historical k32 parity, audited16 exclusions.
+- FW-40 initial screen completed in S20/S21 with locally cached DINOv2 and simple
+  fusion. Appearance helps; neural transfer improvement is unresolved. Broad RGB
+  tuning, DINOv3/ConvNeXt/HyperSL comparisons remain deferred, not missing results.
+- FW-41 band screen completed: larger axes improve F1 but lose transfer in these
+  probes. Keep k32 provisionally; fixed-width nonlinear/occupied-region mechanisms
+  remain conditional separate studies, not automatic next runs.
+- FW-42 remains essential: all17 bridge pairs touch session8, whose RGB capture
+  settings also change. Independent crossed acquisitions outrank claims of universal
+  invariance from existing kernels.
+- FW-43 remains open: closest-prior-art matching and a locked independent test are
+  still required for a broad final-paper claim.
+- FW-44 / H40 → S22: exactly six GPU fits and one frozen analysis, prepared/unrun.
+  Positive F1 with uncertain cross benefit warrants only a bounded benchmark claim;
+  failure retains unimodal HSI. See D42–D44 and the current resume file.
 
-### FW-36 · Dissect Y3 (H22a, H22b) — **→ [S15](studies/S15_y3_replication/README.md), run pending**
-- **Builds on** F75 (three removals at once; attribution unknown). `desc_only` (SNV + morph descriptor alone) and
-  `spatial_repair` (tail [2,2,2,1] + no CBAM on 2 × 2 alone), grouped f0/f1, seed 0 (4 runs, screen).
-- **Reading:** exactly one passes (≥ 0.5508) → that change carries the gain; both → either suffices; neither → interaction or
-  a favourable seed 0. Read as attribution only if H21a ∧ H21b.
+The dated S19 proposal and reserved HSI queue below are retained as history; this
+section explicitly updates their priority and completion status.
 
-### FW-37 · The paper's within-acquisition tier on the reference architecture
-- **Builds on** F80 (80/20 = 70/30 for X1, one seed). After S15: 80/20 with the lean network, seeds 0–2, under its own
-  frozen file — the D16 tier-1 row. Not before Y3 is confirmed (wasted otherwise).
+## S19 next-generation research priorities (2026-10-03)
 
-### FW-34 · P0 before the S13 session (D27) — **done in S13** (F72) except the X2 re-score
-The re-score of `X2/spatial_only__f1_s0` was skipped (S11 output not attached; F73). It decides nothing; its training-rows
-κ is computed in S14. Optional in the S15 session (attach the S11 notebook output).
+Read [S19](studies/S19_next_generation_strategy/README.md) and the
+[master plan](MASTER_RESEARCH_PLAN.md) before expanding the compute queue. The existing
+bounded S17 remains frozen below; the new route is complementary RGB/HSI information
+and independent acquisition evidence, not an open-ended continuation of SeedNet tuning.
+S19 updates the availability assumption behind FW-18: raw RGB/HSI archive is now local,
+but the full215 cube and validated kernel-level pairing still need building.
+
+### FW-39 · Verify multimodal data identity and full-band reconstruction — next engineering gate
+- Builds on F90/F93 and D38/D39. Validate raw payload/checksum, grid/centroid identity,
+  all16 missing HSI kernels, RGB masks and correspondence. Rebuild full215 and reproduce
+  the existing k32 slice with recorded tolerance; declare white-reference fit/apply scope.
+- Deliver versioned paired manifest, QC overlays/exclusions, wavelength and split hashes.
+  Failure means repair pairing/calibration before training, not silently drop hard cases.
+
+### FW-40 · Frozen RGB and spectral transfer probes plus simple fusion
+- H26/H31; D38. Cache foreground DINOv3/ConvNeXt and optional HyperSL features after
+  license/input/overlap checks. Compare modality-only and simple fusion with resolution/
+  grayscale/morphology controls. Optional current TabPFN baseline only if90-class and
+  resource support verified. A positive result earns bounded tuning; negative triggers
+  data/representation diagnostics and a declared stop rule.
+
+### FW-41 · Controlled band and distribution/geometry study
+- H27–H29; D39. Separate native-v5 Z2 from fixed-width spectral comparisons of
+  historical/nested32/64/195/215. Compare quantiles, pixel bags and occupied spatial
+  regions; physical wavelength versus index encoding. Do not require a positive Z2
+  for this different full-information test. Freeze a new study before confirmation.
+
+### FW-42 · Standards and crossed acquisitions
+- H30; F92/F96; D40. Measure residual nuisance independently of class, then test an
+  explicitly bounded correction/consistency family. Plan at least two training, one
+  development and one test session with common class support; cross/record seed lots.
+  This expands FW-12's third-bundle idea for a stronger external-validation design.
+
+### FW-43 · Matched baselines and final paper evidence
+- Reconstruct exact closest-prior-art protocols; common-data implementations of a
+  strong conventional, v5, spectral-spatial and RGB–HSI comparator. Freeze the final
+  model before a new-acquisition test. Prepare code/splits/negative results/claims
+  package; verify journal scope and current category/year quartile at submission.
+- See [experiment and paper plan](studies/S19_next_generation_strategy/experiments_and_paper.md).
+  No unrun hypothesis is a paper result, and no published score is comparable merely
+  because it uses the same dataset name.
+
+---
+
+## Priority 0 — S17: v5's tier-1 row and two screens → frozen in [S16](studies/S16_replication_reading/README.md) (D37)
+
+S15 (read in S16): the lean network replicated — grouped 0.571, stratified 0.745, cross-session 0.20, attraction 0.41 at
+3 seeds, every run above every X1 run — and is **SeedNet v5** (F84–F86, D35). Its robustness comes from the spatial
+end-map repair (F87). Frozen in `evidence/S16_replication_reading/preregistration_s16.json` (`3b623c45…`). **7 GPU runs
+≈ 4.3 h on Kaggle T4 × 2 (one session).** S17 part 1 first: the v5 default switch behind G-neutral (D36), the runner, and
+the k64 cube upload (PI).
+
+### FW-37 · The paper's within-acquisition tier on v5 (H23) — **→ S17 Z1**
+- **Builds on** F80 (80/20 = 70/30 for X1, one seed), F86 (v5's within-acquisition gain not confirmed). v5 at 80/20,
+  stratified, seeds 0–2 (3 runs). H23: 80/20 − 70/30 ≤ +0.03. Either way, the mean ± CI is the D16 tier-1 row.
+
+### FW-03 · Neural confirmation of the band budget — reduced to k64 on v5 (H24a–c) — **→ S17 Z2**
+- See the full item below (Priority 1). S17 screens k64 (2 runs) against v5's k32: non-inferior → k32 stays and FW-03
+  closes for k ≤ 64; superior without session cost → replicate and screen the 215-band cube; superior with session cost
+  → F70's pattern, k32 stays. Needs `./dataset_u430k64` (`scripts/build_presliced_dataset.py --set uniform430_k64`,
+  ≈ 4.6 GB) uploaded as a Kaggle dataset.
+
+### FW-38 · Does the end map's extent carry robustness? 4 × 4 end map (H25a, H25b) — **→ S17 Z3**
+- **Builds on** F87: the 1 × 1 → 2 × 2 repair alone gave +0.063 cross-session recall and −0.067 attraction. Two readings:
+  trainability of the last block (no further change at 4 × 4) or pooling spatial statistics over a map (a dose–response).
+  v5 with tail `[2,2,1,1]` (v5's rules), grouped f0/f1, seed 0 (2 runs, screen). A pass is replicated before it can
+  replace v5 (D28).
+
+### Read in S16
+- **FW-35 · Y3 at seeds 1–2** — H21a–H21d supported, H21e rejected (F84–F86) → SeedNet v5 (D35).
+- **FW-36 · Y3 dissection** — H22a (marginal) and H22b supported → redundant by the frozen rule; the robustness is the
+  spatial repair's (F87). Not replicated (H22's rule).
+- **FW-34 · the X2 re-score** — never run; decides nothing; dropped.
 
 ### Read in S14 (screening rejections — not replicated, D30)
 - **FW-31 · Y1 decoupled pathways + calib-weighted fusion** — H19a supported, H19b rejected (F76). The robustness S12 saw
   came from under-fitted single pathways (F77), and calib-chosen weights favour the session-carrying pathway (F78).
 - **FW-32 · Y2 masked MixStyle** — H20 rejected; the spatial pathway gets weaker without losing its session (F79).
-- **FW-33 · Y3 lean architecture** — **passes** (F74, F75) → FW-35, FW-36.
-- **FW-17 · X3/Y4 80/20 tier** — H15 supported at one seed (F80) → FW-37.
+- **FW-33 · Y3 lean architecture** — passed (F74, F75) → replicated in S15 (F84) → v5.
+- **FW-17 · X3/Y4 80/20 tier** — H15 supported at one seed (F80) → FW-37 on v5.
 
 ## Priority 0c — CPU-first representation track (no held-out until each has its own frozen file)
 
@@ -58,13 +130,15 @@ The re-score of `X2/spatial_only__f1_s0` was skipped (S11 output not attached; F
 - **Gate to a GPU arm:** calib macro-F1 ≥ quantile-LDA + 0.03 (≥ 0.73) **and** embedding κ no higher than the
   spectral-only network's + 0.05. If it passes only the first, within-kernel spread is session-laden for any learner.
   **S14 (D32):** κ's seed noise is ≈ 0.05 and it does not rank among spatial-style networks — keep the κ clause only as a
-  coarse check (≥ 0.1); the decisive comparison is now against Y3 (calib F1 0.71–0.74), not X1.
+  coarse check (≥ 0.1); the decisive comparison is now against Y3 (calib F1 0.71–0.74), not X1. **S16:** the bar is v5 at
+  3 seeds — calib F1 0.733, held-out 0.571 (0.562 no-TTA), cross-session 0.20.
 
 ### FW-28 · TabPFN-3 on kernel summaries — the strongest tabular baseline
 - **Builds on** F32, F67. TabPFN-3 (2026) reports first place on many-class tabular data and handles ≤ 200 features;
   inputs: mean + morph (40), quantiles + morph (104). Calib first; held-out once, in the paper's baseline table. If it
   matches the network on grouped, the network's claim must be stated against it, not against LDA. **S14:** the network
-  bar is now the lean network (grouped 0.562 at seed 0, F74), +0.033 over quantile-LDA no-TTA.
+  bar is now the lean network (grouped 0.562 at seed 0, F74), +0.033 over quantile-LDA no-TTA. **S16:** v5 at 3 seeds:
+  0.571 grouped (0.562 no-TTA, +0.044 over quantile-LDA; F89), 0.745 stratified.
 
 ### FW-29 · A transfer-standard protocol tier (calibration transfer)
 - **Builds on** F66, F68–F70; EPO (Roger et al. 2003), di-PLS. Estimate the session nuisance subspace from the
@@ -233,6 +307,7 @@ GroupNorm statistics over the foreground only, so activation scale stops dependi
 ### FW-03 · Neural confirmation of the band budget (S08)
 > **Status (S09):** re-ordered after FW-15 — run under the regime X1 selects. LDA now prefers 215 bands over k32
 > by +0.04 grouped (C3), against the S05 CNN proxy's preference for k32–64. Arms: k32, k64, full 215.
+> **Status (S16):** k64 on v5 frozen as S17 Z2 (a 2-run screen, H24a–c); 215 bands only if k64 is superior (D37).
 - **Builds on** F17 (fewer bands better for the CNN proxy), challenges D04.
 - **Design.** SpectralSeedNet on `uniform430` k ∈ {16, 24, 32, 48, 64} vs the full 215-band cube,
   grouped, 2 folds × 3 seeds, with session reporting (D14). Pre-register non-inferiority at −0.01
@@ -331,3 +406,5 @@ then the band-budget result; publish the negative results (F05, F09, F18, F25).
 | FW-19 instrumentation (D18, D20) + X2's pathway switch + the frozen-arm runner | S11 |
 | FW-15 X1, FW-16 X2, FW-20 X4 (run S11, read) | S12 |
 | FW-31 Y1, FW-32 Y2, FW-33 Y3, FW-17 Y4, FW-34 P0 (run S13, read) | S13 → S14 |
+| FW-35 Y3 replication, FW-36 Y3 dissection (run S15, read) | S15 → S16 |
+| FW-37 v5 tier-1 row, FW-03 (k64 screen), FW-38 end-map extent | S17 (frozen in S16) |

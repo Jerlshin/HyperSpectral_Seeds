@@ -1,0 +1,45 @@
+{
+  "kernels": 8624,
+  "classes": 90,
+  "scans": 180,
+  "sessions": 9,
+  "same_session_classes": 73,
+  "cross_session_classes": 17,
+  "cross_session_pairs": {
+    "0|8": 1,
+    "1|8": 2,
+    "2|8": 1,
+    "3|8": 1,
+    "4|8": 1,
+    "5|8": 9,
+    "7|8": 2
+  },
+  "lost_vs_original_8640": 16,
+  "all_cross_pairs_touch_session8": true,
+  "cube215_available": false,
+  "rgb_archive": {
+    "exists": true,
+    "full_crc_or_checksum_verified": false,
+    "bytes": 17255958035,
+    "members": 584,
+    "jpeg_members": 183,
+    "paired_scans": 180,
+    "chessboard_members": [
+      "RGB and VIS-NIR HSI Data for 90 Rice Seed Varieties/chessboard/",
+      "RGB and VIS-NIR HSI Data for 90 Rice Seed Varieties/chessboard/._chessboard.JPG",
+      "RGB and VIS-NIR HSI Data for 90 Rice Seed Varieties/chessboard/._chessboard.hdr",
+      "RGB and VIS-NIR HSI Data for 90 Rice Seed Varieties/chessboard/._chessboard.raw",
+      "RGB and VIS-NIR HSI Data for 90 Rice Seed Varieties/chessboard/chessboard.JPG",
+      "RGB and VIS-NIR HSI Data for 90 Rice Seed Varieties/chessboard/chessboard.hdr",
+      "RGB and VIS-NIR HSI Data for 90 Rice Seed Varieties/chessboard/chessboard.raw"
+    ],
+    "index_members": [
+      "RGB and VIS-NIR HSI Data for 90 Rice Seed Varieties/._index.csv",
+      "RGB and VIS-NIR HSI Data for 90 Rice Seed Varieties/index.csv",
+      "__MACOSX/RGB and VIS-NIR HSI Data for 90 Rice Seed Varieties/._index.csv"
+    ]
+  },
+  "band32_in_band64": 8,
+  "recall_ceiling_if_cross_fixed_at_v5": 0.8487757444444444,
+  "interpretation": "Ceiling expression is conditional macro-recall arithmetic, not a dataset ceiling or macro-F1 bound."
+}

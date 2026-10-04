@@ -1,0 +1,138 @@
+{
+ "mean_by_arm": {
+  "X1 s0": {
+   "f1": 0.5354,
+   "same": 0.6517,
+   "cross": 0.1492,
+   "attraction": 0.457,
+   "calib_f1": 0.711,
+   "ece": 0.1375,
+   "kappa_spectral": 0.1319,
+   "kappa_spatial": 0.3255,
+   "influence_spatial": 62.9306
+  },
+  "Y3 s0": {
+   "f1": 0.5618,
+   "same": 0.6777,
+   "cross": 0.1855,
+   "attraction": 0.4189,
+   "calib_f1": 0.7245,
+   "ece": 0.1043,
+   "kappa_spectral": 0.0691,
+   "kappa_spatial": 0.3538,
+   "influence_spatial": 74.4348
+  },
+  "desc_only": {
+   "f1": 0.5532,
+   "same": 0.6705,
+   "cross": 0.1676,
+   "attraction": 0.4502,
+   "calib_f1": 0.7296,
+   "ece": 0.1006,
+   "kappa_spectral": 0.0607,
+   "kappa_spatial": 0.3483,
+   "influence_spatial": 69.2613
+  },
+  "spatial_repair": {
+   "f1": 0.5699,
+   "same": 0.6803,
+   "cross": 0.2126,
+   "attraction": 0.39,
+   "calib_f1": 0.7302,
+   "ece": 0.0916,
+   "kappa_spectral": 0.056,
+   "kappa_spatial": 0.3535,
+   "influence_spatial": 75.3915
+  }
+ },
+ "solution_similarity": {
+  "jaccard desc_only vs X1 s0": {
+   "f0": 0.7038745387453874,
+   "f1": 0.7291381668946648,
+   "mean": 0.7165063528200262
+  },
+  "jaccard desc_only vs Y3 s0": {
+   "f0": 0.7388535031847133,
+   "f1": 0.7392941176470588,
+   "mean": 0.739073810415886
+  },
+  "jaccard spatial_repair vs X1 s0": {
+   "f0": 0.671689497716895,
+   "f1": 0.6945722171113156,
+   "mean": 0.6831308574141053
+  },
+  "jaccard spatial_repair vs Y3 s0": {
+   "f0": 0.7151219512195122,
+   "f1": 0.7333333333333333,
+   "mean": 0.7242276422764227
+  },
+  "jaccard Y3 s0 vs X1 s0": {
+   "f0": 0.7092001849283402,
+   "f1": 0.7033976124885216,
+   "mean": 0.7062988987084309
+  },
+  "per-class \u0394 corr with Y3: desc_only": {
+   "f0": 0.3983605538745311,
+   "f1": 0.5384477022737325,
+   "mean": 0.4684041280741318
+  },
+  "per-class \u0394 corr with Y3 (cross classes): desc_only": {
+   "f0": -0.041588633385931176,
+   "f1": 0.6543664289494554,
+   "mean": 0.3063888977817621
+  },
+  "per-class \u0394 corr with Y3: spatial_repair": {
+   "f0": 0.4472688893836921,
+   "f1": 0.7448110228150739,
+   "mean": 0.596039956099383
+  },
+  "per-class \u0394 corr with Y3 (cross classes): spatial_repair": {
+   "f0": 0.35770344461046677,
+   "f1": 0.7228432797087474,
+   "mean": 0.5402733621596071
+  }
+ },
+ "cross_by_session_pooled": {
+  "X1 s0": {
+   "0": 0.0,
+   "1": 0.0,
+   "2": 0.229,
+   "3": 0.0,
+   "4": 0.0,
+   "5": 0.098,
+   "7": 0.0,
+   "8": 0.241
+  },
+  "Y3 s0": {
+   "0": 0.021,
+   "1": 0.0,
+   "2": 0.312,
+   "3": 0.0,
+   "4": 0.0,
+   "5": 0.108,
+   "7": 0.0,
+   "8": 0.305
+  },
+  "desc_only": {
+   "0": 0.021,
+   "1": 0.0,
+   "2": 0.375,
+   "3": 0.0,
+   "4": 0.0,
+   "5": 0.121,
+   "7": 0.0,
+   "8": 0.255
+  },
+  "spatial_repair": {
+   "0": 0.021,
+   "1": 0.01,
+   "2": 0.312,
+   "3": 0.0,
+   "4": 0.0,
+   "5": 0.2,
+   "7": 0.0,
+   "8": 0.303
+  }
+ },
+ "note": "seed 0 only; the dissection arms and X1 s0 share no initial weights (modules differ), so 'matched' means same kernels, same seed, not paired initialisation. Decides nothing."
+}

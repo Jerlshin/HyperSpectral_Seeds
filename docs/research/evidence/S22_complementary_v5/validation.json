@@ -1,0 +1,8 @@
+{
+  "frozen_plan_sha256": "f44c0d2e22f2849816cf2a8f2cdad8ae90084c695b06e4c181e7fc9b000f6f73",
+  "training_input_hashes_verified": 161,
+  "analysis_input_hashes_verified": 2,
+  "six_cells_and_cpu_profile_verified": true,
+  "local_completed_gpu_cells": [],
+  "scope": "Preparation integrity; does not validate GPU execution or claim a result."
+}

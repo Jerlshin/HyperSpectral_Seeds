@@ -62,8 +62,8 @@ training bundle · `held-out` = the other acquisition bundle (`val ∪ test`), s
 | F45 | Clean fit (D18 definition: eval mode, no augmentation, margin 0) of the selected checkpoints is 0.87–0.95 (mean 0.90 grouped, 0.91 stratified); train–calib gap ≈ 0.19 in every run | S10 | train / calib | E4 | standing — refines F35 |
 | F46 | Within acquisition, held-out F1 rises ≈ 1 : 1 with clean training accuracy (r = 0.99, slope 1.01, n = 6); across bundles r = 0.36 | S10 | train vs strat / held-out | E3 | **challenged by F60** — under intervention (X1) the realised slope is 0.18 |
 | F47 | The margin phase's loss is the margin, not chance: on the same training kernels plain-cosine CE 0.15–0.39 vs margin-penalised 2.9–6.7; 0–52 % satisfy m = 0.30; LS at s = 32 fixes the cosine gap at 0.21–0.24 | S10 | train | E4 | standing — refines F35 |
-| F48 | The spatial tail reduces the kernel to 1 × 1; the last 3 × 3 stride-2 conv sees a 2 × 2 map, so 327,680 parameters (11.5 %) never receive a gradient | S10 | — | E4 | standing |
-| F49 | The spectral pathway is in effect SNV(32) + morphometrics: the learned index bank never left uniform; index, continuum, D₁, D₂ carry ≈ 1 % of the descriptor's normalised variance | S10 | train / calib | E4 | standing |
+| F48 | The spatial tail reduces the kernel to 1 × 1; the last 3 × 3 stride-2 conv sees a 2 × 2 map, so 327,680 parameters (11.5 %) never receive a gradient | S10 | — | E4 | standing — **its repair carries v5's robustness gain (F87)** |
+| F49 | The spectral pathway is in effect SNV(32) + morphometrics: the learned index bank never left uniform; index, continuum, D₁, D₂ carry ≈ 1 % of the descriptor's normalised variance | S10 | train / calib | E4 | standing — removing the blocks is neutral to slightly positive, not a lever (F87) |
 | F50 | Reflectance level reaches the learned layers only through the 6-parameter ECA gate; a ±20–25 % gain flips 8–18 % of calib predictions | S10 | calib | E4 | standing |
 | F51 | Eval-time on calib: morphometrics at the train mean cost 0.22 macro-F1; spatial path off → 0.19–0.21; spectral path off → 0.42–0.48 | S10 | calib | E2 | standing — retrained (X2): −0.040 / −0.081 / −0.099 held-out (F63, F64) |
 | F52 | Linear probes (train → calib): fused embedding ≈ network (0.70 / 0.72); spatial output 0.54 / 0.56; spectral output 0.42 / 0.44, below its own input (0.62 / 0.59); the aux head fits 0.53–0.81 of training kernels | S10 | train / calib | E2 | standing |
@@ -81,22 +81,29 @@ training bundle · `held-out` = the other acquisition bundle (`val ∪ test`), s
 | F64 | The spatial 3-D pathway adds +0.10 F1 (H14b rejected) and is the session channel: spectral-only reaches cross-session recall 0.214 (+0.054, CI +0.025…+0.082) with attraction 0.265 vs 0.47 | S12 | held-out | E4 (F1) / E3 (attraction) | standing |
 | F65 | Joint training adds nothing over late fusion of separately trained pathways (F1 +0.006 for fusion, CI 0.000…+0.012); fusion keeps cross-session recall (+0.018) and lowers attraction (0.46 → 0.39), which a 2-seed full ensemble does not; the joint network follows its spatial pathway on cross-session kernels | S12 | held-out (post hoc) | E3 | **challenged** (S14): regime-specific — under R1 fusion has *less* cross-session recall than the joint network (F76–F78) |
 | F66 | The spectral-only network behaves as shrinkage LDA on SNV + morph (0.431 / 0.214 / 0.265 vs 0.416 / 0.202 / 0.252); the same/cross-session trade-off follows how much a model trusts low-variance directions | S12 | held-out (linear controls) | E3 | standing |
-| F67 | Shrinkage LDA on within-kernel pixel quantiles + morph (104 numbers) matches the network on grouped (0.518 vs 0.519–0.523 no-TTA) and calib (0.70); spread statistics carry the session (attraction 0.44–0.65); network − linear is +0.09 stratified but +0.01 grouped | S12 | calib / held-out | E3 | standing for X1 — the lean network (Y3) is +0.033 grouped (no-TTA) over it (F74) |
+| F67 | Shrinkage LDA on within-kernel pixel quantiles + morph (104 numbers) matches the network on grouped (0.518 vs 0.519–0.523 no-TTA) and calib (0.70); spread statistics carry the session (attraction 0.44–0.65); network − linear is +0.09 stratified but +0.01 grouped | S12 | calib / held-out | E3 | standing for X1 — **superseded for v5 by F89** (+0.044 over it at 3 seeds) |
 | F68 | Detector noise steps +25–30 % at session 5 and is the most session-decodable within-kernel statistic (κ 0.35), but equalising the noise floor leaves the session information in within-kernel spread intact (κ 0.369 → 0.358) | S12 | train / held-out | E4 (step) / E3 | standing |
 | F69 | A training-rows class-disjoint session κ ranks held-out attraction across 13 linear representations (ρ 0.93) and separates spectral-only networks (κ 0.13–0.18) from spatial-pathway networks (0.31–0.36; r 0.80, ρ 0.23 within); inside joint networks the spatial output is 2–4× more session-decodable than the spectral output | S12 | train (validated on held-out) | E3 | standing — refined by F81 (no ranking among 16 spatial networks; seed noise ≈ 0.05) |
 | F70 | Reflectance level added to a level-blind representation buys +0.02–0.04 F1 and costs 0.02–0.08 cross-session recall and +0.05–0.13 attraction (linear, both LDA estimators) — the H18a ∧ ¬H18b pattern | S12 | held-out (linear controls) | E3 | standing |
 | F71 | Infrastructure: a best checkpoint saved at the final epoch races the other rank's reload (non-atomic save, no barrier) → one X2 cell unscored; `dirty: true` on Kaggle is the dataset symlink; clip 50 bound on ≤ 18 group-steps per X1/X4 run | S12 | — | E4 | standing — (a), (b) fixed in S13 (F72) |
 | F72 | The S13 code at its defaults moves no training number (G-neutral vs `413a11e`: 3 regimes, 30/30 step losses, 222/222 tensors, held-out ±TTA identical) and the gate detects both new arms (Y2 212, Y3 214 tensors differ); F71a reproduces on `413a11e` as rank 1's `EOFError` and is gone with atomic writes + an end-of-stage barrier — without the barrier rank 1 silently reloads the previous epoch | S13 | synthetic | E4 | standing |
 | F73 | The S13 cells are clean: 12/12 scored on `aed5257` with `dirty: false` (the symlink fix works), no regime deviation, every held-out kernel once; the clip guard fires only on single clipped group-steps (≤ 0.15 %); the in-pipeline κ reproduces S12's offline probe (|Δ| ≤ 0.021); the P0.3 re-score was not run | S14 | — | E4 | standing |
-| F74 | The lean network (Y3) passes its screen and beats X1 beyond seed spread: grouped 0.562 (+0.026 vs X1 s0, CI +0.018…+0.035), stratified 0.746 (+0.022); above every X1 run in all three cells (p = 1/64 under exchangeability) | S14 | held-out | E3 (screen, 1 seed) | standing — replication frozen (S15, H21a–H21e) |
-| F75 | Y3's gain is broad and off S12's same/cross frontier (same +0.026, cross +0.036, attraction −0.038, ECE 0.12–0.15 → 0.10–0.11), grows from calib (+0.013) to held-out, and comes with *more* spatial reliance (influence 62 → 75 %) and a spectral output half as session-decodable; which of its three removals carries it is unknown | S14 | calib / held-out | E3 (screen) | standing — dissection frozen (Y5, H22) |
+| F74 | The lean network (Y3) passes its screen and beats X1 beyond seed spread: grouped 0.562 (+0.026 vs X1 s0, CI +0.018…+0.035), stratified 0.746 (+0.022); above every X1 run in all three cells (p = 1/64 under exchangeability) | S14 | held-out | E3 (screen, 1 seed) | **confirmed by F84** (3 seeds; seed 0 was the lowest) |
+| F75 | Y3's gain is broad and off S12's same/cross frontier (same +0.026, cross +0.036, attraction −0.038, ECE 0.12–0.15 → 0.10–0.11), grows from calib (+0.013) to held-out, and comes with *more* spatial reliance (influence 62 → 75 %) and a spectral output half as session-decodable; which of its three removals carries it is unknown | S14 | calib / held-out | E3 (screen) | standing — replicated (F84, F85); attribution answered by F87 |
 | F76 | Under R1, decoupled pathways fused on calib keep F1 (0.545, H19a supported) but not robustness (cross 0.134, attraction 0.490; H19b rejected); equal weight gives X1's robustness (0.148 / 0.463), not more | S14 | held-out | E3 (screen) | standing |
 | F77 | The regime moves single-pathway networks along the frontier: under R1 spectral-only fits 0.95 (shipped 0.74) and its cross-session recall falls 0.214 → 0.164 (matched −0.037 / −0.031); spatial-only gains +0.056 F1, all same-session, and loses 0.042 cross with attraction 0.40 → 0.53; the joint network does not move (F59) | S14 | train / held-out | E3 | standing |
 | F78 | Calib-chosen fusion weights favour the session-carrying pathway (w_spectral 0.30 under R1, ≈ 0.48 shipped); on the held-out grid (post hoc) cross-session recall rises with the spectral weight and only w = 0.75 meets the H19 bars, by ≤ 0.0012 | S14 | calib / held-out (post hoc) | E3 | standing |
 | F79 | Masked MixStyle lowers the spatial pathway's usefulness (influence 62 → 43 %, calib F1 −0.03) without lowering its session content (κ 0.31–0.32 unchanged): H20 rejected, no frontier move | S14 | train / held-out | E3 (screen) | standing |
 | F80 | The 80/20 within-acquisition tier equals the 70/30 stratified level (0.728 F1 / 0.730 acc vs 0.727; H15 supported): 14 % more same-acquisition training kernels add nothing | S14 | strat | E3 (screen) | standing |
-| F81 | The training-rows session κ is reproducible (|Δ| ≤ 0.021) but varies by up to 0.049 between seeds and does not rank held-out attraction among 16 spatial-pathway networks (ρ 0.05) | S14 | train (validated on held-out) | E3 | standing |
+| F81 | The training-rows session κ is reproducible (|Δ| ≤ 0.021) but varies by up to 0.049 between seeds and does not rank held-out attraction among 16 spatial-pathway networks (ρ 0.05) | S14 | train (validated on held-out) | E3 | standing — blind again on six v5 networks (F89) |
 | F82 | The S15 runner composes exactly the 10 frozen cells (none repeats S13) on training code byte-identical to `aed5257` (129 files, digest `fade41e5…`); the dissection arms partition Y3's parameter reduction exactly (41,248 + 82,530 = 123,778); every arm finishes a 2-rank job with each held-out kernel scored once | S15 | synthetic / structural | E4 | standing |
+| F83 | The S15 cells are clean: 10/10 scored on `52fba4f` with `dirty: false`, training code = `aed5257` (digest `fade41e5…`), S13's runtime, seeds and parameters as frozen, no regime deviation, F1 / cross / attraction re-derived exactly; one cell stopped before epoch 160 (`desc_only` f1, epoch 143) | S16 | — | E4 | standing |
+| F84 | The lean network (SeedNet v5) replicates and beats X1 beyond seed spread: grouped 0.571 (6 runs), stratified 0.745 (3); on fresh seeds +0.047 (CI +0.034…+0.060); every v5 run above every X1 run in all three cells (p = 1/8,000); seed 0 was v5's worst seed; G3 met (+0.040 vs 2σ 0.020) | S16 | held-out | E4 | standing |
+| F85 | v5's robustness gain replicates — fresh-seed cross-session recall 0.206 vs 0.145, attraction 0.410 vs 0.467 — but only on sessions that already transferred (2, 5, 8); kernels imaged in sessions 0, 1, 3, 4, 7 stay at ≈ 0 and 8/17 cross-session varieties at ≤ 0.05; a 3-seed ensemble does not move it | S16 | held-out | E4 (gain) / E3 (breakdown) | standing |
+| F86 | The within-acquisition gain is not confirmed: fresh seeds +0.016 (CI −0.005…+0.037; H21e rejected), all seeds +0.018 (CI +0.002…+0.033); v5's worst stratified run equals X1's best | S16 | strat | E4 | standing |
+| F87 | The spatial end-map repair (tail ends at 2 × 2, no CBAM on it) alone carries v5's robustness and F1 (+0.035 F1, +0.063 cross, −0.067 attraction vs X1 s0); the descriptor removal alone gives +0.018 F1 and no attraction change; the halves are non-additive; the spectral-output κ halves under either | S16 | held-out | E3 (screen, 1 seed) | standing |
+| F88 | v5's run sd equals X1's on F1 (0.010); its seeds disagree more (error Jaccard 0.73 vs 0.76), so a 3-seed ensemble gains more (0.587 grouped, 0.774 stratified) — without moving cross-session recall or attraction | S16 | held-out / strat | E3 (post hoc) | standing |
+| F89 | v5 is +0.044 over the best linear control across bundles (no-TTA 0.562 vs quantile-LDA 0.518; X1 +0.005); its gain grows from calib (+0.023) to held-out (+0.040), with lower ECE (0.100 vs 0.131) and an unchanged training-rows κ (0.34) | S16 | calib / held-out | E3 | standing — supersedes F67 for v5 |
 
 ---
 
@@ -659,3 +666,187 @@ Y3 has 2,725,700 parameters (S13's `run.json`), `desc_only` 2,808,230 and `spati
 scores each held-out kernel once and probes every training row once. Fast test tier: 787 passed, 0 failed.
 → `evidence/S15_y3_replication/frozen_plan.json`, `code_identity.json`, `ddp_arms.json`, `tests/unit/test_s15_plan.py`
 
+### F83 · The S15 cells are what they claim
+All 10 cells: commit `52fba4f`, `dirty: false`, `frozen_cell.json → code_identity.identical: true` (digest `fade41e5…` =
+`aed5257`'s, 129 files), torch 2.10.0+cu128 on Tesla T4 × 2 (S13's runtime), seeds 1/2 (Y3) and 0 (Y5) as frozen,
+parameters 2,725,700 / 2,808,230 / 2,766,948 as S15 part 1 measured, 0 regime deviations from R1 + intent. Every held-out
+kernel once (4,311 / 4,309 / 2,588); macro-F1, cross-session recall and attraction re-derived from the saved predictions
+equal `run.json`; the fresh-seed X1 reference re-derives to the frozen 0.528496 / 0.728593. Clip guard: 1–3 epochs in 4
+cells from 2–14 clipped group-steps per run (as F73). `desc_only` f1 stopped at epoch 143 (best 103; clean fit 0.970).
+265 min of training (estimate 266). → `evidence/S16_replication_reading/integrity.json`, `cells.csv`
+
+### F84 · The lean network replicates (SeedNet v5)
+H21a 0.571 (6 runs; CI 0.559…0.579), H21b 0.745 (3 runs), H21c fresh seeds 0.575 vs X1 0.528 (+0.047, hierarchical CI
++0.034…+0.060). Runs: grouped f0 {0.565, 0.577, 0.586} vs X1 {0.535, 0.518, 0.546}; f1 {0.559, 0.574, 0.564} vs {0.535,
+0.526, 0.524}; stratified {0.746, 0.754, 0.734} vs {0.724, 0.734, 0.724} — all above, p = (1/20)³ under exchangeability.
+Seed 0 ranks 3/3 among v5's seeds in both folds: the screening pass was not a favourable draw. All seeds +0.040 (CI
++0.029…+0.051) > 2σ = 0.020 (G3). v5 run sd: F1 0.0102, same 0.009, cross 0.014, attraction 0.012, stratified 0.010.
+→ `hypotheses.json`, `arm_summary.csv`, `seed_variance.csv`, `v5_separation.csv`
+
+### F85 · v5's robustness: replicated, and directional
+Fresh seeds: cross 0.206 (CI 0.190…0.222) vs 0.145 (Δ +0.061, CI +0.045…+0.077); attraction 0.410 (CI 0.384…0.437) vs
+0.467 (Δ −0.058, CI −0.087…−0.029); H21d supported. By the kernel's session (3-seed means): sessions 5 +0.07 / +0.08, 8
++0.05 / +0.06, 2 +0.11; sessions 0, 1, 3, 4, 7 ≈ 0 for both networks. Cross-session classes up most: 64, 60, 22, 61, 59
+(+0.10…+0.15); 8 of 17 at ≤ 0.05. 3-seed ensemble: cross 0.205, attraction 0.412 (single runs 0.199 / 0.413).
+**Caveat:** the session breakdown is post hoc; 47–429 kernels per cell. → `v5_sessions.csv`, `v5_per_class.csv`,
+`v5_ensembles.csv`
+
+### F86 · The within-acquisition gain is not confirmed
+Stratified, fresh seeds: 0.744 vs X1 0.729, +0.016 (hierarchical CI −0.005…+0.037) < H21e's +0.018 → rejected. All seeds
++0.018 (CI +0.002…+0.033). v5's lowest stratified run (0.7343) equals X1's highest (0.7337); v5's stratified sd 0.010 vs
+X1 0.006. → `hypotheses.json`, `arm_summary.csv`
+
+### F87 · The spatial repair carries the robustness; the descriptor removal is housekeeping
+Seed 0, against X1 s0 on the same kernels: `spatial_repair` F1 +0.035 (CI +0.026…+0.043), same +0.029, cross +0.063
+(+0.048…+0.078), attraction −0.067 (−0.087…−0.048); `desc_only` F1 +0.018 (+0.011…+0.026), cross +0.018 (+0.005…+0.032),
+attraction −0.007 (−0.025…+0.011). v5 s0 (both): +0.026 / +0.036 / −0.038; halves sum to +0.052 F1 (non-additive).
+`spatial_repair` vs v5 s0: F1 +0.010 / +0.006, cross +0.046 / +0.009, attraction −0.038 / −0.020; session-5 cross-session
+kernels 0.20 (X1 0.10). Spectral-output κ 0.132 → 0.061 (`desc_only`) and → 0.056 (`spatial_repair`, full descriptor):
+not a descriptor effect. Spatial influence +6 / +12 points. H22a (marginal, folds straddle within the margin) and H22b
+(clear) both supported → the frozen rule's "redundant". **Caveat:** one seed; `desc_only` f1 stopped early.
+→ `arm_summary.csv`, `matched_deltas.csv`, `dissection_profile.csv`, `dissection_additivity.csv`, `dissection.json`
+
+### F88 · v5's seeds: same spread, more diverse errors
+Run sd on grouped F1 0.0102 (X1 0.0099). Error-set Jaccard between seeds 0.733 (X1 0.765); errors shared by all three
+seeds 63 % of their union (X1 67 %). 3-seed softmax ensemble: grouped 0.594 / 0.580 (mean single 0.576 / 0.566),
+stratified 0.774 (0.745); X1 gains +0.013 / +0.015. Ensembles leave cross-session recall and attraction unchanged.
+**Caveat:** post hoc on held-out; no choice was made (all seeds, one rule). → `v5_ensembles.csv`, `v5_errors.csv`
+
+### F89 · v5 beats the linear bar across bundles
+Grouped no-TTA: v5 0.562 (6 runs) vs shrinkage LDA on within-kernel quantiles + morph 0.518 (S12 `pixel_controls.csv`)
+= +0.044; X1 0.523 = +0.005. Ladder (v5 − X1, 3-seed means): clean fit 1.000 vs 0.980, calib F1 +0.023, held-out same
++0.034, F1 +0.040, cross +0.053. ECE 0.100 vs 0.131 grouped, 0.020 vs 0.030 stratified. Spatial influence 75 % vs 63 %.
+Training-rows κ of the embedding 0.340 (X1 ≈ 0.34) with attraction −0.05 (F81, D32). → `v5_profile.json`, `v5_ladder.csv`
+
+
+## S19 · Next-generation strategy audit (2026-10-03; no new predictive scores)
+
+### F90 · Raw RGB is locally available for every HSI scan
+The17.26-GB `dataset/rice_hsi.zip` is now present. Header/central-directory inspection finds exactly one RGB match for
+each of 180 HSI scan stems, all 4896×3264, plus chessboard/index assets. This is a dated availability correction to the
+archive-absent statements in S12/S14/S16 and FW-18, not a rewrite of those observations. Full 215 extracted cube remains
+absent. Archive-wide checksum, pixel registration and kernel-level correspondence have not been validated.
+→ `evidence/S19_next_generation_strategy/{archive_availability.json,rgb_scan_pairs.csv,array_availability.json}`.
+
+### F91 · Band count changes sampling, spectral coverage and the current stem
+Historical k32/k64 overlap at only 8 bands. Actual endpoints are432.027778–1006.472223 nm; full 215 starts383.222222 nm and
+adds 20 bands below 430 nm (195 remain≥430). The largest valid-axis gap is102.666667 nm. The spatial stem changes spectral
+strides/kernel with count. Therefore a native-v5 budget result is not an isolated information-resolution test, and S05's
+SNV-proxy optimum is not established for a new reflectance encoder. → `band_geometry.csv`, `band_axes.json`; model source.
+
+### F92 · Every observed cross-session bridge touches session8
+The17 class pairs are0–8:1, 1–8:2, 2–8:1, 3–8:1, 4–8:1, 5–8:9, 7–8:2; session6 is isolated. Every grouped training class has one
+session. The90+9-column additive class/session design has rank90 per train fold, 97 over all scans. Under training
+S=g(Y), a representation perfectly predicting Y also predicts S; strict unconditional session independence conflicts
+with perfect classification. This is an identifiability/assumption limit, not proof that empirical transfer is impossible.
+→ `class_session_support.csv`, `split_audit.json`, `identifiability.json`; S19 repository review §6.
+
+### F93 · Three retained white-reference values use pooled session shape
+Of 38,700 full 215 scan-band references, 38,697 are own-scan and 3 session-shape fills, at 605.583333 nm for scans 0, 1, 4.
+K32 uses only own references; k64 includes the 3 fills. No retained reference is unresolved. Instrument drop indices92–132
+are zero-based. A strict new inductive budget comparison must declare standard access and test train-only fill/exclusion;
+this does not establish a material model-score bias. → `calibration_sources.json`; `dataset/white_spectra.npz`.
+
+### F94 · Current prior art rules out generic fusion novelty; headline scores need protocol reconstruction
+S19 verifies39 primary-source identities/access scopes through2026-10-03. Fabiyi2020 and FusedNet2023 already fuse RGB/HSI;
+Huang2026 describes90-class gated2D/3D fusion. Taheri's92.73–96.17% is overall precision; Hu's auxiliary rice table reports
+97.78% accuracy/97.67% F1. Their accessible protocols do not establish a match to our grouped evaluation. No claim that
+unverified splits prove leakage, or that v5 outperforms these methods, is warranted. → `literature.csv`, `search_log.md`.
+
+### F95 · The useful research direction is representation plus acquisition evidence, not a known higher score
+S12–S16 jointly reject training fit/capacity as the main bottleneck and establish a replicated benefit from lean spatial
+repair; distributional and spatial information matter, but the spatial pathway still carries acquisition cues. RGB,
+physical wavelength handling and standards-grounded nuisance control are well-motivated **untested hypotheses**.
+Neither .199 cross recall nor conditional .849 macro-recall arithmetic identifies a Bayes ceiling. The one-seed repair
+changes stride and CBAM together; pooling alone is not isolated. → S19 synthesis and existing S12/S16 artifacts.
+
+### F96 · Fresh seeds do not restore an untouched acquisition test
+Frozen rounds support valid within-round confirmation, but repeated use of the same acquisitions to motivate later
+studies is adaptive benchmark development. New seeds replicate optimization variability, not independent sessions/lots.
+Current support cannot validate all 90-class unseen-session or biological-lot generalisation. A locked crossed acquisition
+is required for those broader claims. → S19 protocol analysis; L29 model-selection literature. This qualifies the scope of
+historical results; it does not retract S16's measured paired improvements.
+
+## S20 · Validated RGB pathway and CPU complementary-information screen (2026-10-04)
+
+### F97 · All retained HSI kernels now have validated RGB identities
+**Claim.** The verified archive contains 180 RGB partners and 8,640 RGB seeds;
+8,624 retained HSI kernels map to unique grid identities without shifting indices
+at the 16 historical exclusions. Every reconstructed float16 k32 value and mask
+matches the reference exactly. Final scan RMSE averages .28188 HSI pixels; maximum
+pair residual is 1.5851 pixels, 2.496% of row pitch. Wrong orientations are at least
+8.64 times worse in RMSE. Native masks, overlays, exclusions, hashes and compact
+full215 summaries/regions are available in `dataset_rgb_hsi_v3`.
+**Evidence.** [S20 asset audit](evidence/S20_rgb_pathway/asset_validation.json),
+[exclusion review](evidence/S20_rgb_pathway/missing_component_review.csv),
+[implementation](studies/S20_rgb_pathway/implementation.md). Automated all-scan
+checks plus 26-scan atlas, worst-pair and three full-native-crop reviews.
+**Strength/status.** Direct reproducible engineering evidence; active. This verifies
+object correspondence, not pixel registration or biological lot independence.
+Threshold-only v1 and unconstrained-growth v2 masks were rejected before scoring;
+their provenance remains saved. Pixel-perfect segmentation is not established.
+
+### F98 · RGB camera settings change at the shared cross-session endpoint
+**Claim.** All 147 RGB images in sessions 0–7 use f/4; all 33 session-8 images use
+f/1.6–2.2 with different exposure times. Headers identify the same FUJIFILM X-M1
+camera model and 35-mm setting. Every cross-session variety bridge touches session8
+(F92), so RGB transfer on this dataset also spans a concrete acquisition change.
+**Evidence.** [180-image EXIF table](evidence/S20_rgb_pathway/rgb_capture_metadata.csv)
+and [session summary](evidence/S20_rgb_pathway/rgb_capture_summary.json).
+**Strength/status.** Direct descriptive metadata; active. It does not isolate a
+causal source of errors. Camera/session metadata is excluded from predictors; new
+crossed acquisitions remain necessary for broad robustness claims.
+
+### F99 · RGB appearance contains useful new-scan information beyond shape (S20/S21)
+**Evidence.** S21 frozen DINOv2 RGB F1 .450520 versus silhouette .168546, difference
++.281974, paired 95% class interval [.244211,.316018]; grayscale .400956 and RGB32
+.323255. S20 gives the same qualitative result on historical rows. Handcrafted RGB
+color/texture/shape reaches .351358 but cross recall only .015972.
+**Strength/scope.** Measured CPU fixed-feature probes, not fine-tuned networks or
+independent-session replication. Resolution/color gains do not establish cross-session
+gains; pretraining overlap is unauditable. [S21 results](studies/S21_complementary_rgb/results.md).
+
+### F100 · Simple RGB fusion helps linear HSI; transfer improvement over v5 remains unproven (S20/S21)
+**Evidence.** S21 HSI32 quantile+morph F1 .534850 → equal calibrated RGB fusion .591820,
+delta .056970 [.039397,.075737]; cross recall .077941→.127858, delta .049917
+[.003676,.111698]. S20 historical-v5 three-seed reconstructed baseline .570796→.611691,
+delta .040896 [.026310,.055735]; cross recall .199197→.208687, delta .009490
+[−.039544,.058211]. Six float16 argmax ties explain the small difference from S16's
+original-prediction baseline, which remains unchanged.
+**Strength/scope.** Matched comparisons support complementary information; shared
+RGB probes are not three RGB replications. Do not compare S20 v5 directly to S21
+models trained on different scans. [S20](studies/S20_rgb_pathway/README.md),
+[S21](studies/S21_complementary_rgb/README.md).
+
+### F101 · More aggregate F1 need not mean better transfer (S20/S21)
+**Evidence.** S21 nested64 quantiles gain .010254 F1 over32 but lose .010498 cross
+recall [−.019077,−.003145]; full214 mean versus32 loses .044649 cross recall
+[−.078192,−.011642] despite higher F1. Concatenation beats equal RGB/HSI32 fusion
+by .021656 F1 but loses .045709 cross recall [−.099390,−.000038]. Historical/full
+own-white controls do not reverse the pattern; S20 agrees qualitatively.
+**Scope.** Reject transfer-based adoption of these specific probes, not the existence
+of useful nonlinear full-spectrum information. Feature dimensionality changes even
+with a fixed classifier family. [All controls](studies/S21_complementary_rgb/results.md).
+
+### F102 · Legacy grouped folds do not provide exhaustive two-fold coverage (S20 audit; S21 repair)
+**Evidence.** Shared group/patch RNG consumption depends on unequal bundle sizes.
+Legacy folds score 8,620 rows in total but only 6,848 unique rows: 1,772 repeat and
+1,776 are never held out. Thirty-seven classes repeat a held-out scan, including
+seven cross-session varieties. Each fold remains group-disjoint; matched historical
+comparisons remain valid on their selected rows. Earlier “both directions”/exhaustive
+interpretations are corrected, without editing old frozen plans or study pages.
+**Repair.** S21 keyed independent streams yield 4,313/4,311 held-out rows, all8,624
+exactly once and both directions of all17 bridges. Regression tests cover unequal
+counts and calibration/class-support changes. This is a new adaptive follow-up,
+not independent data. [Coverage audit](evidence/S20_rgb_pathway/fold_coverage_audit.json),
+[S21](studies/S21_complementary_rgb/README.md). S22 requires fresh v5 fits on these rows.
+
+### F103 · No individual-kernel coupling advantage in the tested fusion (S20/S21)
+**Evidence.** Matched minus within-scan shuffled RGB/HSI32 fusion is −.012322 F1 in
+S20 and −.014112 [−.020092,−.007799] in S21. Cross-recall intervals include zero.
+The shuffling retains class-pure acquisition membership while breaking kernel
+identity. It is a diagnostic unavailable for ordinary unlabeled deployment.
+**Decision implication.** Current simple-fusion gains can be explained without
+individual-kernel interactions; they do not justify cross-attention or a pairing-specific
+novelty claim. Not evidence that alignment could never matter for other models.
+[Contrast ledger](studies/S21_complementary_rgb/results.md).

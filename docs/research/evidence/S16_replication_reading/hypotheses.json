@@ -1,0 +1,201 @@
+{
+ "H21a": {
+  "frozen": "(parent) Y3 grouped macro-F1, mean of 6 runs (folds 0,1 \u00d7 seeds 0,1,2) \u2265 0.5108",
+  "value": 0.5708164941018677,
+  "threshold": 0.5108,
+  "direction": ">=",
+  "met": true,
+  "interval": [
+   0.5592993887940024,
+   0.5786678696664619
+  ],
+  "clarity": "clear",
+  "runs": "0.5646 0.5773 0.5861 0.5589 0.5744 0.5635",
+  "outcome": "supported"
+ },
+ "H21b": {
+  "frozen": "(parent) Y3 stratified macro-F1, mean of 3 runs (seeds 0,1,2) \u2265 0.7090",
+  "value": 0.7447875013435828,
+  "threshold": 0.709,
+  "direction": ">=",
+  "met": true,
+  "interval": [
+   0.724006460990514,
+   0.7598193041647955
+  ],
+  "clarity": "clear",
+  "runs": "0.7457 0.7543 0.7343",
+  "outcome": "supported"
+ },
+ "H21c": {
+  "frozen": "Y3 grouped mean (seeds 1,2; 4 runs) \u2212 X1 (same folds/seeds; 0.528496) \u2265 +0.020 AND the hierarchical bootstrap 95 % CI of the difference excludes 0",
+  "delta": {
+   "value": 0.0468385804630671,
+   "threshold": 0.02,
+   "direction": ">=",
+   "met": true,
+   "interval": [
+    0.03402316724219619,
+    0.06031998978433994
+   ],
+   "clarity": "clear"
+  },
+  "ci_excludes_0": true,
+  "y3": 0.575334940638199,
+  "x1": 0.5284963601751319,
+  "x1_matches_frozen": true,
+  "outcome": "supported"
+ },
+ "H21d": {
+  "frozen": "Y3 grouped (seeds 1,2) cross-session recall mean \u2265 0.1666 AND attraction mean \u2264 0.4240",
+  "cross": {
+   "value": 0.20633169934640522,
+   "threshold": 0.1666,
+   "direction": ">=",
+   "met": true,
+   "interval": [
+    0.19004074167822965,
+    0.22214894612003014
+   ],
+   "clarity": "clear"
+  },
+  "attraction": {
+   "value": 0.409701250386737,
+   "threshold": 0.424,
+   "direction": "<=",
+   "met": true,
+   "interval": [
+    0.3842916188158817,
+    0.43675392418057885
+   ],
+   "clarity": "marginal"
+  },
+  "runs_cross": "0.2042 0.2204 0.2059 0.1949",
+  "runs_attraction": "0.4157 0.3973 0.3988 0.4270",
+  "beside_vs_x1_fresh": {
+   "d_cross": [
+    0.060968137254901966,
+    0.04498663168050364,
+    0.07732180543846434
+   ],
+   "d_attraction": [
+    -0.057743417924976836,
+    -0.08700097426886425,
+    -0.029277705141765996
+   ]
+  },
+  "outcome": "supported"
+ },
+ "H21e": {
+  "frozen": "Y3 stratified mean (seeds 1,2) \u2212 X1 stratified (seeds 1,2; 0.728593) \u2265 +0.018",
+  "value": 0.01574730831008253,
+  "threshold": 0.018,
+  "direction": ">=",
+  "met": false,
+  "interval": [
+   -0.004634472766457731,
+   0.03668019934576607
+  ],
+  "clarity": "marginal",
+  "y3": 0.7443401540571839,
+  "x1": 0.7285928457471014,
+  "runs": "0.7543 0.7343",
+  "x1_matches_frozen": true,
+  "note": "the interval is the hierarchical bootstrap of the difference (2 runs per arm); the frozen rule reads the point value only",
+  "outcome": "rejected"
+ },
+ "H22a": {
+  "frozen": "Dissection (screen): Y5 desc_only grouped mean (seed 0, 2 runs) \u2265 0.530786 + 0.020 = 0.5508",
+  "value": 0.5532351432484459,
+  "threshold": 0.5508,
+  "direction": ">=",
+  "met": true,
+  "interval": [
+   0.5371248165279434,
+   0.5693454699689484
+  ],
+  "clarity": "marginal",
+  "d28_straddle": {
+   "per_fold": [
+    0.5684535809728662,
+    0.5380167055240257
+   ],
+   "straddles": true,
+   "below_by": 0.01278329447597426,
+   "above_by": 0.01765358097286629,
+   "margin": 0.02,
+   "fires": false
+  },
+  "beside": {
+   "d_f1_vs_x1s0": 0.017868108030922647,
+   "d_cross_vs_x1s0": 0.01838235294117649,
+   "d_attraction_vs_x1s0": -0.006746957040122514,
+   "cross": 0.1675653594771242,
+   "attraction": 0.4502365698503611
+  },
+  "outcome": "supported"
+ },
+ "H22b": {
+  "frozen": "Dissection (screen): Y5 spatial_repair grouped mean (seed 0, 2 runs) \u2265 0.530786 + 0.020 = 0.5508",
+  "value": 0.5698925421635352,
+  "threshold": 0.5508,
+  "direction": ">=",
+  "met": true,
+  "interval": [
+   0.5537507615429609,
+   0.5860343227841096
+  ],
+  "clarity": "clear",
+  "d28_straddle": {
+   "per_fold": [
+    0.5746146104340784,
+    0.565170473892992
+   ],
+   "straddles": false,
+   "below_by": 0.0,
+   "above_by": 0.0,
+   "margin": 0.02,
+   "fires": false
+  },
+  "beside": {
+   "d_f1_vs_x1s0": 0.034525506946011975,
+   "d_cross_vs_x1s0": 0.06343954248366016,
+   "d_attraction_vs_x1s0": -0.06694813573902608,
+   "cross": 0.21262254901960786,
+   "attraction": 0.3900353911514575
+  },
+  "outcome": "supported"
+ },
+ "decision_routes": {
+  "H21a \u2227 H21b": "adopt: the lean architecture becomes the reference form (SeedNet v5) and the base of every later arm; config defaults \u2192 R1 + lean keys behind G-neutral (D24, D29 deviation 1); the paper drops the index-bank/continuum/derivative claims",
+  "H21c": "the paper may claim a grouped gain over X1 (G3 met on fresh seeds)",
+  "H21d": "the paper may claim raised cross-session recall and lowered attraction",
+  "H21e": "not claimed",
+  "H22": "H22a and H22b \u2192 either removal alone suffices (non-additive); both kept; attribution reported as redundant",
+  "H22_reading_condition": "read as attribution because H21a \u2227 H21b hold",
+  "D28_reversal_note": "D28: replicate before reading if an arm's two fold estimates straddle its threshold by more than the margin (0.020). See H22a/H22b \u2192 d28_straddle."
+ },
+ "beside_deciding_nothing": {
+  "G3_all_seeds": {
+   "d_f1": 0.04002990891260538,
+   "ci": [
+    0.02908339982359632,
+    0.05146310512155964
+   ],
+   "two_sigma": 0.01986649721816365,
+   "d_cross": 0.05276416122004357,
+   "d_attraction": -0.0511846100056092,
+   "d_same": 0.03434795280878955,
+   "strat_d_f1": 0.017803629749579164,
+   "strat_ci": [
+    0.001939295503908628,
+    0.032916468466991006
+   ]
+  },
+  "winners_curse": "seed-0 Y3 F1 rank among Y3 seeds: f0 3.0 / f1 3.0 of 3",
+  "seed0_vs_fresh_y3": {
+   "seed0": 0.5617796010292053,
+   "fresh": 0.575334940638199
+  }
+ }
+}

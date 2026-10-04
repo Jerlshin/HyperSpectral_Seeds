@@ -1,0 +1,188 @@
+{
+ "frozen_at": "2026-10-03",
+ "study": "S16 (reading of S15: Y3 replicated → SeedNet v5) → S17 (v5's within-acquisition tier-1 row, and two screens on v5: a 64-band input and a 4 × 4 end map)",
+ "repo_commit": "52fba4f (the S15 runner; every S15 cell ran on it with training code byte-identical to aed5257, digest fade41e5…). S16's analysis, its evidence and this file are uncommitted when it is frozen.",
+ "depends_on": {
+  "S12": {
+   "file": "evidence/S12_frozen_arms_reading/preregistration_s12.json",
+   "sha256": "88b377c5bc32f31a9ccb95356a88eb0be35e8cb51216b035c88f1761919ae7f4"
+  },
+  "S13": {
+   "file": "evidence/S13_representation_screening/preregistration_s13.json",
+   "sha256": "ef5982131df48c2ba8105c751fcf21f527a01ea2c0addf4ad59380f1a0989460"
+  },
+  "S14": {
+   "file": "evidence/S14_screen_reading/preregistration_s14.json",
+   "sha256": "9e182670755e13a6ead29a761123841094a9b9fb6fae18392553893d65c1f3da"
+  }
+ },
+ "depends_on_roles": {
+  "S12": "R1 (regime.overrides), the margin convention 2·max(sd, 0.009), the guards",
+  "S13": "the single-seed screening semantics (D28): a screen that passes is replicated at seeds 1–2 before it can replace the reference",
+  "S14": "the Y3 arm (= v5's architecture keys) and the reading of H21a–H22b, done in S16"
+ },
+ "motivating_evidence": "S16 findings F83–F89 (evidence/S16_replication_reading/). Every S15 held-out row was scored once by its own cell's final evaluation and aggregated in S16; nothing was tuned on it. Y3 replicated (H21a–H21d supported; H21e rejected) and became SeedNet v5 by the frozen rule (D35). The dissection (H22a, H22b both supported; H22a marginal) and its post-hoc profile tie the robustness gain to the spatial end-map repair (F87) — that observation MOTIVATES Z3, which is therefore a screen. Z2 is FW-03 (open since S08) run on the settled architecture. Z1 is FW-37, scheduled by S14 §9.2 if H21a ∧ H21b.",
+ "architecture_and_regime": {
+  "name": "SeedNet v5 = R1 + the Y3 keys",
+  "overrides": "single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0 single.epochs=200 single.patience=40 model.spectral_descriptor=snv_morph model.spatial_tail_strides=[2,2,2,1] model.cbam_min_hw=3",
+  "source": "preregistration_s12.json → regime.overrides; preregistration_s14.json → arms.Y3_replication.change",
+  "note": "every S17 cell carries v5 explicitly, so a cell composes identically whether or not the config default switch (D36) has landed when it runs"
+ },
+ "reference": {
+  "v5": {
+   "f1": 0.570816,
+   "same": 0.682841,
+   "cross": 0.199401,
+   "attraction": 0.412773,
+   "strat_f1": 0.744788,
+   "n_runs_grouped": 6,
+   "n_runs_stratified": 3,
+   "cells": "s13/Y3/lean_*__f*_s0 + s15/Y3/lean_*__f*_s{1,2}"
+  },
+  "v5_run_sd": {
+   "f1": 0.010206,
+   "same": 0.009029,
+   "cross": 0.013789,
+   "attraction": 0.01208,
+   "strat_f1": 0.010023
+  },
+  "margins": {
+   "f1": 0.020412,
+   "same": 0.018057,
+   "cross": 0.027577,
+   "attraction": 0.024161,
+   "strat_f1": 0.020046,
+   "convention": "2·max(sd, 0.009) (S12)"
+  },
+  "seed0_matched": {
+   "Y3/lean_grouped__f0_s0": 0.5646,
+   "Y3/lean_grouped__f1_s0": 0.5589,
+   "use": "Z2/Z3 seed-0 deltas on the same kernels, reported beside (decide nothing)"
+  },
+  "x1": "preregistration_s12.json → reference (unchanged), for context only"
+ },
+ "metric": "as the parents: macro-F1 on val ∪ test, TTA, mean over runs (no-TTA beside); same/cross-session macro-recall and cross-session attraction (reporting/session.py); checkpoint chosen on calib only; every held-out kernel scored once. Means of ≥ 2 runs carry a hierarchical bootstrap CI (S16 s16common.hboot); one-seed screens carry S14's screen interval (kernel bootstrap ⊕ v5 run sd / √n).",
+ "arms": {
+  "Z1_tier1": {
+   "change": "v5 on the 80/20 stratified split (data.split_eval_frac=0.2), as S13 Y4 did for X1",
+   "runs": "stratified fold 0 × seeds 0, 1, 2 (3 runs) — the D16 tier-1 row (FW-37)",
+   "role": "reporting row with one hypothesis (H23, H15's form)"
+  },
+  "Z2_k64": {
+   "change": "v5 on uniform430 k = 64 (outputs/band_finalists/uniform430_k64, 432–1006 nm) instead of k = 32: a pre-sliced float16 cube built by `scripts/build_presliced_dataset.py --set uniform430_k64` (→ ./dataset_u430k64, uploaded as a Kaggle dataset); data.num_bands=64 and band-augmentation widths from band_augmentation_widths(64) (cutmix 13, cutout 5) so the augmentation is the same physical operation",
+   "runs": "grouped folds 0, 1 × seed 0 (2 runs; a screen, D28)",
+   "role": "FW-03 on the settled architecture: is k = 32 leaving information on the table?"
+  },
+  "Z3_end4": {
+   "change": "v5 with tail strides [2,2,1,1]: the spatial tail ends at 4 × 4 instead of 2 × 2 (v5's rules unchanged: every tap trainable, no CBAM on a map ≤ 2 × 2 — so the gate after block 3 returns, its map now being 4 × 4)",
+   "runs": "grouped folds 0, 1 × seed 0 (2 runs; a screen, D28)",
+   "role": "mechanism: the 1 × 1 → 2 × 2 repair carried the robustness gain (F87). If that gain came from pooling spatial statistics over a map (extent), a 4 × 4 map continues it; if it came from repairing the last block (trainability), it does not."
+  }
+ },
+ "hypotheses": {
+  "H23": "Z1: v5 80/20 stratified macro-F1, mean of 3 runs (seeds 0–2) − v5 70/30 stratified mean (0.744788) ≤ +0.030 (H15's form; i.e. mean ≤ 0.774788)",
+  "H24a": "Z2 (screen): v5 k64 grouped mean (seed 0, 2 runs) ≥ v5 − margin = 0.550404 (non-inferior)",
+  "H24b": "Z2 (screen): v5 k64 grouped mean ≥ v5 + margin = 0.591228 (superior)",
+  "H24c": "Z2 (screen): v5 k64 cross-session recall ≥ 0.171824 AND attraction ≤ 0.436934 (no session cost beyond v5's margin)",
+  "H25a": "Z3 (screen): v5 end-4 grouped mean (seed 0, 2 runs) ≥ 0.550404 (non-inferior)",
+  "H25b": "Z3 (screen): v5 end-4 cross-session recall ≥ 0.226978 AND attraction ≤ 0.388612 (a further robustness step beyond v5's margin)"
+ },
+ "thresholds": {
+  "H23": 0.774788,
+  "H24a": 0.550404,
+  "H24b": 0.591228,
+  "H24c_cross": 0.171824,
+  "H24c_attraction": 0.436934,
+  "H25a": 0.550404,
+  "H25b_cross": 0.226978,
+  "H25b_attraction": 0.388612
+ },
+ "decision_rule": {
+  "H23": "supported → the tier-1 (within-acquisition) row is v5's 80/20 mean, ≈ its 70/30 level (as F80 for X1); rejected → v5 gains from more same-acquisition data, unlike X1 — the paper reports both splits and says so. Either way Z1's mean ± CI is the D16 tier-1 row.",
+  "H24b ∧ H24c": "more bands are a score lever without session cost: k64 is replicated at seeds 1–2 and the 215-band cube is screened in a later frozen round; D04/D11 under review",
+  "H24b ∧ ¬H24c": "the extra bands buy session recognition (F70's pattern): k = 32 stays; recorded",
+  "H24a ∧ ¬H24b": "k = 32 stays v5's input (D11/D15 hold for the network); FW-03 is closed for k ≤ 64; the 32-band multispectral claim stands",
+  "¬H24a": "k = 32 confirmed; more bands hurt the network (F17's proxy result reproduced)",
+  "H25a ∧ H25b": "end-map extent is a robustness lever (dose–response): Z3 is replicated at seeds 1–2 before it can replace v5 (D28)",
+  "H25a ∧ ¬H25b": "the repair's gain is trainability / the 2 × 2 statistics, not extent: v5 stays; the paper attributes the robustness to the repair as one step, not a trend",
+  "¬H25a": "v5 stays; a 4 × 4 end map costs accuracy",
+  "D28_reversal": "a screen arm whose two fold estimates straddle a threshold by more than its margin is replicated before its verdict is read",
+  "combination": "Z2 and Z3 are read separately; nothing is combined in this round"
+ },
+ "guards": [
+  "the parents' guards, unchanged: dirty / commit; clip fraction > 0.01 outside epoch 1 and overflow epochs (reported); stop epoch < 160 (reported)",
+  "training code: either byte-identical to aed5257 (S15's digest fade41e5…), or the D36 default switch has landed with G-neutral passing for (i) the new default vs aed5257 + the v5 overrides and (ii) v5 + each arm's change vs aed5257 + the same overrides; the digest the cells ran on is recorded in frozen_cell.json",
+  "runtime: Kaggle T4 × 2, torch 2.10.0+cu128 as S11/S13/S15; a different environment is reported",
+  "Z2: dataset_u430k64/MANIFEST.json verifies (scripts/build_presliced_dataset.py --verify); band_axis.json names uniform430_k64 and 64 of 215 bands; the held-out row ids of each fold equal the k32 cells' (same kernels, so the seed-0 deltas are paired)"
+ ],
+ "cells": {
+  "base_overrides": "runtime=kaggle_t4x2 tracking=console_jsonl (torchrun, one directory per cell)",
+  "output_root": "outputs/experiments_u430k32/s17/<arm>/<variant>__f<fold>_s<seed>/",
+  "order": "Z1 (reporting row) → Z3 → Z2 (needs the k64 dataset attached; if absent, Z2 is skipped and run in a later session — cells are independent)",
+  "gpu": [
+   {
+    "cell": "Z1/v5_8020__f0_s0",
+    "arm": "Z1",
+    "data": "ablation/u430k32_stratified",
+    "fold": 0,
+    "seed": 0,
+    "arm_overrides": "data.split_eval_frac=0.2"
+   },
+   {
+    "cell": "Z1/v5_8020__f0_s1",
+    "arm": "Z1",
+    "data": "ablation/u430k32_stratified",
+    "fold": 0,
+    "seed": 1,
+    "arm_overrides": "data.split_eval_frac=0.2"
+   },
+   {
+    "cell": "Z1/v5_8020__f0_s2",
+    "arm": "Z1",
+    "data": "ablation/u430k32_stratified",
+    "fold": 0,
+    "seed": 2,
+    "arm_overrides": "data.split_eval_frac=0.2"
+   },
+   {
+    "cell": "Z3/v5_end4__f0_s0",
+    "arm": "Z3",
+    "data": "ablation/u430k32_grouped",
+    "fold": 0,
+    "seed": 0,
+    "arm_overrides": "model.spatial_tail_strides=[2,2,1,1]"
+   },
+   {
+    "cell": "Z3/v5_end4__f1_s0",
+    "arm": "Z3",
+    "data": "ablation/u430k32_grouped",
+    "fold": 1,
+    "seed": 0,
+    "arm_overrides": "model.spatial_tail_strides=[2,2,1,1]"
+   },
+   {
+    "cell": "Z2/v5_k64__f0_s0",
+    "arm": "Z2",
+    "data": "ablation/u430k32_grouped",
+    "fold": 0,
+    "seed": 0,
+    "arm_overrides": "data.num_bands=64 data.cutmix_bands=13 data.max_cutout_bands=5 data.patches_data=./dataset_u430k64/patches.npy data.labels_path=./dataset_u430k64/labels.npy data.wavelength_path=./dataset_u430k64/wavelengths.csv data.groups_path=./dataset_u430k64/groups.npy data.scan_table_path=./dataset_u430k64/scan_table.csv data.masks_path=./dataset_u430k64/masks.npy data.morphology_path=./dataset_u430k64/morphology.npy"
+   },
+   {
+    "cell": "Z2/v5_k64__f1_s0",
+    "arm": "Z2",
+    "data": "ablation/u430k32_grouped",
+    "fold": 1,
+    "seed": 0,
+    "arm_overrides": "data.num_bands=64 data.cutmix_bands=13 data.max_cutout_bands=5 data.patches_data=./dataset_u430k64/patches.npy data.labels_path=./dataset_u430k64/labels.npy data.wavelength_path=./dataset_u430k64/wavelengths.csv data.groups_path=./dataset_u430k64/groups.npy data.scan_table_path=./dataset_u430k64/scan_table.csv data.masks_path=./dataset_u430k64/masks.npy data.morphology_path=./dataset_u430k64/morphology.npy"
+   }
+  ],
+  "run_count": {
+   "gpu_training_runs": 7
+  },
+  "runtime_estimate": "scaled from the S13/S15 cells' wall clock on the same runtime by the per-step cost ratios of runtime_probe.json: Z1 ≈ 39 min × 3 (S13 Y4 80/20 39.8 min × v5/X1 0.92, + v5's 70/30 cells 28–36 min scaled by 5,864/5,130 kernels), Z3 ≈ 25.5 min × 2 (v5 grouped 25.8 min × 0.99), Z2 ≈ 45 min × 2 (× 1.7) → ≈ 258 min ≈ 4.3 h (≤ 4.6 h if every cell runs 200 epochs); one Kaggle session"
+ },
+ "implementation": "S17 part 1: (1) the D36 default switch behind G-neutral; (2) a runner (experiments/s17.py + scripts/run_s17.py) that builds these cells from this file after verifying it and its three parents, composes each as v5 + the arm's change, checks the k64 manifest, records the code digest, and offers --check/--cfg-job as S15; (3) the k64 dataset built and uploaded (PI action, ≈ 4.6 GB). No model code is needed: every key exists at aed5257.",
+ "not_in_this_round": "Replicating the dissection arms (H22's rule: not replicated; v5 keeps both halves); the 215-band cube (≈ 5–7× compute; only after H24b); the X6 level block (D25); the CPU track FW-27/FW-28/FW-29 (own frozen files; bar now v5); RGB morphology FW-18 (raw archive).",
+ "heldout_use": "Each cell is scored once on val ∪ test. No arm, epoch, threshold or hyperparameter is chosen by a held-out score. S16's post-hoc diagnostics (dissection profile, ensembles, per-session rescue) chose nothing and feed only the motivation recorded above."
+}

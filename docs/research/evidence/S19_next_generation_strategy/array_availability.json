@@ -1,0 +1,86 @@
+{
+  "dataset/patches.npy": {
+    "exists": false
+  },
+  "dataset/labels.npy": {
+    "exists": true,
+    "shape": [
+      8624
+    ],
+    "dtype": "int64",
+    "bytes": 69120
+  },
+  "dataset/groups.npy": {
+    "exists": true,
+    "shape": [
+      8624
+    ],
+    "dtype": "int64",
+    "bytes": 69120
+  },
+  "dataset/masks.npy": {
+    "exists": true,
+    "shape": [
+      8624,
+      64,
+      64
+    ],
+    "dtype": "float16",
+    "bytes": 70647936
+  },
+  "dataset/morphology.npy": {
+    "exists": true,
+    "shape": [
+      8624,
+      8
+    ],
+    "dtype": "float32",
+    "bytes": 276096
+  },
+  "dataset_u430k32/patches.npy": {
+    "exists": true,
+    "shape": [
+      8624,
+      32,
+      64,
+      64
+    ],
+    "dtype": "float16",
+    "bytes": 2260729984
+  },
+  "dataset_u430k32/labels.npy": {
+    "exists": true,
+    "shape": [
+      8624
+    ],
+    "dtype": "int64",
+    "bytes": 69120
+  },
+  "dataset_u430k32/groups.npy": {
+    "exists": true,
+    "shape": [
+      8624
+    ],
+    "dtype": "int64",
+    "bytes": 69120
+  },
+  "dataset_u430k32/masks.npy": {
+    "exists": true,
+    "shape": [
+      8624,
+      64,
+      64
+    ],
+    "dtype": "float16",
+    "bytes": 70647936
+  },
+  "dataset_u430k32/morphology.npy": {
+    "exists": true,
+    "shape": [
+      8624,
+      8
+    ],
+    "dtype": "float32",
+    "bytes": 276096
+  }
+}

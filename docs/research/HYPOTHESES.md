@@ -102,7 +102,7 @@ H12a is supported, else the S09 sweep, 0.530); σ_ref = max(observed sd, 0.009).
 | ID | Hypothesis (as frozen) | Experiment | Decision it drives | Status |
 |---|---|---|---|---|
 | H16 | With every softener off (mixup 0, ε 0, aux 0, dropout 0, no augmentation) under X1's schedule, clean training accuracy ≥ 0.98 at the final epoch (grouped fold 0) | X4 (FW-20) | capacity vs regime (D19's reversal trigger) | **supported** (S12) — 1.000 (stratified companion 1.000) |
-| H17 | Last spatial-tail block at stride 1 (no untrainable parameters) is non-inferior: grouped ≥ reference − max(2σ_ref, 0.018) | X5 (FW-21) | adopt the stride fix as default | not run — the change joins S13 Y3 (D25) |
+| H17 | Last spatial-tail block at stride 1 (no untrainable parameters) is non-inferior: grouped ≥ reference − max(2σ_ref, 0.018) | X5 (FW-21) | adopt the stride fix as default | not run — the change joins S13 Y3 (D25); **S16:** its closest arm, `spatial_repair` (X5 + no CBAM on 2 × 2), gained +0.035 F1 vs X1 s0 at one seed (F87) |
 | H18a | Log-reflectance level block in the spectral descriptor raises grouped by ≥ max(2σ_ref, 0.02) | X6 (FW-22) | adopt level (with H18b) | not run — deferred (D25; linear proxy F70) |
 | H18b | …without losing > 0.03 cross-session recall or adding > 0.05 cross-session attraction | X6 | the gain is not session recognition | not run — deferred (D25) |
 
@@ -151,17 +151,109 @@ reading map is S15 §8.
 
 | ID | Hypothesis (as frozen) | Experiment | Decision it drives | Status |
 |---|---|---|---|---|
-| H21a | (parent) Y3 grouped F1, 6 runs (seeds 0–2) ≥ 0.5108 | Y3 replication (FW-35) | adopt SeedNet v5 (with H21b): defaults → R1 + lean keys | not run |
-| H21b | (parent) Y3 stratified F1, 3 runs ≥ 0.7090 | Y3 replication | as above | not run |
-| H21c | Y3 − X1 grouped F1 on seeds 1–2 ≥ +0.020 and its hierarchical-bootstrap CI excludes 0 | Y3 replication | the paper may claim a grouped gain (G3) | not run |
-| H21d | Y3 grouped cross-session recall ≥ 0.1666 and attraction ≤ 0.4240 on seeds 1–2 | Y3 replication | the paper may claim cross-session robustness | not run |
-| H21e | Y3 − X1 stratified F1 on seeds 1–2 ≥ +0.018 | Y3 replication | within-acquisition gain | not run |
-| H22a | `desc_only` (SNV + morph descriptor alone) grouped F1, seed 0 ≥ 0.5508 | Y5 dissection (FW-36) | which removal carries the gain (only if H21a ∧ H21b) | not run |
-| H22b | `spatial_repair` (tail [2,2,2,1] + no CBAM on 2 × 2 alone) grouped F1, seed 0 ≥ 0.5508 | Y5 dissection | as above | not run |
+| H21a | (parent) Y3 grouped F1, 6 runs (seeds 0–2) ≥ 0.5108 | Y3 replication (FW-35) | adopt SeedNet v5 (with H21b): defaults → R1 + lean keys | **supported** — 0.571 (CI 0.559…0.579), clear (F84) → **v5 adopted (D35)** |
+| H21b | (parent) Y3 stratified F1, 3 runs ≥ 0.7090 | Y3 replication | as above | **supported** — 0.745 (CI 0.724…0.760), clear (F84) |
+| H21c | Y3 − X1 grouped F1 on seeds 1–2 ≥ +0.020 and its hierarchical-bootstrap CI excludes 0 | Y3 replication | the paper may claim a grouped gain (G3) | **supported** — +0.047 (CI +0.034…+0.060), clear (F84) |
+| H21d | Y3 grouped cross-session recall ≥ 0.1666 and attraction ≤ 0.4240 on seeds 1–2 | Y3 replication | the paper may claim cross-session robustness | **supported** — cross 0.206 (clear), attraction 0.410 (CI 0.384…0.437, marginal) (F85) |
+| H21e | Y3 − X1 stratified F1 on seeds 1–2 ≥ +0.018 | Y3 replication | within-acquisition gain | **rejected** — +0.016 (CI −0.005…+0.037) → not claimed (F86) |
+| H22a | `desc_only` (SNV + morph descriptor alone) grouped F1, seed 0 ≥ 0.5508 | Y5 dissection (FW-36) | which removal carries the gain (only if H21a ∧ H21b) | **supported (screen, marginal)** — 0.553 (folds 0.568 / 0.538 straddle within the margin; D28 clause not fired) (F87) |
+| H22b | `spatial_repair` (tail [2,2,2,1] + no CBAM on 2 × 2 alone) grouped F1, seed 0 ≥ 0.5508 | Y5 dissection | as above | **supported (screen)** — 0.570, clear → H22a ∧ H22b: *redundant, both kept*; robustness tracks the spatial repair (F87) |
 
-## 8 · Adding a hypothesis
+**S16 (reading).** Read exactly as frozen (`evidence/S16_replication_reading/hypotheses.json`): H21a–H21d supported, H21e
+rejected, H22a (marginal) and H22b supported. Seed 0 was Y3's lowest seed — the fresh-seed reading H21c–H21e guarded
+against a winner's curse that did not occur. Routes: SeedNet v5 adopted (D35).
+
+## 8 · S16 → S17: v5's tier-1 row and two screens, frozen
+
+`evidence/S16_replication_reading/preregistration_s16.json`, SHA-256
+`3b623c45c559962c36b59383ddf6a636da9a087e41523d8d5c455e81954b9d3e`, frozen 2026-10-03 before any S17 cell or runner
+exists. Reference = v5 at seeds 0–2 (D35): grouped 0.570816 (σ 0.0102), cross 0.199401 (σ 0.0138), attraction 0.412773
+(σ 0.0121), stratified 0.744788 (σ 0.0100); margins 2·max(σ, 0.009). Z2 and Z3 are screens (D28): a pass is replicated
+at seeds 1–2 before it can replace v5. **Z3 is motivated by S16's post-hoc dissection profile (F87).**
+
+| ID | Hypothesis (as frozen) | Experiment | Decision it drives | Status |
+|---|---|---|---|---|
+| H23 | v5 80/20 stratified F1 (3 runs) − v5 70/30 (0.744788) ≤ +0.030 | Z1 (FW-37) | the D16 tier-1 row; does v5, unlike X1 (F80), gain from same-acquisition data? | not run |
+| H24a | v5 at uniform430 k64, grouped F1 (seed 0, 2 runs) ≥ 0.550404 | Z2 (FW-03) | k64 non-inferior → k32 stays, FW-03 closed for k ≤ 64 | not run |
+| H24b | …≥ 0.591228 | Z2 | superior → with H24c: replicate k64, screen the 215-band cube | not run |
+| H24c | …cross-session recall ≥ 0.171824 and attraction ≤ 0.436934 | Z2 | a gain without session cost (else F70's pattern: k32 stays) | not run |
+| H25a | v5 with a 4 × 4 end map (tail `[2,2,1,1]`), grouped F1 (seed 0, 2 runs) ≥ 0.550404 | Z3 (FW-38) | non-inferior | not run |
+| H25b | …cross-session recall ≥ 0.226978 and attraction ≤ 0.388612 | Z3 | with H25a: end-map extent is a robustness lever (replicate); else the repair was one step (v5 stays) | not run |
+
+## 9 · Adding a hypothesis
 
 Write it here *before* the run, with: the exact claim, the metric and split, the threshold, what
 outcome supports it, and which decision or finding it would change. If held-out data will be
 touched, also freeze it (WORKFLOW §3). Fill *Outcome* only from saved evidence, and say
 `undetermined` when the evidence was not saved — as H4 shows, an unsaved number is a lost test.
+
+## 10 · S19 next-generation hypotheses — draft, not frozen or run
+
+These hypotheses are informed by historical confirmation data and current literature. They are proposals, not
+preregistered outcomes. Exact manifests, model variants, thresholds and selection rules must be frozen in the next
+execution study before confirmation. Planning margins appear in S19 `experiments_and_paper.md`.
+
+| ID | Question / hypothesis | Decisive control | Decision / status |
+|---|---|---|---|
+| H26 | High-resolution foreground RGB supplies information complementary to HSI under acquisition shift | RGB-only, HSI-only, logit fusion; silhouette/grayscale and resolution controls on matched kernels | D38; untested; require replicated F1/transfer gain, not only within-acquisition improvement |
+| H27 | Fuller measured spectra add discriminative information beyond32 after capacity, axis coverage and calibration are controlled | Historical and nested32/64, 195≥430,full 215; fixed-width spectral model and uniform/random controls | D39; untested; choose smallest noninferior budget |
+| H28 | Physical wavelength/gap handling improves transfer across band sets compared with index-only encoding | Matched parameter/training budget; identical spectra, physical axis versus index encoding | D38/D39; untested; otherwise retain simpler encoding |
+| H29 | Local arrangement adds robust information beyond the within-kernel spectral distribution | Quantile baseline, shared pixel bag, same encoder with occupied spatial regions | D38; untested; isolate spatial information rather than extra parameters |
+| H30 | A nuisance family estimated from independent/training standards supports class-preserving correction/consistency | No correction, measured-nuisance intervention, generic matched-strength jitter; class-detail checks | D38/D40; conditional on identifiable measurement evidence; untested |
+| H31 | Externally pretrained RGB/HSI features improve data efficiency beyond classical summaries and scratch ERM | Frozen probe, limited tuning, matched simple baselines; provenance/overlap checks | D38; untested; transfer is not presumed from remote-sensing/natural-image results |
+
+## S20 · RGB execution hypotheses (2026-10-04, before execution)
+
+- **H32:** Grid-constrained correspondence can uniquely pair retained HSI kernels to RGB; fail closed on ambiguous cells/residuals and report exclusions.
+- **H33:** Masked RGB appearance improves grouped macro-F1 over RGB morphology by ≥.02, with paired class-bootstrap interval excluding zero. A CPU screen, not a broad robustness claim.
+- **H34:** Simple RGB–HSI fusion improves grouped macro-F1 over matched HSI by ≥.02 without reducing observed cross-session recall. Retain unimodal alternatives if this fails.
+- **H35:** Expanded spectral coverage improves matched low-capacity probes by ≥.01 macro-F1 without reducing cross-session recall. Otherwise retain k32 provisionally; this cannot reject all nonlinear full-spectrum models.
+
+Predictive arm manifest and scoring guard will be frozen after label-free asset validation, before held-out scoring.
+
+S20 pre-freeze clarification: **H34v5** also compares equal calibrated RGB fusion
+against each of the three existing v5 TTA seeds, reusing saved calibration/held-out
+logits with exact row/target checks. The same ≥.02 F1 / nonnegative cross-recall rule
+applies; shared frozen RGB features do not constitute three RGB replications. No
+new GPU training is implied. These arms were added before any S20 scoring.
+
+Pre-freeze operational definition: H33's decisive shape control is the same frozen
+DINOv2 encoder on a binary silhouette, isolating appearance at matched encoder
+capacity. Eight explicit morphology values are an additional baseline. H35a uses
+nested 32/64 quantiles; H35b compares mean214-own versus mean32. The three-seed v5
+aggregate must also pass the same H34 threshold and paired interval rule; a shared
+RGB branch does not create independent RGB replications.
+
+## S21 · Complementary-fold follow-up (2026-10-04, before S21 execution)
+
+S20 motivated a separately frozen 24-arm screen using independent group/patch RNG
+streams. This is a declared adaptive follow-up on old acquisitions, not fresh evidence.
+H36: RGB versus silhouette ≥.02 F1 and paired CI >0. H37: equal RGB/HSI32 fusion versus
+HSI32 ≥.02 F1, CI >0, nonnegative cross-recall delta. H38: correctly paired versus
+within-scan shuffled fusion ≥.01 F1 and CI >0; otherwise no individual-kernel
+interaction claim. H39a/b: nested32/64 quantiles and mean32/214-own respectively,
+≥.01 F1, CI >0 and nonnegative cross-recall delta. No historical v5 reuse because
+its training acquisitions differ from the repaired partitions.
+
+## S20/S21 outcomes and S22 continuation (2026-10-04)
+
+| Hypothesis | Outcome | Interpretation |
+|---|---|---|
+| H32 | pass | 8,624 unique pairs, exact k32 parity, all16 original exclusions preserved; mask annotation remains absent |
+| H33 | pass | S20 RGB vs silhouette F1 +.277696 [.242646,.310566] |
+| H34 / H34v5 | pass bounded gates | S20 HSI32 fusion +.052257; three-seed v5 fusion +.040896 [.026310,.055735]; v5 cross-recall CI spans zero, no established transfer gain |
+| H35a/b | fail | nested64 and full214 mean improve F1 but reduce observed cross recall |
+| H36 | pass | S21 RGB vs silhouette +.281974 [.244211,.316018] |
+| H37 | pass | S21 equal fusion +.056970 [.039397,.075737], cross +.049917 [.003676,.111698] |
+| H38 | fail | correctly paired minus shuffled F1 −.014112 [−.020092,−.007799] |
+| H39a/b | fail | S21 band-expansion transfer deltas negative |
+| H40 | frozen, GPU unrun | S22 three-seed/two-fold equal v5+RGB F1 gain ≥.02, paired CI >0, cross delta ≥0; positive cross CI additionally required for transfer claim |
+
+The S20 plan's “both directions” wording was corrected after a coverage audit;
+its actual rows/plans remain immutable. S21 exhaustively covers both directions.
+H26/H31 now have positive bounded CPU evidence, not complete neural/external validation;
+H27's simple-probe transfer tests are negative. H28–H30 remain untested. These screens
+reuse historical acquisitions and do not establish independent replication.
+[S20 results](studies/S20_rgb_pathway/results.md) ·
+[S21 results](studies/S21_complementary_rgb/results.md) ·
+[S22 preregistration/runbook](studies/S22_complementary_v5/README.md).

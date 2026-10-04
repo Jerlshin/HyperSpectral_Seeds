@@ -1,0 +1,10 @@
+src/spectralquadnet/data/prep/patch_extraction.py:704: error: Incompatible types in assignment (expression has type "ndarray[tuple[int, ...], dtype[signedinteger[_64Bit]]]", variable has type "ndarray[tuple[int], dtype[signedinteger[_64Bit]]]")  [assignment]
+src/spectralquadnet/data/prep/patch_extraction.py:705: error: Incompatible types in assignment (expression has type "ndarray[tuple[int, ...], dtype[signedinteger[_64Bit]]]", variable has type "ndarray[tuple[int], dtype[signedinteger[_64Bit]]]")  [assignment]
+src/spectralquadnet/data/prep/patch_extraction.py:705: error: Incompatible types in assignment (expression has type "ndarray[tuple[int, ...], dtype[floating[_16Bit]]]", variable has type "ndarray[tuple[int, int, int], dtype[floating[_16Bit]]]")  [assignment]
+src/spectralquadnet/data/prep/patch_extraction.py:706: error: Incompatible types in assignment (expression has type "ndarray[tuple[int, ...], dtype[floating[_32Bit]]]", variable has type "ndarray[tuple[int, int, int, int], dtype[floating[_32Bit]]]")  [assignment]
+src/spectralquadnet/data/prep/patch_extraction.py:706: error: Incompatible types in assignment (expression has type "ndarray[tuple[int, ...], dtype[floating[_32Bit]]]", variable has type "ndarray[tuple[int, int], dtype[floating[_32Bit]]]")  [assignment]
+src/spectralquadnet/data/mmap_store.py:55: error: Item "None" of "ndarray[tuple[int, ...], dtype[Any]] | None" has no attribute "madvise"  [union-attr]
+src/spectralquadnet/data/datasets.py:496: error: Missing return statement  [empty-body]
+src/spectralquadnet/data/datasets.py:569: error: Name "__getitem__" already defined on line 496  [no-redef]
+pyproject.toml: note: unused section(s): module = ['causal_conv1d_cuda', 'mamba_ssm', 'wandb.*']
+Found 8 errors in 3 files (checked 6 source files)

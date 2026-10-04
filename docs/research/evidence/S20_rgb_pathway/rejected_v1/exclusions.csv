@@ -1,0 +1,17 @@
+scan_id,grid_row,grid_col,reason
+9,0,3,not retained by historical HSI segmentation; RGB seed present
+9,1,0,not retained by historical HSI segmentation; RGB seed present
+9,5,1,not retained by historical HSI segmentation; RGB seed present
+10,2,0,not retained by historical HSI segmentation; RGB seed present
+10,6,0,not retained by historical HSI segmentation; RGB seed present
+25,7,4,not retained by historical HSI segmentation; RGB seed present
+85,4,2,not retained by historical HSI segmentation; RGB seed present
+101,2,5,not retained by historical HSI segmentation; RGB seed present
+101,3,5,not retained by historical HSI segmentation; RGB seed present
+109,2,5,not retained by historical HSI segmentation; RGB seed present
+109,7,0,not retained by historical HSI segmentation; RGB seed present
+146,0,1,not retained by historical HSI segmentation; RGB seed present
+146,1,1,not retained by historical HSI segmentation; RGB seed present
+150,3,5,not retained by historical HSI segmentation; RGB seed present
+150,4,3,not retained by historical HSI segmentation; RGB seed present
+150,4,5,not retained by historical HSI segmentation; RGB seed present

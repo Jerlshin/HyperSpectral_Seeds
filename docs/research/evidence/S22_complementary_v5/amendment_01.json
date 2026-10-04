@@ -1,0 +1,8 @@
+{
+  "parent_plan_sha256": "e9b4a6c01928267aab5b2297551165a7bcd8fefcf420da0f57787473f3271399",
+  "final_plan_sha256": "f44c0d2e22f2849816cf2a8f2cdad8ae90084c695b06e4c181e7fc9b000f6f73",
+  "gpu_cells_executed": 0,
+  "reason": "01: before GPU execution, rank-zero output preflight and broadcasted errors; resume requires training action; postprocessing validates exact cell identity. Scientific design, data and thresholds unchanged.",
+  "profile_final_note": "Final launcher reran CPU forward/backward with zero held-out rows before amendment sealing; profile provenance carries parent plan hash. No predictive outcome guided the amendment.",
+  "intermediate_seal_sha256": "2685e47e520f9efc03f0b603c1236d7414f015846df6debde1c855e042b08c86"
+}

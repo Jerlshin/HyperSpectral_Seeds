@@ -1,0 +1,21 @@
+{
+  "json_files_parse": true,
+  "python_sources_parse": true,
+  "audit_invariants": true,
+  "bands_calibration_design": true,
+  "literature_records": 39,
+  "local_markdown_links_valid": 67,
+  "frozen_plan_hashes_unchanged": 8,
+  "historical_study_documents_unchanged_since_audit": 17,
+  "figures": {
+    "class_session_support.png": [
+      1600,
+      800
+    ],
+    "band_geometry.png": [
+      1600,
+      576
+    ]
+  },
+  "scope": "Document/metadata validation only; does not validate proposed predictive performance."
+}

@@ -1,0 +1,12 @@
+{
+  "reference_count": 129,
+  "current_count": 131,
+  "added": [
+    "src/spectralquadnet/data/prep/multimodal.py",
+    "src/spectralquadnet/data/prep/rgb.py"
+  ],
+  "changed_existing_files": [],
+  "guard_messages": [
+    "code identity: 131 scoped files digest to 99198c482c04\u2026, not aed5257's fade41e5764c\u2026 \u2014 model/training/data/config code changed since the S13 cells ran. preregistration_s14.json requires it unchanged (or G-neutral re-run on the default and the Y3 keys against aed5257) before any S15 cell runs."
+  ]
+}

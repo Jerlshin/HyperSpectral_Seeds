@@ -1,0 +1,7 @@
+{
+  "date": "2026-10-03",
+  "commit": "52fba4f4698e0a8948b00a4a83f3893ae793e55b",
+  "working_tree": " M README.md\n M docs/research/DECISIONS.md\n M docs/research/FINDINGS.md\n M docs/research/FUTURE_WORK.md\n M docs/research/HYPOTHESES.md\n M docs/research/README.md\n M docs/research/TIMELINE.md\n M docs/research/studies/S15_y3_replication/README.md\n M docs/research/tools/build_assets.py\n?? docs/research/MASTER_RESEARCH_PLAN.md\n?? docs/research/RESEARCH_PROGRESS.md\n?? docs/research/evidence/S16_replication_reading/\n?? docs/research/evidence/S19_next_generation_strategy/\n?? docs/research/figures/S16_replication_reading/\n?? docs/research/figures/S19_next_generation_strategy/\n?? docs/research/studies/S16_replication_reading/\n?? docs/research/studies/S19_next_generation_strategy/\n",
+  "python": "3.13.12 | packaged by conda-forge | (main, Feb  5 2026, 06:11:05) [Clang 19.1.7 ]",
+  "scope": "descriptive metadata and existing summary audit; no new training or scoring"
+}

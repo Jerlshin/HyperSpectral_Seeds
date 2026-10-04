@@ -1,0 +1,20 @@
+{
+  "baseline_f1": 0.5707955389155057,
+  "fusion_f1": 0.6116912002592941,
+  "delta_f1": 0.040895661343788414,
+  "ci": [
+    0.026310449405148307,
+    0.055735132725727526
+  ],
+  "baseline_same": 0.6828883431636622,
+  "fusion_same": 0.7283532914353407,
+  "baseline_cross": 0.1991966230936819,
+  "fusion_cross": 0.20868678440643393,
+  "delta_cross": 0.009490161312752047,
+  "cross_ci": [
+    -0.03954354835905995,
+    0.058211110241969115
+  ],
+  "screen_pass": true,
+  "note": "Reuse of three historical HSI seeds with one shared frozen RGB representation/head per fold. Not three independently trained RGB models; no new GPU execution."
+}

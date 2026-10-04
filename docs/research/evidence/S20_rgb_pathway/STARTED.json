@@ -1,0 +1,5 @@
+{
+  "plan_sha256": "c2d4f18394bd031530ba438b4ef2cad04a5b56a97f2eee2cad6a96b67951607a",
+  "python": "3.13.12",
+  "sklearn": "1.7.2"
+}

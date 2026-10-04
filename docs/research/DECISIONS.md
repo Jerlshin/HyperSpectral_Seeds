@@ -20,7 +20,7 @@ rule or an earlier plan said, the entry says so under *Deviation*.
 | D02 | Fit and select on a calibration split carved from train; score `val ∪ test` once | 2026-08-13 | F04, F21 | active |
 | D03 | Report mean ± range over 2 folds × 3 seeds with bootstrap CIs; never a maximum | 2026-08-13 | F04 | active |
 | D04 | The default input is the full acquired cube — no band selection on the primary path | 2026-08-14 | F03, F12 | active — **under review** (F17) |
-| D05 | SpectralSeedNet (two pathways, 3.0 M) replaces SpectralQuadNet (four branches, 5.2 M) as primary | 2026-08-13 | F06, F07 | active — A3 not yet run; S10: 11.5 % of params untrainable (F48), spectral blocks inert (F49); **S12: the spatial pathway adds +0.10 and is the session channel (F64); joint fusion ≈ late fusion (F65); lean version frozen as Y3**; **S14: the lean version passes its screen (+0.026 grouped, F74) — replication frozen (S15); joint fusion stays (F76)** |
+| D05 | SpectralSeedNet (two pathways, 3.0 M) replaces SpectralQuadNet (four branches, 5.2 M) as primary | 2026-08-13 | F06, F07 | active — A3 not yet run; S10: 11.5 % of params untrainable (F48), spectral blocks inert (F49); **S12: the spatial pathway adds +0.10 and is the session channel (F64); joint fusion ≈ late fusion (F65); lean version frozen as Y3**; **S14: the lean version passes its screen (+0.026 grouped, F74) — replication frozen (S15); joint fusion stays (F76)**; **S16: replicated → SeedNet v5 (D35)** |
 | D06 | One training stage replaces three | 2026-08-13 | F05 | active — **under review** (F35, F47: the margin is met by 0–52 % of training kernels at < 4 % of the LR); **S12: margin removed with R1 (D24)** |
 | D07 | Objective & optimiser fixes: one aux head at fixed 0.2, GradNorm off, clip 5.0, K = 1, AMP kept on, TF32 off | 2026-08-13 | F07, F08 | active — **under review** (F36, F53); **not executed as written: aux weight was 0.65 → 0.25, not 0.2 (F54)** |
 | D08 | Band studies select inside the fold, decide on calib, include null methods and the full budget | 2026-08-13 | F03, F11 | active |
@@ -39,17 +39,20 @@ rule or an earlier plan said, the entry says so under *Deviation*.
 | D21 | Interpretation guards on S09's frozen plan (file unchanged): H13's baseline is 0.90/0.91 under its own definition; an X1 gain is credited to mixup/margin/epochs, not the clip; the aux schedule stays `legacy` for X1/X2 | 2026-10-01 | F45, F53, F54 | active — guard 3 enforced by the code default and a test (S11) |
 | D22 | S10's P0 implemented as specified except: the model-declared clip partition is opt-in (`clip_partition=legacy` default); the frozen commands run under `torchrun` with one output directory per cell; X5/X6 not implemented (D19) | 2026-10-01 | F57, F58, S10 §6, §9 | active; **S12: reversal trigger fired literally (clip 50 bound on ≤ 18 group-steps per run, F71c) — X1/X4 read as legacy-partition results, effect negligible** |
 | D23 | Route A, per the frozen S09 rule (H12a rejected, H14b rejected): no further capacity or regime work; next = representation (session-robust, sample-efficient) and data/protocol | 2026-10-02 | F59–F67 | active |
-| D24 | R1 (= X1: mixup 30 epochs, margin 0, clip 50, 200 epochs, patience 40) is the reference regime for new arms; credited with parsimony and lower variance, not with a gain | 2026-10-02 | F59, F60, F47 | **active — under review** (S14, D31): its trigger fired on the cross-session axis (fusion vs joint flips between regimes, F77/F78); F1 ranks unchanged; R1 stays the reference. S13: config-default switch deferred (D29) |
+| D24 | R1 (= X1: mixup 30 epochs, margin 0, clip 50, 200 epochs, patience 40) is the reference regime for new arms; credited with parsimony and lower variance, not with a gain | 2026-10-02 | F59, F60, F47 | **active — under review** (S14, D31): its trigger fired on the cross-session axis (fusion vs joint flips between regimes, F77/F78); F1 ranks unchanged; R1 stays the reference. S13: config-default switch deferred (D29). **S16: R1 is part of v5's definition (D35); the default switch lands in S17 part 1 (D36)** |
 | D25 | X5 and X6 are not run as standalone frozen arms: X5's correctness change joins the lean arm (Y3); X6 is deferred (linear proxy shows the H18a ∧ ¬H18b pattern) | 2026-10-02 | F61, F70 | active — **deviation recorded** |
 | D26 | Every run reports a training-rows session κ (embedding and each pathway output) beside the held-out session metrics; it may guard a design choice, never replace held-out confirmation | 2026-10-02 | F69 | active — **implemented in S13** (`evaluation.session_probe`); **S14 (D32): reported only — no ranking power among spatial-pathway networks (F81)** |
 | D27 | Before the next Kaggle session: fix the final-epoch checkpoint race, ignore the dataset symlink in the dirty flag, re-score the unscored X2 cell; the next GPU round is S13, frozen in `preregistration_s12.json` | 2026-10-02 | F71 | **implemented in S13** (F72) except the X2 re-score — **not run** (S11 output not attached; decides nothing; F73) |
 | D28 | S13 runs as a **single-seed screen**: seeds 3 → 1 (seed 0), every arm, control, protocol contrast and grouped fold kept; recorded as a hashed amendment (`preregistration_s13.json`); outcomes are screening verdicts and passing arms are replicated at seeds 1–2 before any claim | 2026-10-02 | F60, S12 §9 | active — **deviation recorded** (PI-approved, before any S13 run); **S14: read — 1 pass (Y3), 2 rejections (Y1, Y2), H15 supported; no fold straddled a threshold** |
-| D29 | P0 and the S13 arms as implemented: atomic checkpoint writes + end-of-stage barriers, `dataset_*`, late-fusion scorer, κ default-on, Y2/Y3 behind default-off keys (G-neutral); D24's default switch deferred | 2026-10-02 | F72 | active — **deviation recorded** |
+| D29 | P0 and the S13 arms as implemented: atomic checkpoint writes + end-of-stage barriers, `dataset_*`, late-fusion scorer, κ default-on, Y2/Y3 behind default-off keys (G-neutral); D24's default switch deferred | 2026-10-02 | F72 | active — **deviation recorded**; deviation 1 closed by D36 (S17 part 1) |
 | D30 | The S13 screen read as frozen: Y3 passes → replicated (S15) and the provisional base of later *screening* arms only; Y1 and Y2 are screening rejections (not replicated); the joint network stays; Y4's 0.728 is the provisional tier-1 number for the X1 architecture | 2026-10-03 | F74–F80 | active |
 | D31 | D24's trigger fired on the cross-session axis only; R1 stays the reference regime; every session-robustness claim names its regime | 2026-10-03 | F77, F78 | active |
 | D32 | The training-rows κ is reported, never used to select among networks that share the spatial pathway; it guards only against large moves (≥ 0.1) | 2026-10-03 | F81 | active |
-| D33 | S15 frozen (`preregistration_s14.json`, `9e182670…`): Y3 at seeds 1–2 (H21a/b as parent; H21c–e on fresh seeds) + a 4-run dissection (Y5, H22a/b); runner-only code change; one Kaggle session | 2026-10-03 | F74, F75 | active — **implemented in S15 part 1** (D34); Kaggle run pending |
+| D33 | S15 frozen (`preregistration_s14.json`, `9e182670…`): Y3 at seeds 1–2 (H21a/b as parent; H21c–e on fresh seeds) + a 4-run dissection (Y5, H22a/b); runner-only code change; one Kaggle session | 2026-10-03 | F74, F75 | **done** — run 2026-10-03, read in S16 (D35) |
 | D34 | S15 as implemented: per-cell seeds from the frozen file; the code-identity guard as a content digest of the training code pinned at `aed5257` (works in Kaggle's shallow clone; wider scope than frozen); replication cells first; the old X2 re-score not part of the session; an output-archive Kaggle cell | 2026-10-03 | F82 | active — **no deviation** from `preregistration_s14.json` |
+| D35 | S15 read as frozen: H21a ∧ H21b → the lean network under R1 is **SeedNet v5**, the reference form and base of every later arm (X1 historical); the paper claims the grouped gain (H21c) and the cross-session gain (H21d), not a within-acquisition gain (H21e); attribution "redundant" as frozen, F87's robustness attribution reported as a one-seed observation; v5 rows = single-run mean ± sd, 3-seed ensemble a labelled secondary row | 2026-10-03 | F84–F89 | active |
+| D36 | The config default becomes v5 (R1 + `snv_morph`, `[2,2,2,1]`, `cbam_min_hw 3`) in S17 part 1, behind G-neutral against `aed5257` + the v5 overrides; earlier runners are pinned to their own commits (digest refusal) | 2026-10-03 | F84, F72, F82 | active — to implement (S17 part 1) |
+| D37 | S17 frozen (`preregistration_s16.json`, `3b623c45…`): v5's 80/20 tier-1 row at 3 seeds (H23), a 64-band screen (H24a–c) and a 4 × 4 end-map screen (H25a–b); 7 runs ≈ 4.3 h; the k64 cube is a PI upload | 2026-10-03 | F84, F87, F80 | active — to implement (S17 part 1) |
 
 ---
 
@@ -350,6 +353,7 @@ measured benefit); a 150-epoch R1 (untested).
 switched (D29 deviation 1).
 **S14 note (D31).** The trigger fired on the cross-session axis (fusion vs joint reverses between regimes; F77, F78), not
 on F1. Status: active — under review.
+**S16 note (D35, D36).** R1 is now part of SeedNet v5's definition; the config default switches with v5 in S17 part 1.
 
 ### D25 · X5 and X6 are not run as standalone arms (S12) — deviation recorded
 **Context.** S10 froze X5 (tail stride 1, H17) and X6 (log-reflectance level block, H18a/b) to run after X1. X4 showed
@@ -426,6 +430,8 @@ the shipped regime from the defaults, including the P0 re-score) and void G-neut
 checkpoints the same way.
 **Reverse if** a later study needs `python train.py` to run R1 by default — switch it then, with S11's X2 cells given
 explicit shipped overrides and G-neutral re-run on the R1 regime.
+**S16 note (D36).** The trigger is met: v5 (D35) is the network `python train.py` should run. Deviation 1 closes in S17
+part 1; historical runners are pinned to their commits instead of being given explicit shipped overrides.
 
 ### D30 · The S13 screen, read as frozen (S14)
 **Context.** S13 ran all 10 GPU cells and 2 fused cells at seed 0 (F73). Verdicts: H19a supported, H19b rejected,
@@ -490,3 +496,138 @@ session: it decides nothing and would need the S11 output attached. (5) A Kaggle
 run on Kaggle (costs GPU time for a question a digest answers exactly).
 **Reverse if** a training-code change is ever needed before S15 runs — then the frozen alternative applies: G-neutral on
 the default and the Y3 keys against `aed5257`, and a new pinned digest recorded with it.
+
+### D35 · S15 read as frozen → SeedNet v5 (S16)
+**Context.** H21a (0.571, 6 runs) and H21b (0.745, 3 runs) hold; H21c (+0.047 on fresh seeds, CI +0.034…+0.060) and H21d
+(cross 0.206, attraction 0.410) hold; H21e is rejected (+0.016 < +0.018). Every v5 run beats every X1 run in all three
+cells, and seed 0 was v5's lowest seed (F84). H22a (marginal) and H22b (clear) both hold; beyond their F1 bar, the spatial
+repair alone carries the robustness (F87).
+**Decision.** As the frozen rule says: the lean architecture under R1 — `model.spectral_descriptor=snv_morph
+model.spatial_tail_strides=[2,2,2,1] model.cbam_min_hw=3` + R1's overrides — is **SeedNet v5**, the reference form and the
+base of every later arm; X1 is a historical comparator. Reference values for later rounds are v5's 3-seed means and run
+sds (`preregistration_s16.json → reference`). **Paper:** may claim the grouped gain over X1 (G3 met on fresh seeds) and
+raised cross-session recall with lowered attraction; does *not* claim a within-acquisition gain ("non-inferior, +0.018
+over 3 seeds, not confirmed on fresh seeds"); drops the index-bank / continuum / derivative modules from the method.
+**Attribution:** "redundant" as frozen (either half passes the F1 bar; both are kept); the paper may add, labelled as a
+one-seed observation, that the spatial end-map repair alone reproduces the robustness gain and the descriptor removal is
+a simplification at no cost. **Reporting:** a v5 number is the single-run mean ± sd over folds × seeds; the 3-seed
+ensemble (0.587 grouped, 0.774 stratified; F88) is a secondary, labelled row; every held-out number keeps its same- /
+cross-session split and attraction (D14, D16).
+**Alternatives rejected.** Keeping X1 as reference until S17 (the adopt clause is met; S17's arms are defined on v5);
+adopting `spatial_repair` alone as v5 (one seed; the frozen rule keeps both halves; the descriptor removal is free and
+removes inert modules); claiming the stratified gain from the all-seed CI (H21e was frozen on fresh seeds to guard
+against the winner's curse — reading a different subset after the fact is the move it was written to prevent).
+**Reverse if** a frozen round on v5 at ≥ 3 seeds falls below X1's grouped mean (0.531), or D36's G-neutral fails (then v5
+is defined by its overrides only, as in S13/S15).
+
+### D36 · The config default becomes v5, behind G-neutral (S16 → S17 part 1)
+**Context.** D24 (S12) planned R1 as the default "when the S13 code lands"; D29 deferred it because switching would
+re-compose S11's X2 cells (which inherit the shipped regime from the defaults) and void G-neutral's shipped regime. D35
+now names a reference form. S15 showed a content digest of the training code is a reliable, shallow-clone-safe identity
+check (F82, F83).
+**Decision.** S17 part 1 switches the defaults — `configs/model/seed_net.yaml` (`spectral_descriptor: snv_morph`,
+`spatial_tail_strides: [2, 2, 2, 1]`, `cbam_min_hw: 3`) and R1 (`single.mixup_epochs 30`, `single.arcface_m 0`, margin
+warm-up 31/31, `grad_clip 50`, `single.epochs 200`, `single.patience 40`) — gated by G-neutral (S11/S13's harness: per-step
+losses, every checkpoint tensor and held-out predictions ±TTA) between `python train.py` on the new code and
+`aed5257` + the v5 overrides; the new digest is pinned. Earlier runners compose their cells from the defaults of their own
+commit, so they become historical: `run_frozen.py` and `run_s13.py` get the same digest refusal `run_s15.py` has, and an
+old cell is re-run only from its pinned commit. S17's cells carry v5 explicitly, so they compose the same either way.
+**Alternatives rejected.** A third deferral (`python train.py` would keep training a network the project no longer uses);
+patching every historical runner with explicit shipped overrides (re-validating ≈ 40 past cells for no scientific gain).
+**Reverse if** G-neutral fails — then the switch is withdrawn and S17 runs on `aed5257`'s training code by digest, as S15.
+
+### D37 · S17: v5's tier-1 row and two screens, frozen (S16)
+**Context.** D35 makes v5 the reference; FW-37 (the paper's within-acquisition row) was scheduled for this point by S14
+§9.2; FW-03 (band budget) has waited since S08 for a settled architecture; F87 ties v5's robustness to the end-map repair,
+which leaves two mechanisms — trainability of the last block, or pooling over spatial extent — that a 4 × 4 end map
+separates.
+**Decision.** `evidence/S16_replication_reading/preregistration_s16.json` (SHA-256 `3b623c45…`), frozen before any S17
+cell or runner exists. Z1: v5 at 80/20, seeds 0–2 (3 runs; H23, H15's form). Z3: v5 with tail `[2,2,1,1]` (v5's rules),
+grouped f0/f1, seed 0 (2 runs; H25a non-inferior, H25b cross ≥ 0.2270 and attraction ≤ 0.3886). Z2: v5 on uniform430 k64
+(band-augmentation widths scaled), grouped f0/f1, seed 0 (2 runs; H24a non-inferior ≥ 0.5504, H24b superior ≥ 0.5912,
+H24c no session cost). Margins 2·max(v5 sd, 0.009). Z2/Z3 are screens (D28 semantics). Order Z1 → Z3 → Z2; ≈ 4.3 h
+(≤ 4.6 h). The k64 cube (≈ 4.6 GB) is built with `scripts/build_presliced_dataset.py` and uploaded by the PI.
+**Alternatives rejected.** Replicating the dissection (8 runs for an attribution the frozen rule already settles and the
+robustness axis shows clearly); the 215-band cube now (≈ 5–7× the stem cost; only after H24b); a k24 arm (FW-09; it can
+only make the input cheaper, not raise the ceiling — after Z2); more 70/30 stratified seeds to revisit H21e (re-reads a
+frozen, rejected question); running the CPU track first (it needs no GPU and proceeds in parallel).
+**Reverse if** — not applicable (a design; its outcomes are read in S18).
+
+
+### D38 · Complementary representations become the next-generation route (S19; provisional)
+**Context.** F84–F89 establish v5; F90–F96 establish concrete input opportunities and limits. Capacity/training-only
+changes already failed; generic RGB–HSI fusion is prior art.
+**Decision.** Preserve v5 as reference and bounded S17; prioritize verified RGB pairing, frozen RGB features, simple
+fusion and compact wavelength-aware HSI distributions/regions. Standards-grounded nuisance handling is conditional on
+measured calibration evidence. Proposal and controls: `studies/S19_next_generation_strategy/architecture_proposal.md`.
+**Alternatives rejected/deferred.** Unbounded SeedNet tuning, bigger networks, generic MixStyle retry, fashionable
+Mamba/KAN/hypergraphs without a specific failure/compute argument; a paper whose only novelty is multimodal gating.
+**Reverse if** reliable pairing plus bounded representation/transfer trials show no benefit: retain efficient v5/HSI,
+or RGB-only if it matches fusion. This is a research-priority decision, not adoption of an untrained model.
+
+### D39 · Separate band information from native-v5 budget continuation (S19; provisional)
+**Context.** F91/F93: non-nested inputs, blue extension, changing stem and small calibration-source difference.
+**Decision.** Keep S17 Z2 and its parent JSON unchanged. Independently test full spectra with compact matched models,
+including nested32→64 and 195→215; full 215 is the research reference, smallest noninferior budget is the deployment goal.
+D37's full 215 gate governs its native-v5 stem route; it is not evidence that other full-spectrum encoders should be barred.
+Any execution amendment gets its own frozen file/parent hash; S19 creates no new frozen predictive experiment.
+**Reverse if** full information repeatedly fails controlled probes or practical deployment constraints dominate: retain32;
+a positive signal earns replication, not automatic deployment of 215.
+
+### D40 · Center broad robustness claims on independent acquisitions (S19)
+**Context.** F92/F96 show support and adaptive-test limitations; v5 gains are directional.
+**Decision.** Target a crossed acquisition design with at least two training sessions, a development session and a locked
+test session, with every evaluated variety represented and biological lots recorded/crossed. Budget independent units
+before more kernels from existing scans. Report current90-class grouped and17-class bridge results as separate estimands.
+**Alternatives rejected.** Relabeling the current grouped split as all 90-class unseen-session generalisation; using new
+seeds as a fresh biological test; asserting Q1 readiness from a high within-acquisition number alone.
+**Reverse/scope fallback.** If new acquisitions cannot be obtained, narrow the paper to benchmark-conditioned claims and
+seek an additional suitable dataset. No broad session/lot claim without the corresponding independent test units.
+
+### D41 · Accept the versioned RGB pathway and compact full-band research assets (S20)
+**Context.** F97 closes the unvalidated-kernel-pairing gate in F90/FW-39. Native mask
+quality required two label-free preprocessing revisions before predictive scoring.
+**Decision.** Use `dataset_rgb_hsi_v3` with explicit physical grid IDs, native masks,
+all-scan QC and exact k32 parity. Preserve full215 as compact measured summaries
+and occupied-region spectra; materialize the optional dense cube only for a model
+that needs it. Use 214 own-white-only bands as the strict full-spectrum reference;
+retain historical axes as explicitly identified controls. The cached DINOv2-S/14
+checkpoint is the initial CPU transfer probe, replacing the first DINOv3/ConvNeXt
+comparison for this stage because it is available and locally tractable.
+**Status/reversal.** Active engineering choice; not a model-ranking claim. Any new
+mask or identity failure requires a new asset version and recorded audit before
+new scoring. Do not overwrite S20 assets or reinterpret earlier masks as results.
+[Contract and deviations](studies/S20_rgb_pathway/implementation.md).
+
+### D42 · Use explicit complementary partitions for new studies; preserve historical replay (S21)
+**Context.** F102 corrects the interpretation of historical grouped folds.
+**Decision.** Use independent keyed group-order/patch RNG and freeze actual row lists.
+Require exhaustive once-only coverage across folds and within-fold group separation.
+S21's production API is opt-in; S22 passes validated rows into training before fitted
+preprocessing. Never silently change old splitters, logits, plans or source guards.
+**Reversal/scope.** A future dataset with more than two acquisitions needs a separately
+specified protocol. Historical estimates stay labeled by their actual legacy rows.
+
+### D43 · Advance simple late fusion, retain k32 and unimodal controls (S20/S21; revises D38/D39)
+**Context.** F99–F101/F103: RGB is informative; simple fusion helps; full bands and
+concatenation lose transfer; individual pairing has no demonstrated added value.
+**Decision.** Keep v5 k32 as neural reference and frozen RGB as a separate candidate.
+Test equal calibrated probability averaging before learned fusion. Preserve full215
+compact assets and strict214 controls, but do not promote full bands by aggregate F1.
+Defer cross-attention/gating, broad RGB fine-tuning and new foundation-model sweeps.
+DINOv2 is a feasible first probe, not evidence that it is the optimal pretrained model.
+**Reverse if.** A separately frozen, matched test establishes transferable improvement
+from geometry, bandwidth or adaptation; RGB-only may replace fusion if it matches it
+under a relevant resource/transfer objective. No requirement that fusion must win.
+
+### D44 · Prioritize six corrected-fold v5 fits, then independent acquisitions (S22; prepared)
+**Context.** Existing v5 training rows cannot serve as S21's neural baseline. The
+historical +.041 fusion F1 gain has uncertain cross-session benefit (F100).
+**Decision.** Freeze S22: folds0/1 × seeds0/1/2, exact v5 R1/k32 and S21 row partitions;
+then fixed equal RGB fusion, calib-only temperatures and paired class intervals.
+Stop after six fits; no architecture/band expansion inside this rebaseline. Require
+positive cross-recall CI for a transfer-gain claim, beyond H40's point-direction gate.
+S17/S18 stay reserved with their original plans; they are not the current next run.
+**Reversal.** H40 failure retains unimodal HSI. Success permits a bounded mechanism
+study, not a broad unseen-session claim. D40's crossed acquisition requirement remains.
+[Executable runbook](studies/S22_complementary_v5/README.md).

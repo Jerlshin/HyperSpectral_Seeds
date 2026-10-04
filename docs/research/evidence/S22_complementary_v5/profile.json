@@ -1,0 +1,14 @@
+{
+  "device": "cpu",
+  "batch": 2,
+  "forward_backward_seconds": 0.08206062507815659,
+  "finite_gradients": true,
+  "parameters": 2725700,
+  "training_rows": [
+    1,
+    2
+  ],
+  "held_out_rows_scored": 0,
+  "partition_scheme": "frozen_complementary",
+  "note": "Engineering smoke profile, not a learning curve or GPU speed estimate."
+}

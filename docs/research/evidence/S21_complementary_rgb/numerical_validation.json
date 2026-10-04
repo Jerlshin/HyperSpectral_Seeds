@@ -1,0 +1,456 @@
+{
+  "purpose": "Investigate recorded matmul floating-point warnings. No refit or held-out feature rescoring.",
+  "train_calib_explicit_sum_checks": [
+    {
+      "fold": 0,
+      "arm": "concat32_dino",
+      "max_logit_magnitude": 235.01493444918202,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 0,
+      "arm": "dino_gray",
+      "max_logit_magnitude": 118.02028780989767,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 0,
+      "arm": "dino_rgb",
+      "max_logit_magnitude": 114.00483580493943,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 0,
+      "arm": "dino_rgb32",
+      "max_logit_magnitude": 174.55534647973354,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 0,
+      "arm": "dino_silhouette",
+      "max_logit_magnitude": 154.73959234260252,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 0,
+      "arm": "hsi_mean214_own",
+      "max_logit_magnitude": 384.5344762377321,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 0,
+      "arm": "hsi_mean32",
+      "max_logit_magnitude": 206.78277789388392,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 0,
+      "arm": "hsi_q195",
+      "max_logit_magnitude": 216.8618429450013,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 0,
+      "arm": "hsi_q214_own",
+      "max_logit_magnitude": 841.9165679412758,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 0,
+      "arm": "hsi_q215",
+      "max_logit_magnitude": 841.7990558089281,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 0,
+      "arm": "hsi_q32",
+      "max_logit_magnitude": 209.91501751876578,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 0,
+      "arm": "hsi_q64",
+      "max_logit_magnitude": 212.05945106906438,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 0,
+      "arm": "hsi_qnested32",
+      "max_logit_magnitude": 209.91501751876578,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 0,
+      "arm": "hsi_qnested64",
+      "max_logit_magnitude": 212.6588202753309,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 0,
+      "arm": "hsi_snvmean214_own",
+      "max_logit_magnitude": 302.7768530500507,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 0,
+      "arm": "hsi_snvmean32",
+      "max_logit_magnitude": 192.78845691005967,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 0,
+      "arm": "rgb_all",
+      "max_logit_magnitude": 189.05357658430054,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 0,
+      "arm": "rgb_color",
+      "max_logit_magnitude": 46.128218546870066,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 0,
+      "arm": "rgb_shape",
+      "max_logit_magnitude": 179.13291515014097,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 0,
+      "arm": "rgb_texture_shape",
+      "max_logit_magnitude": 176.96468641940317,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 1,
+      "arm": "concat32_dino",
+      "max_logit_magnitude": 278.90894484048135,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 1,
+      "arm": "dino_gray",
+      "max_logit_magnitude": 119.99595230504936,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 1,
+      "arm": "dino_rgb",
+      "max_logit_magnitude": 120.95050886309139,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 1,
+      "arm": "dino_rgb32",
+      "max_logit_magnitude": 180.20288011513037,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 1,
+      "arm": "dino_silhouette",
+      "max_logit_magnitude": 144.3832502575715,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 1,
+      "arm": "hsi_mean214_own",
+      "max_logit_magnitude": 427.8743963768371,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 1,
+      "arm": "hsi_mean32",
+      "max_logit_magnitude": 253.50494896265457,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 1,
+      "arm": "hsi_q195",
+      "max_logit_magnitude": 271.9051337747715,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 1,
+      "arm": "hsi_q214_own",
+      "max_logit_magnitude": 1060.67534348009,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 1,
+      "arm": "hsi_q215",
+      "max_logit_magnitude": 1061.1477229629927,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 1,
+      "arm": "hsi_q32",
+      "max_logit_magnitude": 261.5620247364483,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 1,
+      "arm": "hsi_q64",
+      "max_logit_magnitude": 264.8480055108831,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 1,
+      "arm": "hsi_qnested32",
+      "max_logit_magnitude": 261.5620247364483,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 1,
+      "arm": "hsi_qnested64",
+      "max_logit_magnitude": 265.42938480277417,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 1,
+      "arm": "hsi_snvmean214_own",
+      "max_logit_magnitude": 275.1572168686665,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 1,
+      "arm": "hsi_snvmean32",
+      "max_logit_magnitude": 236.3296282848989,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 1,
+      "arm": "rgb_all",
+      "max_logit_magnitude": 213.78667363762298,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 1,
+      "arm": "rgb_color",
+      "max_logit_magnitude": 38.07671836172632,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 1,
+      "arm": "rgb_shape",
+      "max_logit_magnitude": 202.9556309883207,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    },
+    {
+      "fold": 1,
+      "arm": "rgb_texture_shape",
+      "max_logit_magnitude": 198.28654406921646,
+      "blas_vs_explicit_max_abs": 0.0,
+      "warnings": [
+        "divide by zero encountered in matmul",
+        "overflow encountered in matmul",
+        "invalid value encountered in matmul"
+      ]
+    }
+  ],
+  "saved_probability_checks": [
+    {
+      "fold": 0,
+      "arms_finite_normalized": 24
+    },
+    {
+      "fold": 1,
+      "arms_finite_normalized": 24
+    }
+  ],
+  "interpretation": "All coefficients/scales and saved probabilities are finite; direct scalar-sum and BLAS logits agree on train/calib samples. Warnings alone are not evidence of a nonfinite prediction; their low-level runtime cause was not established."
+}

@@ -1,0 +1,7 @@
+{
+  "file": "src/spectralquadnet/data/prep/rgb.py",
+  "executed_sha256": "c79691da9033f8d42ac589db4880d69b04c05766ab4f18c55fd35c5dfe6cdccf",
+  "current_sha256": "20862b782d5e6e7e58f5ba01b0f58062d78153bef9fd7232f61c044ed9d20363",
+  "ast_equal": true,
+  "change": "Only a type-ignore comment for OpenCV stubs; None rect is valid in GC_INIT_WITH_MASK. Exact executed source retained."
+}

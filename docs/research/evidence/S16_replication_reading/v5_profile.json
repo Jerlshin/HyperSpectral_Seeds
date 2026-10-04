@@ -1,0 +1,241 @@
+{
+ "separation_p_joint": 0.00012500000000000003,
+ "separation_note": "exact permutation probability that all 3 Y3 runs exceed all 3 X1 runs in every cell, if the 6 runs of a cell were exchangeable (1/20 per cell); seed-to-seed spread only",
+ "ladder": [
+  {
+   "arm": "X1",
+   "protocol": "grouped",
+   "clean_fit": 0.98,
+   "calib_f1": 0.7106,
+   "heldout_same": 0.6485,
+   "heldout_cross": 0.1466,
+   "f1_tta": 0.5308,
+   "f1_no_tta": 0.5233,
+   "ece": 0.1311,
+   "influence_spatial": 63.224,
+   "kappa_embedding": NaN,
+   "kappa_spatial": NaN,
+   "kappa_spectral": NaN,
+   "best_epoch": 151.8333
+  },
+  {
+   "arm": "X1",
+   "protocol": "stratified",
+   "clean_fit": 0.9923,
+   "calib_f1": 0.7211,
+   "heldout_same": 0.7285,
+   "heldout_cross": NaN,
+   "f1_tta": 0.727,
+   "f1_no_tta": 0.7123,
+   "ece": 0.0302,
+   "influence_spatial": 72.0529,
+   "kappa_embedding": NaN,
+   "kappa_spatial": NaN,
+   "kappa_spectral": NaN,
+   "best_epoch": 149.3333
+  },
+  {
+   "arm": "Y3",
+   "protocol": "grouped",
+   "clean_fit": 0.9997,
+   "calib_f1": 0.7332,
+   "heldout_same": 0.6828,
+   "heldout_cross": 0.1994,
+   "f1_tta": 0.5708,
+   "f1_no_tta": 0.5622,
+   "ece": 0.1004,
+   "influence_spatial": 74.841,
+   "kappa_embedding": 0.3403,
+   "kappa_spatial": 0.3539,
+   "kappa_spectral": 0.0653,
+   "best_epoch": 153.5
+  },
+  {
+   "arm": "Y3",
+   "protocol": "stratified",
+   "clean_fit": 0.999,
+   "calib_f1": 0.7533,
+   "heldout_same": 0.7465,
+   "heldout_cross": NaN,
+   "f1_tta": 0.7448,
+   "f1_no_tta": 0.7344,
+   "ece": 0.02,
+   "influence_spatial": 78.16,
+   "kappa_embedding": 0.3457,
+   "kappa_spatial": 0.3383,
+   "kappa_spectral": 0.0888,
+   "best_epoch": 144.3333
+  }
+ ],
+ "per_class": {
+  "n_up_gt_0_10": 11,
+  "n_down_lt_m0_10": 0,
+  "n_up": 72,
+  "n_down": 12,
+  "mean_delta_same": 0.03434795280878942,
+  "mean_delta_cross": 0.05276416122004357,
+  "cross_classes": [
+   {
+    "cls": 79,
+    "X1": 0.0,
+    "Y3": 0.0,
+    "delta": 0.0
+   },
+   {
+    "cls": 12,
+    "X1": 0.0,
+    "Y3": 0.0,
+    "delta": 0.0
+   },
+   {
+    "cls": 38,
+    "X1": 0.0,
+    "Y3": 0.0,
+    "delta": 0.0
+   },
+   {
+    "cls": 7,
+    "X1": 0.0,
+    "Y3": 0.003,
+    "delta": 0.003
+   },
+   {
+    "cls": 45,
+    "X1": 0.0,
+    "Y3": 0.007,
+    "delta": 0.007
+   },
+   {
+    "cls": 63,
+    "X1": 0.038,
+    "Y3": 0.045,
+    "delta": 0.007
+   },
+   {
+    "cls": 71,
+    "X1": 0.031,
+    "Y3": 0.045,
+    "delta": 0.014
+   },
+   {
+    "cls": 70,
+    "X1": 0.035,
+    "Y3": 0.056,
+    "delta": 0.021
+   },
+   {
+    "cls": 4,
+    "X1": 0.014,
+    "Y3": 0.045,
+    "delta": 0.031
+   },
+   {
+    "cls": 65,
+    "X1": 0.076,
+    "Y3": 0.111,
+    "delta": 0.035
+   },
+   {
+    "cls": 66,
+    "X1": 0.042,
+    "Y3": 0.108,
+    "delta": 0.066
+   },
+   {
+    "cls": 78,
+    "X1": 0.872,
+    "Y3": 0.938,
+    "delta": 0.066
+   },
+   {
+    "cls": 59,
+    "X1": 0.111,
+    "Y3": 0.215,
+    "delta": 0.104
+   },
+   {
+    "cls": 61,
+    "X1": 0.163,
+    "Y3": 0.288,
+    "delta": 0.125
+   },
+   {
+    "cls": 22,
+    "X1": 0.385,
+    "Y3": 0.515,
+    "delta": 0.13
+   },
+   {
+    "cls": 60,
+    "X1": 0.396,
+    "Y3": 0.538,
+    "delta": 0.142
+   },
+   {
+    "cls": 64,
+    "X1": 0.33,
+    "Y3": 0.476,
+    "delta": 0.146
+   }
+  ]
+ },
+ "linear_bar": {
+  "quantile_lda_grouped": 0.5178445,
+  "y3_no_tta": 0.5621891666666666,
+  "x1_no_tta": 0.5233399999999999,
+  "y3_minus_qlda": 0.04434466666666659,
+  "x1_minus_qlda": 0.0054954999999998755
+ },
+ "error_structure": {
+  "Y3 vs X1": 0.6933,
+  "shared by all seeds": 0.6462,
+  "within X1": 0.7648,
+  "within Y3": 0.7328
+ },
+ "ensembles": [
+  {
+   "protocol": "grouped",
+   "arm": "X1",
+   "ens_f1": 0.5442,
+   "mean_single_f1": 0.5308,
+   "ens_cross": 0.1504,
+   "ens_attraction": 0.465,
+   "mean_single_cross": 0.1466,
+   "mean_single_attraction": 0.464,
+   "ens_gain_f1": 0.0134
+  },
+  {
+   "protocol": "grouped",
+   "arm": "Y3",
+   "ens_f1": 0.587,
+   "mean_single_f1": 0.5708,
+   "ens_cross": 0.2051,
+   "ens_attraction": 0.4122,
+   "mean_single_cross": 0.1994,
+   "mean_single_attraction": 0.4128,
+   "ens_gain_f1": 0.0161
+  },
+  {
+   "protocol": "stratified",
+   "arm": "X1",
+   "ens_f1": 0.7416,
+   "mean_single_f1": 0.727,
+   "ens_cross": NaN,
+   "ens_attraction": NaN,
+   "mean_single_cross": NaN,
+   "mean_single_attraction": NaN,
+   "ens_gain_f1": 0.0147
+  },
+  {
+   "protocol": "stratified",
+   "arm": "Y3",
+   "ens_f1": 0.7741,
+   "mean_single_f1": 0.7448,
+   "ens_cross": NaN,
+   "ens_attraction": NaN,
+   "mean_single_cross": NaN,
+   "mean_single_attraction": NaN,
+   "ens_gain_f1": 0.0293
+  }
+ ]
+}

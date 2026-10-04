@@ -1,0 +1,6 @@
+{
+  "full_class_session_design_rank": 97,
+  "design_columns": 99,
+  "connected_components": 2,
+  "interpretation": "Additive class plus session model only; full design connects all sessions except 6. Each grouped training design has nine components and one session per class."
+}

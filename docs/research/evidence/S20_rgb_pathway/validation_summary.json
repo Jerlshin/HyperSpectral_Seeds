@@ -1,0 +1,58 @@
+{
+  "full_unit": {
+    "passed": 779,
+    "failed": 8,
+    "skipped": 333,
+    "xfailed": 2,
+    "log": "validation_logs/s20_s22_full_unit_final.log"
+  },
+  "new_pathway_partition_preflight_tests": {
+    "passed": 18,
+    "log": "validation_logs/s22_final_targeted.log"
+  },
+  "broader_affected_tests": {
+    "passed": 55,
+    "note": "Earlier targeted run before final S22 preflight amendment."
+  },
+  "strict_mypy": {
+    "files": 12,
+    "passed": true,
+    "amended_drivers_passed_again": true
+  },
+  "full_suite_failures": {
+    "starting_HEAD_reproductions": [
+      "Torch 2.14 autocast numerical expectation",
+      "two distributed tests require forbidden sandbox sockets",
+      "two ANSI styling expectations"
+    ],
+    "historical_guards": [
+      "three S15 code-identity checks correctly reject expanded/modified source; pinned historical checkout needed"
+    ]
+  },
+  "historical_scope_update": "S20 historical_code_scope.json describes its execution time. Later S21 adds split APIs and S22 modifies training context via validated optional split_override, with default behavior unchanged. S22 freezes current source; S15 guards are not relaxed.",
+  "gpu_results": false,
+  "figures_visually_reviewed": [
+    "S20 RGB/fusion, spectral controls, v5 fusion",
+    "S21 RGB/fusion, spectral controls",
+    "S20 all pairing atlas pages, worst12 pairs and native crops scans2/27/150"
+  ],
+  "numerical_warning_scope": "All exported coefficients/probabilities finite and normalized; BLAS vs explicit sum identical on train/calib samples. Underlying warning cause unresolved; raw warnings retained.",
+  "scientific_figures_byte_identical_on_regeneration": {
+    "docs/research/figures/S20_rgb_pathway/rgb_and_fusion.png": "1bae6f788e3f9319d87be17d0f0bf972f14d494345d00f10fc67c1c8a7b9099d",
+    "docs/research/figures/S20_rgb_pathway/v5_rgb_fusion.png": "90a26f125741ff7001ab20a9ef00c1aa8cce886d0dcaa1e50e999f3112b17c4b",
+    "docs/research/figures/S20_rgb_pathway/spectral_controls.png": "44f894ca583f52017bc385a13a5c907e04d056832f1dbe10053792c6b53b6509",
+    "docs/research/figures/S21_complementary_rgb/rgb_and_fusion.png": "3879ec33a69e8a127f4760dc4d2d3bd54c70246e10f346bceb60f6d811f314ae",
+    "docs/research/figures/S21_complementary_rgb/spectral_controls.png": "0d90bbb6df1e6ac9bc3f30e2844b5b4e82eff1132c78768739e119fb4a040172"
+  },
+  "figure_hook_fix": "New S20/S21 hooks isolate Matplotlib defaults so the historical global theme cannot change their figures. Standalone versus hook byte equality verified.",
+  "current_study_links_verified": 26,
+  "evidence_validators": {
+    "S20": "passed;60 metrics;all frozen assets/native shards",
+    "S21": "passed;48 metrics;all rows held once;all frozen assets/native shards",
+    "S22": "passed;161 training inputs;2 analysis inputs;zero complete GPU cells"
+  },
+  "final_resume_guard_test": {
+    "passed": 1,
+    "log": "validation_logs/s22_preflight_final.log"
+  }
+}

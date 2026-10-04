@@ -1,0 +1,12 @@
+{
+  "fold_sizes": [
+    4313,
+    4311
+  ],
+  "unique_held_out_rows": 8624,
+  "repeated_held_out_rows": 0,
+  "never_held_out_rows": 0,
+  "repeated_group_classes": [],
+  "cross_repeated": [],
+  "per_fold_group_disjoint": true
+}

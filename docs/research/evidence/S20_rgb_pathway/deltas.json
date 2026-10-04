@@ -1,0 +1,274 @@
+[
+  {
+    "hypothesis": "H33",
+    "a": "dino_rgb",
+    "b": "dino_silhouette",
+    "delta_f1": 0.27769587667676365,
+    "ci": [
+      0.2426464045151186,
+      0.3105663991715781
+    ],
+    "delta_cross": 0.030540780141843974,
+    "cross_ci": [
+      -0.005029985398414686,
+      0.064391035669587
+    ],
+    "threshold": 0.02,
+    "screen_pass": true
+  },
+  {
+    "hypothesis": "H34",
+    "a": "fusion32_equal",
+    "b": "hsi_q32",
+    "delta_f1": 0.05225731480582207,
+    "ci": [
+      0.03214300624942707,
+      0.07337523802609686
+    ],
+    "delta_cross": 0.05518617021276596,
+    "cross_ci": [
+      0.0036764705882352997,
+      0.11590040936587392
+    ],
+    "threshold": 0.02,
+    "screen_pass": true
+  },
+  {
+    "hypothesis": "H35a",
+    "a": "hsi_qnested64",
+    "b": "hsi_qnested32",
+    "delta_f1": 0.010515578629563113,
+    "ci": [
+      0.004084367045757659,
+      0.016664569284709798
+    ],
+    "delta_cross": -0.0068218954248366,
+    "cross_ci": [
+      -0.019076797385620917,
+      0.0035968137254901887
+    ],
+    "threshold": 0.01,
+    "screen_pass": false
+  },
+  {
+    "hypothesis": "H35b",
+    "a": "hsi_mean214_own",
+    "b": "hsi_mean32",
+    "delta_f1": 0.07984266983258406,
+    "ci": [
+      0.0394285716681005,
+      0.11698795309813308
+    ],
+    "delta_cross": -0.037295751633986934,
+    "cross_ci": [
+      -0.07450980392156864,
+      0.0030657679738561976
+    ],
+    "threshold": 0.01,
+    "screen_pass": false
+  },
+  {
+    "hypothesis": "H34v5_s0",
+    "a": "fusion_v5_equal_s0",
+    "b": "v5_tta_s0",
+    "delta_f1": 0.04640351050551763,
+    "ci": [
+      0.030069338382249806,
+      0.06187783252181143
+    ],
+    "delta_cross": 0.015413363927131137,
+    "cross_ci": [
+      -0.03300792657488527,
+      0.06259538833263802
+    ],
+    "threshold": 0.02,
+    "screen_pass": true
+  },
+  {
+    "hypothesis": "H34v5_s1",
+    "a": "fusion_v5_equal_s1",
+    "b": "v5_tta_s1",
+    "delta_f1": 0.03962346625876594,
+    "ci": [
+      0.023675033930173863,
+      0.055458799034927564
+    ],
+    "delta_cross": 0.011205847587261855,
+    "cross_ci": [
+      -0.040415754067584485,
+      0.06372549019607844
+    ],
+    "threshold": 0.02,
+    "screen_pass": true
+  },
+  {
+    "hypothesis": "H34v5_s2",
+    "a": "fusion_v5_equal_s2",
+    "b": "v5_tta_s2",
+    "delta_f1": 0.036660007267081664,
+    "ci": [
+      0.022468592128218185,
+      0.05167556231270257
+    ],
+    "delta_cross": 0.0018512724238631633,
+    "cross_ci": [
+      -0.04595588235294118,
+      0.04904796360033367
+    ],
+    "threshold": 0.02,
+    "screen_pass": true
+  },
+  {
+    "hypothesis": "diagnostic",
+    "a": "fusion32_equal",
+    "b": "dino_rgb",
+    "delta_f1": 0.1398064239611567,
+    "ci": [
+      0.11370283951676405,
+      0.16759801979868572
+    ],
+    "delta_cross": -0.008264671116673613,
+    "cross_ci": [
+      -0.059409483208176884,
+      0.07166542813934085
+    ],
+    "threshold": 0.0,
+    "screen_pass": true
+  },
+  {
+    "hypothesis": "diagnostic",
+    "a": "fusion32_calib",
+    "b": "fusion32_equal",
+    "delta_f1": 0.0,
+    "ci": [
+      0.0,
+      0.0
+    ],
+    "delta_cross": 0.0,
+    "cross_ci": [
+      0.0,
+      0.0
+    ],
+    "threshold": 0.0,
+    "screen_pass": false
+  },
+  {
+    "hypothesis": "diagnostic",
+    "a": "concat32_dino",
+    "b": "fusion32_equal",
+    "delta_f1": 0.017380684414799112,
+    "ci": [
+      7.089112305286024e-05,
+      0.034381118590664665
+    ],
+    "delta_cross": -0.06396884995132805,
+    "cross_ci": [
+      -0.10019903351411487,
+      -0.032514601585314974
+    ],
+    "threshold": 0.0,
+    "screen_pass": true
+  },
+  {
+    "hypothesis": "diagnostic",
+    "a": "dino_rgb",
+    "b": "dino_gray",
+    "delta_f1": 0.04593747778538994,
+    "ci": [
+      0.03463565121125303,
+      0.05845883664841861
+    ],
+    "delta_cross": 0.011655193992490612,
+    "cross_ci": [
+      -0.010403955465164788,
+      0.0343798889236545
+    ],
+    "threshold": 0.0,
+    "screen_pass": true
+  },
+  {
+    "hypothesis": "diagnostic",
+    "a": "dino_rgb",
+    "b": "dino_rgb32",
+    "delta_f1": 0.13250828625380262,
+    "ci": [
+      0.11029637273651371,
+      0.15423827098576592
+    ],
+    "delta_cross": -0.0005849325545821192,
+    "cross_ci": [
+      -0.030596405228758172,
+      0.02945322277847302
+    ],
+    "threshold": 0.0,
+    "screen_pass": true
+  },
+  {
+    "hypothesis": "diagnostic",
+    "a": "dino_rgb",
+    "b": "rgb_shape",
+    "delta_f1": 0.26966408215952126,
+    "ci": [
+      0.23102341276654761,
+      0.3084326464751833
+    ],
+    "delta_cross": 0.046702475316367675,
+    "cross_ci": [
+      -0.0036243220692532357,
+      0.10079998000973434
+    ],
+    "threshold": 0.0,
+    "screen_pass": true
+  },
+  {
+    "hypothesis": "diagnostic",
+    "a": "fusion214_equal",
+    "b": "fusion32_equal",
+    "delta_f1": 0.02627913687066313,
+    "ci": [
+      -0.008819860976280618,
+      0.05670959952129545
+    ],
+    "delta_cross": -0.008999965234320681,
+    "cross_ci": [
+      -0.04146307015714086,
+      0.0371398492907801
+    ],
+    "threshold": 0.0,
+    "screen_pass": false
+  },
+  {
+    "hypothesis": "diagnostic",
+    "a": "hsi_q215",
+    "b": "hsi_q214_own",
+    "delta_f1": 0.00013250010927669877,
+    "ci": [
+      -0.0004029906176472429,
+      0.00071676103655344
+    ],
+    "delta_cross": 0.0,
+    "cross_ci": [
+      0.0,
+      0.0
+    ],
+    "threshold": 0.0,
+    "screen_pass": false
+  },
+  {
+    "hypothesis": "diagnostic",
+    "a": "fusion32_equal",
+    "b": "fusion32_shuffled",
+    "delta_f1": -0.012322025391080309,
+    "ci": [
+      -0.018201726732710755,
+      -0.006458387060086767
+    ],
+    "delta_cross": 0.0076797385620915055,
+    "cross_ci": [
+      -0.00486111111111111,
+      0.019607843137254905
+    ],
+    "threshold": 0.0,
+    "screen_pass": false
+  }
+]

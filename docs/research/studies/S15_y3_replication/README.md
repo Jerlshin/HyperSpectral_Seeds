@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | **part 1 complete** — the runner, its tests and the validation (§4). **Part 2 (the 10 GPU cells) not yet run.** No held-out row has been read by anything on this page |
+| **Status** | **complete** — part 1: the runner, its tests and the validation (§4); part 2: the 10 GPU cells ran on Kaggle on 2026-10-03 (10/10 scored, 265 min) and were read in [S16](../S16_replication_reading/README.md) (F83–F89, D35). No held-out row was read on this page |
 | **Dates** | 2026-10-03 → |
 | **Commits** | design frozen in S14 (`fbb0927`); the S15 runner is the commit that lands this page. Every cell records its commit and dirty flag in `results/run.json → run.code` and the training-code digest in `frozen_cell.json → code_identity` |
 | **Data** | part 2: `dataset_u430k32` (refl-215 axis, uniform430 k = 32), grouped folds 0, 1 and the stratified contrast; seeds per cell (Y3: 1, 2; Y5: 0) |

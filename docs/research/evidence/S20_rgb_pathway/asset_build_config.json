@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "crop_size": 224,
+  "orientation": "encoded sensor; ignore EXIF",
+  "source_hashes": {
+    "dataset/scan_table.csv": "97fc5ed7c73b3233280e28363502e738c90b6014cafe58e6dca1814ca0713deb",
+    "dataset/labels.npy": "20e037429e52ef5bdb52be64179b23ff7521939951ae4fde95c33a1810f7b8c6",
+    "dataset/groups.npy": "e829e057a6b2b95cafae51cac767962fa75f3bd9c6376185afbe9812c5737a9f",
+    "dataset/morphology.npy": "fb49f1d66a896e42083d250b8e01ef55f88d92deb4cc85446ab205dc878c222d",
+    "dataset/masks.npy": "3d10dc4b736f4775491f796a0f54433eb46eeb891ae30d7c5f9ffa029e528e8e",
+    "dataset/white_spectra.npz": "bf92eac31f4cdf5544187a39ba90f4fd29111c33099bc798c38f2324e8fedada",
+    "dataset/wavelengths.csv": "82b315ac65ccd88ccd64593acf81e3809e12cd0fac1cabb8d8cf4dff24e235ea",
+    "/Users/jerlshin/FieldOfInterest/ResearchWork/HSI_RGB_seeds/Code/scripts/prepare_multimodal.py": "6c36ce6ae8ded2ea5482b195e13e66c2b4f9ada75a6d00cbe3b0be53d5d6d5e5",
+    "src/spectralquadnet/data/prep/rgb.py": "c79691da9033f8d42ac589db4880d69b04c05766ab4f18c55fd35c5dfe6cdccf",
+    "src/spectralquadnet/data/prep/multimodal.py": "1cb82e08cb55f3111d37ccf69440f381ab98bc1f993ad211b6d7c210143a0d35",
+    "src/spectralquadnet/data/prep/segmentation.py": "665bd44e3457ad3e83152b9d46e87abea93bc0f344b7ab21a96519f55aff694f",
+    "src/spectralquadnet/data/prep/patch_extraction.py": "abcc2027bcde4407d0c83dfe26e7d86546733148a6f2430b9bd48dec861560d6",
+    "src/spectralquadnet/data/prep/radiometry.py": "c586c9ca96064e7fa314b87014272ec86520d9a8b693d2ed5c15e0e5fda28ce3"
+  },
+  "archive_sha256": "92af3258ba72950e301ee7f4030f59cc88922e21f34d00a06d68debb6b046c14",
+  "full_dense": false,
+  "reference_manifest_sha256": "b2dee5b929befebf609ca317f711ff1379f9b755c4ae6e36c8dbf036b172e3a6"
+}

@@ -1,0 +1,11 @@
+{
+  "kernels": 8624,
+  "fold_sizes": [
+    4313,
+    4311
+  ],
+  "unique_held_out_rows": 8624,
+  "repeated_held_out_rows": 0,
+  "never_held_out_rows": 0,
+  "every_class_has_opposite_scans": true
+}
