@@ -1,7 +1,7 @@
 # Next-generation rice recognition: master research plan
 
 Created: 2026-10-03. Owner: research synthesis initiated in Codex.
-Status: S19–S38 complete; trained-RGB phase reopened by the owner (D53); proposed architecture SeedNet-MX (S36, D58); S39 matched confirmation frozen (S30 superseded). Resume from [RESEARCH_PROGRESS.md](RESEARCH_PROGRESS.md).
+Status: S19–S38 (incl. S37) complete; trained-RGB phase reopened by the owner (D53); proposed architecture SeedNet-MX (S36, D58); S39 matched confirmation frozen (S30 superseded). Resume from [RESEARCH_PROGRESS.md](RESEARCH_PROGRESS.md).
 
 ## Objective and scope
 
@@ -242,7 +242,7 @@ used one seed with both corrected folds.
 | P25 | S34 strong-RGB reassessment | **H54 pass** (+.071 over S29); pairing/identifiability evidence → D56 |
 | P26 | S35 class-conditional rendering | **fail**; the candidate novel mechanism is falsified |
 | P27 | S38 HSI role specialization | **fail**; the trained v5 is the best HSI partner |
-| P28 | S37 multi-layer + morphometric trained readout | see S37 |
+| P28 | S37 multi-layer + morphometric trained readout | **fail** (+.003 n.s.); S32 readout kept |
 | P29 | S36 architecture design | SeedNet-MX: two trained encoders, independent evidence, fixed fusion |
 | P30 | **S39 matched confirmation** (seeds 0/1/2) | frozen; RGB cells local; **HSI cells need Kaggle authorization** |
 | P31 | Crossed session/lot acquisition (FW-42) | now also a prerequisite for the next novel mechanism (cross-acquisition, cross-modal consistency learning) |

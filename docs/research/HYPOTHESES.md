@@ -399,3 +399,6 @@ outputs, so no design choice depends on a held-out outcome.
   likeliest to move from-s8; it did not move.
 - **H56-screen: fail.** System from-s8 +.0037 [−.0037, .0110].
 - **H59-screen: fail** (`e5ea3571…`). Cross −.0368 [−.0674, −.0061], F1 −.0179. Predicted fail.
+- **H57-screen: fail** (`96f31458…`). +.0029 [−.0053, .0108], folds −.0008 / +.0065, cross −.0059.
+  Predicted a modest pass. Wrong: training absorbs both frozen-readout gains.
+- **H58 (descriptive):** system +.0010 [−.0053, .0075].

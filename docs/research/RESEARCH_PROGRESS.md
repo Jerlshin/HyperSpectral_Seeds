@@ -1,84 +1,72 @@
 # Research progress and exact resume state
 
-> **IN FLIGHT (2026-10-05 evening, D53):** S31, S32 and S34 complete and archived (H50, H51, H54 pass; H48 fails on cross).
-> Queued on MPS: S33 `vitb_acq` cells → S33 render (log `outputs/s33_train.log`) → S37 `mlm_vitb` cells (log `outputs/s37_train.log`).
-> After S33 render: `run_rgb_acquisition.py run`, then `run_regime_rendering.py run` (S35); after S37 cells: `run_rgb_multilayer.py run`.
-> All plans are frozen: S33 `2873190a…`, S35 `37da5f94…`, S37 `96f31458…`. A cell without `COMPLETED.json` must be deleted and rerun.
-> The block below is the pre-D53 state.
+Updated 2026-10-05 (evening). **S31–S38 complete. Proposed architecture: SeedNet-MX (S36, D58).
+S39 matched confirmation is frozen: its RGB seed cells run locally (queued), and its HSI seed cells
+are bundled but need the owner's authorization to spend Kaggle GPU quota. S30 is superseded.**
 
-Updated 2026-10-05. **S27–S29 complete; development screening closed (D52). No job is running.
-S30 (matched final confirmation) is proposed, not frozen; it needs authorization to spend
-Kaggle GPU quota.** Read the [master plan](MASTER_RESEARCH_PLAN.md) (direction revision at the
-end), [S29](studies/S29_rgb_backbone_screen/README.md) and the [S30 brief](studies/S30_final_confirmation/README.md).
-The pre-S27 handoff is preserved verbatim in
-[progress_history_pre_s27.md](evidence/S27_tta_trained_head/progress_history_pre_s27.md).
+Before this phase:
+- the pre-S31 handoff is preserved verbatim in
+  [progress_history_pre_s31.md](evidence/S36_next_generation_architecture/progress_history_pre_s31.md);
+- the pre-S27 handoff is in [progress_history_pre_s27.md](evidence/S27_tta_trained_head/progress_history_pre_s27.md).
 
-## What this phase executed
+## What this phase executed (owner directive, D53; all local: Apple M5 MPS + CPU)
 
-| Study | Frozen plan SHA-256 | Fits | Gate | Result |
+| Study | Plan SHA-256 | Fits | Gate | Result |
 |---|---|---:|---|---|
-| S27 TTA-trained head | `780d564e…917978bf` | 2 heads | H45 | **pass**: +.013124 [.004438, .021629] over equal TTA |
-| S28 head seeds 1/2 | `b0396c94…2dc4a7ba6` | 4 heads | H46 | **pass**: +.013942 [.006019, .021463], seed SD .000871 |
-| S29 DINOv2 ViT-B/L RGB | `ee51803a…cf431aa01f` | 4 heads, 6 probes | H47 | **pass**: ViT-L head − ViT-S head +.012431 [.005679, .019846] |
+| S31 frozen ViT-L readouts + acquisition audit | `29ef87f3…` | 0 | H48 | **fail (cross clause)**: +.1258 RGB F1, cross −.007 |
+| S32 trained foreground-token RGB | `251465cc…` | 4 | H50, H51 | **pass**: RGB .6642 (+.1692), fused .6977 (+.0773), cross CIs > 0 |
+| S33 measured-optics blur + rendering | `2873190a…` | 2 | H52, H53 | **fail**: from-s8 −.031 |
+| S34 strong-RGB reassessment | `cb8063a7…` | 0 | H54 | **pass**: +.0706 over the S29 learned system |
+| S35 class-conditional rendering (CCAR) | `37da5f94…` | 0 | H55, H56 | **fail**: ±.003 |
+| S37 multi-layer + morphometric trained readout | `96f31458…` | 2 | H57 | **fail**: +.0029 n.s. |
+| S38 HSI role specialization | `e5ea3571…` | 0 | H59 | **fail**: cross −.037 |
+| S36 architecture design | — | — | — | SeedNet-MX; kernel/scan error decomposition |
+| S39 final confirmation | `d1db0694…` (+ HSI amendment06 `ce3ded4b…`) | 4 RGB running, 4 HSI pending | M1–M4 + G3 | frozen |
 
-Supporting compute and checks:
-- Train-row TTA cache: 21.3 min CPU fp32. MPS was only 1.22× faster in the profile.
-- CPU vs saved CUDA calibration TTA: max |Δlogit| .0039, 0 argmax flips.
-- Frozen ViT-B/L extraction: 19 min on MPS; ViT-S re-extraction matches S20 to 6.3e-5.
-- Zero encoder fits. Every replay audit was exact:
-  - S27 anchor = S22 equal-TTA predictions;
-  - S28 helper refit = S27 selection, and saved heads replay exactly;
-  - S29 ViT-S = S21, equal_s = S22, head_s = S27.
+The phase used 8 RGB network fits plus one 57-min frozen-feature extraction. No GPU quota was spent.
 
-## Current numbers (S21 corrected folds, seed-0 v5 encoders, held-out, mean of both folds)
+## Current numbers (S21 corrected folds, seed 0, held-out, mean of both folds)
 
-| System | Mean F1 | Same recall | Cross recall | Cross recall away / toward session 8 |
-|---|---:|---:|---:|---:|
-| HSI v5 TTA | .559098 | .668820 | .208578 | .178 / .240 |
-| Equal fusion, DINOv2-S (S22) | .601595 | .715099 | .209490 | .178 / .241 |
-| TTA-trained head, DINOv2-S (S27; 3 head seeds .615537) | .614719 | .729846 | .236887 | .184 / .290 |
-| Equal fusion, DINOv2-L | .620455 | .731834 | .233346 | .173 / .294 |
-| **TTA-trained head, DINOv2-L (selected, S29)** | **.627150** | .740818 | .247998 | .180 / .316 |
-
-## What was learned
-
-1. Training against the deployment anchor works where post-hoc substitution failed (S26). The
-   recorded mechanistic prediction of a smaller gain was wrong (F109). The gain is stable over head
-   seeds (F110).
-2. The RGB representation is a bigger lever than the fusion form. ViT-L lifts RGB alone by .0445
-   and RGB transfer by +.034 (CI > 0), and fixed fusion with ViT-L already beats the ViT-S learned
-   system (F111).
-3. The learned head's margin shrinks to +.0067 [.0001, .0133] over fixed ViT-L fusion, so it is
-   now a borderline component (F112).
-4. **Dominant bottleneck:** away-from-session-8 recall is ≈ .18 for every system, all cross gains
-   go to session-8 destinations, and 57% of cross errors land on a class trained in the test
-   kernel's session (14% chance) (F113). This is acquisition-limited.
+| System | F1 | Same / cross | From / to session 8 |
+|---|---:|---:|---:|
+| **SeedNet-MX = trained ViT-B RGB + v5, equal fusion** | **.6977** | .8108 / .2953 | .254 / .337 |
+| trained RGB alone (S32 ViT-B) | .6642 | .7672 / .2812 | .239 / .323 |
+| trained RGB alone (S37 multi-layer + morph; = S32 within noise) | .6671 | .7733 / .2753 | .205 / .346 |
+| frozen ViT-L, best readout (S31 `last4_tta`) | .6208 | .7417 / .1688 | .086 / .252 |
+| S29 learned system (retired) | .6272 | .7408 / .2480 | .180 / .316 |
+| HSI v5 TTA | .5591 | .6688 / .2086 | .178 / .240 |
 
 ## Next exact actions
 
-1. **S30 (needs the owner's go-ahead for Kaggle GPU quota).** Seal a new S22-runner amendment
-   that also exports single-view embeddings and train-row TTA. Freeze contrasts C1–C4 with exact
-   thresholds and source/input hashes. Run encoder seeds 1/2 × folds 0/1 (4 fits, ≈ 95 min wall
-   on 2×T4 by S22's rate), then 12 CPU heads. C2 (head ViT-L − equal ViT-L ≥ .01) decides whether
-   the paper system keeps a learned fusion component or is fixed equal ViT-L fusion.
-2. **Crossed acquisitions (FW-42).** Design and lock the ≥ 4-session, two-lot pilot of S19 §5
-   before applying the S30 system to it. This is the only test of the F113 bottleneck.
-3. Do **not** run more backbones, resolutions, fusion forms or band expansions on the existing
-   test scans (D52).
+1. **Let the queued S39 RGB cells finish** (log `outputs/s39_train.log`; ≈ 3 h from 20:05).
+   The queue then runs `run_final_confirmation.py run --partial`, which scores M3 (trained vs frozen
+   RGB) over seeds 0/1/2. A cell folder without `COMPLETED.json` must be deleted and rerun with
+   `PYTHONPATH=src:scripts python scripts/run_final_confirmation.py train-rgb --seed <s> --fold <f>`.
+2. **S39 HSI seeds: owner authorization required.** `kaggle kernels push -p outputs/s39_kaggle_push`
+   runs 4 v5 fits (≈ 95 min on 2×T4). Download `s39_cuda_outputs.tar.gz` and place the cells at
+   `outputs/s22_complementary_v5/f{0,1}_s{1,2}/`. Then run
+   `PYTHONPATH=src:scripts python scripts/run_final_confirmation.py run` for M1–M4.
+3. **Crossed acquisition pilot (FW-42).** Lock SeedNet-MX first. The next novel mechanism,
+   cross-acquisition cross-modal consistency (FW-48), needs ≥ 2 training acquisitions per variety.
+4. Do **not** rerun the falsified mechanisms (S33, S35, S37, S38) or build learned/kernel-level
+   fusion on this design (D56/D57).
 
 ## Saved assets
 
 | Path | Content |
 |---|---|
-| `outputs/s27_tta_profile/`, `outputs/s27_tta_cache/` | runtime profile; train-row TTA logits for both folds + calibration audit |
-| `outputs/s27_tta_trained_head/`, `outputs/s28_tta_head_seeds/` | heads, selections, predictions |
-| `outputs/s28_rgb_features/` | frozen DINOv2 ViT-B/L features + provenance (extracted before renumbering to S29) |
-| `outputs/s29_rgb_backbone_screen/` | probes, ViT-B/L heads, predictions |
-| `docs/research/evidence/S27…S29*/screen_results/` | compact evidence with `ARCHIVED.json` hash manifests; metric arithmetic replayed |
-| `~/.cache/torch/hub/checkpoints/dinov2_vit{b,l}14_pretrain.pth` | public checkpoints; SHA-256 in provenance |
+| `outputs/s31_rgb_readouts/` | frozen ViT-L 4-view, last-4-block readouts + 4.5 GB identity-view token cache |
+| `outputs/s32_rgb_finetune/<arm>_f<fold>/`, `outputs/s33_rgb_acquisition/`, `outputs/s37_rgb_multilayer/` | checkpoints, traces, 4-view logits + embeddings for all 8,624 rows; S33 rendered logits |
+| `outputs/s3{1,2,4,5,7,8}_*/` and `outputs/s3{2,3,7}_*/screen/` | sealed screens (COMPLETED.json hash manifests) |
+| `outputs/s39_final_confirmation/` | S39 RGB seed cells (in progress) |
+| `outputs/s39_kaggle_push/` | built, **unpushed** S39 HSI Kaggle bundle |
+| `docs/research/evidence/S31…S39*/` | archived evidence with replayed metric arithmetic; S36 search log, error decomposition, validation receipt |
 
-Code: `scripts/run_tta_trained_head.py`, `scripts/run_tta_head_seeds.py`,
-`scripts/run_rgb_backbone_screen.py`, the shared head recipe
-`src/spectralquadnet/experiments/residual_head.py` and `tests/unit/test_residual_head.py`.
-All S22–S29 plans and outputs are unchanged and their input hashes verify. S17/S18 stay reserved.
-Nothing from S22–S29 is committed to git yet. The working tree carries all of it.
+**Code:**
+- runners `scripts/run_{rgb_readout_audit,rgb_finetune,rgb_acquisition,multimodal_reassessment,regime_rendering,rgb_multilayer,modality_roles,final_confirmation}.py`;
+- modules `src/spectralquadnet/experiments/{rgb_readout,screen_metrics,rgb_finetune,multilayer_finetune}.py`
+  and `src/spectralquadnet/models/{rgb_branch,rgb_multilayer,acquisition_aware}.py`;
+- 21 unit tests.
+
+**Hash-pinned by frozen plans, do not edit:** `rgb_finetune.py`, `rgb_branch.py`,
+`screen_metrics.py`, `rgb_readout.py`, `multilayer_finetune.py`, `rgb_multilayer.py` and their runners.

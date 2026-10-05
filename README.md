@@ -14,6 +14,16 @@ Training on Kaggle's two T4s: [§10 · Kaggle — GPU T4 x2](#kaggle--gpu-t4-x2)
 `single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0
 single.epochs=200 single.patience=40 model.spectral_descriptor=snv_morph 'model.spatial_tail_strides=[2,2,2,1]'
 model.cbam_min_hw=3`.
+**Current best — SeedNet-MX ([S36](docs/research/studies/S36_next_generation_architecture/README.md), D58):**
+a fine-tuned foreground-token DINOv2 ViT-B RGB branch (`scripts/run_rgb_finetune.py`) with SeedNet v5
+HSI, combined by calibrated equal probability fusion. Seed 0, both corrected folds: macro-F1 **.698**
+(trained RGB alone .664, HSI v5 .559, S29 learned system .627); away-from-session-8 recall .254.
+[S31–S38](docs/research/RESEARCH_PROGRESS.md) also falsified frozen-readout transfer, optics
+augmentation, class-conditional rendering, HSI role specialization and learned/kernel-level fusion.
+**Confirmation:** [S39](docs/research/studies/S39_final_confirmation/README.md) is frozen. Its RGB
+seeds run locally; its four v5 GPU seeds are bundled in `outputs/s39_kaggle_push/` and need
+authorization before pushing. S30 is superseded.
+
 **Completed — [S22](docs/research/studies/S22_complementary_v5/results.md):** seed 0 on both
 corrected folds under explicit compute amendments. v5 F1 .558909; equal RGB fusion
 .601595, with gains on both folds but no supported cross-session gain.
@@ -23,9 +33,8 @@ head seeds on encoder0. Its gain over matched single-view fusion is .010522;
 advantage over stronger TTA fusion remains uncertain. S24 branch controls did not
 qualify for simplification. [S26](docs/research/studies/S26_tta_anchor/results.md)
 rejected a fixed TTA-anchor substitution on calibration without new test scores.
-**Next proposed — [S27](docs/research/studies/S27_tta_trained_head/README.md):** train
-the same head against its intended TTA anchor, seed0 both corrected folds first.
-No experiment is running; final independent encoder-seed confirmation remains conditional.
+**Completed — [S27–S29](docs/research/studies/S29_rgb_backbone_screen/README.md):** TTA-trained
+head + frozen ViT-L RGB, F1 .627 (now a retired baseline).
 S17/S18 remain reserved historical work.
 
 **Completed RGB phase:** [S20](docs/research/studies/S20_rgb_pathway/README.md) establishes

@@ -1087,3 +1087,9 @@ spectral features. H59 fails. [S38](studies/S38_modality_roles/README.md)
   learned heads (F112, F120), role assignment (F126), kernel-level pairing (F121).
 - **What remains:** the residual cross-session error is scan-systematic (F122), and no learning
   signal for it exists on this design (D56).
+
+### F128 · Trained RGB gains nothing from multi-layer readout or explicit metric morphometrics (S37)
+Same recipe and seed as S32, with a 4-block readout plus 8 metric morphometrics: RGB +.0029
+[−.0053, .0108], cross −.0059 [−.0227, .0121], system +.0010. H57 fails. The frozen-probe
+findings F115/F117 describe what a frozen readout misses; fine-tuning recovers it. The simplest
+trained branch is kept. [S37](studies/S37_rgb_multilayer/README.md)

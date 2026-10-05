@@ -14,27 +14,54 @@ describes *what we have learned and why the code is the way it is*.
 
 ## 1 · Where the research stands today
 
-*Last revised 2026-10-05: S27–S29 complete; development screening closed (D52); S30 confirmation proposed, not frozen.*
+*Last revised 2026-10-05 (evening): S31–S38 complete; architecture SeedNet-MX proposed (S36, D58); S39 matched confirmation frozen and partly running; S30 superseded.*
+
+**Current best system (development screen, seed 0, both corrected folds): SeedNet-MX.** It
+combines a fine-tuned foreground-token DINOv2 ViT-B RGB branch (4-view TTA) with SeedNet v5 HSI
+(TTA) by calibrated **equal** probability fusion:
+
+| | Macro-F1 | Same / cross recall | Cross away from / toward session 8 |
+|---|---:|---:|---:|
+| **SeedNet-MX** | **.6977** | .8108 / .2953 | **.254** / .337 |
+| Trained RGB branch alone | .6642 | .7672 / .2812 | .239 / .323 |
+| S29 learned system (retired baseline) | .6272 | .7408 / .2480 | .180 / .316 |
+| HSI v5 TTA alone | .5591 | .6688 / .2086 | .178 / .240 |
+| Frozen ViT-L RGB probe | .4950 | .5746 / .1758 | .104 / .247 |
+
+**What drove it:**
+- **Training the RGB encoder** (S32, F118): +.169 RGB F1 and +.105 cross over the frozen probe.
+  It is the first change to move away-from-session-8 recall. Across S31–S38, training an encoder
+  on kernels was the *only* transfer lever (F127).
+- **Falsified this phase, and excluded from the architecture:**
+  - frozen-readout transfer (S31);
+  - measured-optics augmentation (S33);
+  - class-conditional acquisition rendering (S35);
+  - multi-layer/morphometric readout on the trained branch (S37);
+  - HSI role specialization (S38);
+  - kernel-level pairing and learned fusion (F121, D56).
+
+**What remains:** same-session errors are kernel-random (pooling one scan's kernels → 100%
+scan accuracy), while cross-session errors are scan-systematic (≈ .41 / .59 of bridge scans at
+best; F122). Each variety has one training scan per fold, so no learning signal for that residual
+exists in these data. The next mechanism (cross-acquisition, cross-modal consistency) needs
+crossed acquisitions (FW-42/48).
+
+**Next:**
+- [S39](studies/S39_final_confirmation/README.md): seeds 0/1/2. RGB cells are running locally;
+  the four v5 GPU cells are bundled but **need the owner's Kaggle authorization**.
+- Then the crossed acquisition pilot.
+
+[S36 architecture study](studies/S36_next_generation_architecture/README.md) ·
+[S32](studies/S32_rgb_finetune/README.md) · [S34](studies/S34_multimodal_reassessment/README.md)
+
+![Trained RGB branch](figures/S32_rgb_finetune/trained_rgb.png)
+
+*Earlier state (2026-10-05, after S27–S29), retained below.*
 
 **Selected development system (S29, D51):** frozen v5 HSI encoder (k32 reflectance, R1 TTA) +
 frozen DINOv2 **ViT-L/14** RGB probe + calibrated equal probability fusion + a 43,994-parameter
 additive head trained against that TTA anchor. On S21's corrected folds (seed-0 encoders, both
-folds) its macro-F1 is **.627150**, against HSI TTA alone .559098, fixed equal fusion with ViT-S .601595,
-and fixed equal fusion with ViT-L .620455. Same/cross-session recall .7408/.2480.
-- [S27](studies/S27_tta_trained_head/results.md): training the head against the TTA anchor adds
-  +.0131 [.0044, .0216] over fixed fusion.
-- [S28](studies/S28_tta_head_seeds/README.md): stable across head seeds (SD .0009).
-- [S29](studies/S29_rgb_backbone_screen/README.md): ViT-L adds +.0124 [.0057, .0198] at system level.
-- On ViT-L, the head's own margin over fixed fusion is only +.0067 [.0001, .0133]. Whether the
-  head is kept is S30's C2 test with matched encoder seeds.
-
-**Dominant bottleneck (F113):** away-from-session-8 cross recall is ≈ .18 for *every* system;
-all cross gains go to session-8 destinations, and 57% of cross errors land on a class trained in
-the test kernel's session (14% chance). This is acquisition-limited: next compute is the
-[S30 matched confirmation](studies/S30_final_confirmation/README.md) (four GPU fits, needs
-authorization); next science is crossed sessions/lots (FW-42).
-
-![S27–S29 system progression](figures/S29_rgb_backbone_screen/system_progression.png)
+folds) its macro-F1 is **.627150**. That system was retired as a baseline by S34 (D55).
 
 *Earlier state (2026-10-05, before S27), retained below.*
 
@@ -151,7 +178,7 @@ study stays *modular* (it can be read, revised or superseded on its own).
 | [S34](studies/S34_multimodal_reassessment/README.md) | Strong-RGB multimodal reassessment | 2026-10-05 | complete; H54 pass | equal fusion +.071 over the S29 learned system; matched pairing < shuffled; HSI encodes session more |
 | [S35](studies/S35_regime_rendering/README.md) | Class-conditional acquisition rendering (CCAR) | 2026-10-05 | complete; H55, H56 fail | no effect (±.003); candidate novel mechanism falsified |
 | [S36](studies/S36_next_generation_architecture/README.md) | Next-generation architecture from first principles | 2026-10-05 | complete (design) | SeedNet-MX: two trained encoders, independent evidence, fixed fusion; kernel/scan error decomposition |
-| [S37](studies/S37_rgb_multilayer/README.md) | Trained RGB with multi-layer readout + metric morphometrics | 2026-10-05 | frozen; running | decides the S36 RGB readout (H57) |
+| [S37](studies/S37_rgb_multilayer/README.md) | Trained RGB with multi-layer readout + metric morphometrics | 2026-10-05 | complete; H57 fails | +.003 (n.s.); trained branch already holds it; S32 readout kept |
 | [S38](studies/S38_modality_roles/README.md) | HSI role specialization (spectral shape only) | 2026-10-05 | complete; H59 fails | trained v5 is the best HSI partner; hand spectra encode the session more |
 | [S39](studies/S39_final_confirmation/README.md) | Matched final confirmation of SeedNet-MX (seeds 0/1/2) | 2026-10-05 → | frozen; RGB cells queued locally; HSI cells need Kaggle authorization | M1–M4 with G3 |
 

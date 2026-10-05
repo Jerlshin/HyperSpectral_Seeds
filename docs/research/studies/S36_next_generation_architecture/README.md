@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | design study complete; RGB-branch readout decided by S37 (§4); validation = S39 (§7) |
+| **Status** | design study complete; RGB readout = S32 single-layer (S37 fails, §4); validation = S39 (§7) |
 | **Dates** | 2026-10-05 |
 | **Inputs** | F114–F127; S19 prior-art review; targeted search log (`evidence/S36_next_generation_architecture/search_log.md`) |
 | **Code** | `src/spectralquadnet/models/{rgb_branch,rgb_multilayer,acquisition_aware}.py`; tests `tests/unit/test_{rgb_branch,rgb_multilayer,acquisition_aware}.py`; diagnostic `evidence/S36_next_generation_architecture/code/error_decomposition.py` |
@@ -20,7 +20,7 @@ which candidate mechanisms did they falsify, and what must the next experiment e
 |---|---|---|
 | 1 | Training an encoder on kernels is the only lever that moved transfer, in either modality (F118, F126, F127) | **Both branches are trained encoders.** Frozen foundation features, however read out, are not enough |
 | 2 | Kernels fill 45–133 of 256 patches; foreground-token fine-tuning works; partial ViT-L ≈ ViT-B (F120) | **Object-centric RGB tokens** (class + 128 most-foreground patches); ViT-B is enough under local compute |
-| 3 | Intermediate blocks carry within-acquisition RGB signal (F115); metric morphometrics are the one RGB cue that transfers (F117) | Readout candidate: multi-layer + metric morphometrics (S37 decides) |
+| 3 | Intermediate blocks and metric morphometrics help a *frozen* probe (F115, F117), but add nothing once the branch is trained (F128) | Keep the simple single-layer readout |
 | 4 | Matched kernel pairing is *worse* than within-scan shuffled pairing, with frozen and trained branches alike (F121) | **No kernel-level cross-modal interaction** (no cross-attention, no token fusion) |
 | 5 | Both branches interpolate training rows; each variety has one training scan per fold (F123, D56) | **No learned fusion.** Calibrated, fixed evidence fusion; learned/stacked/complementary fusion is unidentifiable here |
 | 6 | Colour statistics and hand spectra encode the session (F116, F126); HSI encodes more acquisition than trained RGB (F123) | No acquisition-conditioned gates. Inputs that transfer badly are not routed in separately |
@@ -30,15 +30,15 @@ which candidate mechanisms did they falsify, and what must the next experiment e
 ## 3 · Proposed system: SeedNet-MX (multimodal, evidence-level)
 
 ```text
-RGB crop (masked, 224) ──► foreground-token DINOv2 ViT-B, fine-tuned ──► readout ──► p_RGB  (4-view TTA, calib T)
-                                   [class + 128 fg patches]            (S37)          │
+RGB crop (masked, 224) ──► foreground-token DINOv2 ViT-B, fine-tuned ──► [class, fg-mean] ──► p_RGB  (4-view TTA, calib T)
+                                   [class + 128 fg patches]                                │
                                                                                     ├──► ½ p_RGB + ½ p_HSI ──► kernel decision
 HSI patch (k32 reflectance) ──► SeedNet v5, trained ──────────────────────────► p_HSI  (R1 TTA, calib T)
                                                                                     └──► [lot mode] mean log-p over a lot's kernels
 ```
 
 Implementation:
-- `models/rgb_branch.py` (S32 branch) / `models/rgb_multilayer.py` (S37 readout);
+- `models/rgb_branch.py` (S32 branch; `models/rgb_multilayer.py` is kept as the tested S37 alternative);
 - `models/acquisition_aware.py`: `AcquisitionAwareFusion` with CCAR switched **off** per D57, and `pool_lots`;
 - HSI v5 is unchanged.
 
@@ -53,7 +53,10 @@ Development-screen performance (seed 0, both corrected folds; S32/S34):
 
 ## 4 · RGB readout (S37)
 
-<!-- S37 outcome inserted when scored -->
+**S37 H57 fails.** Multi-layer readout + metric morphometrics: RGB .6671 vs .6642 (+.0029
+[−.0053, .0108]); cross −.006; system +.001. Once the branch is trained, it already holds what the
+frozen readout was missing (F128). SeedNet-MX therefore keeps S32's single-layer
+[class, fg-mean] readout, the simpler branch. The S39 rule resolved to `vitb`.
 
 ## 5 · Novelty: what is claimed, and what is not
 
@@ -102,8 +105,8 @@ prerequisite for the architecture's novel component, not only for its evaluation
 
 **Matched final confirmation of SeedNet-MX**, replacing S30 (whose contrasts concern retired
 components, D55):
-- **RGB:** the S37-selected readout at seeds 1, 2 × folds 0, 1. That is 4 local MPS fits, about
-  3.3 h, or GPU.
+- **RGB:** S32 ViT-B at seeds 1, 2 × folds 0, 1. That is 4 local MPS fits, about 3 h, and they
+  are running.
 - **HSI:** v5 at seeds 1, 2 × folds 0, 1. That is 4 GPU fits (≈ 95 min on 2×T4 per the S30
   brief) and needs Kaggle authorization. Each fit exports single-view embeddings and train-row TTA,
   so the S29 learned-system control can be refit per seed.
