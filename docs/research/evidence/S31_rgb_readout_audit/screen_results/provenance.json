@@ -1,0 +1,43 @@
+{
+  "device": "mps",
+  "torch": "2.14.0",
+  "model": "dinov2_vitl14",
+  "layers": "last 4 blocks (21-24), DINOv2 final norm applied",
+  "readout": "[class token, foreground-weighted mean patch token] per layer",
+  "views": [
+    "id",
+    "hflip",
+    "vflip",
+    "rot180"
+  ],
+  "precision": "float32 compute",
+  "checkpoint_sha256": "d5383ea8f4877b2472eb973e0fd72d557c7da5d3611bd527ceeb1d7162cbf428",
+  "asset_manifest_sha256": "b3029ed3dd6427e09e2ecd8670999cbf03c2062f1953f7cfed75b4707368ae15",
+  "source_sha256": {
+    "/Users/jerlshin/FieldOfInterest/ResearchWork/HSI_RGB_seeds/Code/scripts/run_rgb_readout_audit.py": "2a305e4ebba41c4e0261cd6bd6d2d54c82512cceba468a2261f6913756cd06ec",
+    "scripts/cache_rgb_features.py": "d99193c523907d7a2e1f45f5eef369b9f98d66598a7014ae5a287dfdffb9fcb4",
+    "src/spectralquadnet/experiments/rgb_readout.py": "13f91348b73324d9cbcfceb3dd98f6696075ae7cbbd6de1047a38080cb2f50ee"
+  },
+  "id": {
+    "seconds": 746.7041011250112,
+    "sha256": "f2e32f70dd20f0ae5b058b374ef3fd2535d500ad9f0c378dc3cf18d35cfb7cb8"
+  },
+  "hflip": {
+    "seconds": 802.816712583066,
+    "sha256": "a8370ab970baf39179e8446da2587b9fdb9ec613d0a0a032e25c70ff1efce68b"
+  },
+  "vflip": {
+    "seconds": 1060.9803512080107,
+    "sha256": "ff02433fb3c29d22d83535226a4895e5384127a88d408e49746bca73048c7528"
+  },
+  "rot180": {
+    "seconds": 1065.3330334159546,
+    "sha256": "c3aa380e55d5b7152d3da4b12b4e191166d70ecd04a47259ced70424590014f1"
+  },
+  "s29_class_token_audit": {
+    "max_abs_difference": 0.0,
+    "max_relative_norm_difference": 0.0
+  },
+  "tokens_sha256": "a8a7384d8fbd32cdde2562671292ca9aab2d22495d52758885df2fcdfc496807",
+  "foreground_weights_sha256": "296a1e6488682fb2fc3807972a9378077cb8d8c99037a4b5b310234ab71ec86f"
+}

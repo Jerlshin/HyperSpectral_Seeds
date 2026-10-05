@@ -1,0 +1,72 @@
+[
+  {
+    "arm": "baseline",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "hsi_mean214_own",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "hsi_q214_own",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "hsi_q32",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "hsi_snvmean214_own",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "hsi_snvmean32",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "rgb_trained",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "role_hsi_mean214_own",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "role_hsi_q214_own",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "role_hsi_q32",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "role_hsi_snvmean214_own",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "role_hsi_snvmean32",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "tri",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "v5_tta",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  }
+]

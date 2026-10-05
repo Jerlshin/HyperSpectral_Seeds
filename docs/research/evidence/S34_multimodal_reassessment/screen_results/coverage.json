@@ -1,0 +1,52 @@
+[
+  {
+    "arm": "equal_frozen",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "equal_trained",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "equal_trained_shuffled",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "hsi_tta",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "rgb_ensemble",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "rgb_frozen",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "rgb_trained",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "s29_equal_l",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "s29_head_l",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "tri",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  }
+]

@@ -144,7 +144,16 @@ study stays *modular* (it can be read, revised or superseded on its own).
 | [S27](studies/S27_tta_trained_head/README.md) | Train the small head against equal TTA | 2026-10-05 | complete | H45 pass: +.0131 over equal TTA; F1 .614719 |
 | [S28](studies/S28_tta_head_seeds/README.md) | Head-seed sensitivity of the TTA-trained head | 2026-10-05 | complete | H46 pass: +.0139, seed SD .0009 |
 | [S29](studies/S29_rgb_backbone_screen/README.md) | Frozen RGB backbone capacity (DINOv2 B/L) at system level | 2026-10-05 | complete | H47 pass: ViT-L head .627150; head over fixed ViT-L only +.0067; away-from-session-8 recall flat |
-| [S30](studies/S30_final_confirmation/README.md) | Matched final confirmation (encoder seeds 0/1/2) | — | proposed, not frozen | 4 GPU fits; decides head vs fixed ViT-L fusion |
+| [S30](studies/S30_final_confirmation/README.md) | Matched final confirmation (encoder seeds 0/1/2) | — | **superseded by S39** (D55/D58); never frozen | its system was retired by S32/S34 |
+| [S31](studies/S31_rgb_readout_audit/README.md) | Frozen ViT-L readout audit + label-free RGB acquisition audit | 2026-10-05 | complete; H48 fails (cross clause) | readout +.126 RGB / +.050 fused F1 without training, no transfer; colour = session channel; metric morph transfers |
+| [S32](studies/S32_rgb_finetune/README.md) | Trained foreground-token RGB branch (ViT-B / partial ViT-L) | 2026-10-05 | complete; H50, H51 pass | RGB .664, fused .698; away-from-session-8 recall .104 → .239 (first move) |
+| [S33](studies/S33_rgb_acquisition/README.md) | Measured-nuisance (blur) RGB training + test rendering | 2026-10-05 | complete; H52, H53 fail | lowers away-from-s8 recall (−.031); optics not the bottleneck |
+| [S34](studies/S34_multimodal_reassessment/README.md) | Strong-RGB multimodal reassessment | 2026-10-05 | complete; H54 pass | equal fusion +.071 over the S29 learned system; matched pairing < shuffled; HSI encodes session more |
+| [S35](studies/S35_regime_rendering/README.md) | Class-conditional acquisition rendering (CCAR) | 2026-10-05 | complete; H55, H56 fail | no effect (±.003); candidate novel mechanism falsified |
+| [S36](studies/S36_next_generation_architecture/README.md) | Next-generation architecture from first principles | 2026-10-05 | complete (design) | SeedNet-MX: two trained encoders, independent evidence, fixed fusion; kernel/scan error decomposition |
+| [S37](studies/S37_rgb_multilayer/README.md) | Trained RGB with multi-layer readout + metric morphometrics | 2026-10-05 | frozen; running | decides the S36 RGB readout (H57) |
+| [S38](studies/S38_modality_roles/README.md) | HSI role specialization (spectral shape only) | 2026-10-05 | complete; H59 fails | trained v5 is the best HSI partner; hand spectra encode the session more |
+| [S39](studies/S39_final_confirmation/README.md) | Matched final confirmation of SeedNet-MX (seeds 0/1/2) | 2026-10-05 → | frozen; RGB cells queued locally; HSI cells need Kaggle authorization | M1–M4 with G3 |
 
 ## 4 · Conventions
 

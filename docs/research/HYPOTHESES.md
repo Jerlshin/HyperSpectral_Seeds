@@ -339,3 +339,63 @@ ViT-L − equal ViT-S ≥ .01; C4 head ViT-S − equal ViT-S ≥ .01. All are me
 0/1/2 × both folds, with paired CI > 0, positive in each fold, and Δ > 2 × seed SD.
 Transfer claims additionally need a gain in the away-from-session-8 direction (F113).
 [S30 brief](studies/S30_final_confirmation/README.md).
+
+## S31–S32: how much RGB is left unused? (registered 2026-10-05, before any outcome)
+
+| ID | Study | Statement and gate | Recorded prediction |
+|---|---|---|---|
+| H48-screen | S31 frozen ViT-L readouts | The calib-selected readout (class + foreground-mean token, last-4 layers, and/or 4-view orientation averaging) beats the class-token probe on RGB alone: ΔF1 ≥ .02, paired variety CI > 0, positive each fold, cross Δ ≥ 0 | modest pass or near miss (+.01–.03); readout changes are mostly within-session |
+| H49 (descriptive) | S31 | The same readout gain survives equal fusion with v5 TTA; metric morphometrics add to RGB alone but not to the system (v5 already consumes morphometrics, F33/F63) | system gain ≤ half the RGB gain; morph adds ≈ 0 at system level |
+| H50-screen | S32 trained RGB branch | Calib-selected fine-tuned DINOv2 (ViT-B or ViT-L, foreground tokens, 4-view TTA) beats the S31 frozen ViT-L reference on RGB alone: ΔF1 ≥ .02, CI > 0, both folds, cross Δ ≥ 0 | pass on F1 (+.05 or more, mostly same-session); cross Δ near zero with session attraction rising |
+| H51-screen | S32 | Equal fusion of v5 TTA with the trained branch beats equal fusion with the frozen reference: ΔF1 ≥ .01, CI > 0, both folds, cross Δ ≥ 0 | pass, but well below the RGB-only gain (shared errors with HSI) |
+
+Gates follow the project's screening rule (`screen_metrics.gate`). These are development screens
+on reused acquisitions under [D53](DECISIONS.md); intervals describe variety heterogeneity, not
+new-session uncertainty.
+
+**S31 outcomes (2026-10-05, plan `29ef87f3…`):**
+- **H48-screen: fail, on the cross clause.** `last4_tta` − `cls` RGB-only +.1258 F1 [.1068, .1447],
+  both folds positive, but cross −.0070 [−.0259, .0123]. The prediction (+.01–.03, within-session)
+  underestimated the F1 gain fourfold; its within-session character was right.
+- **H49 (descriptive): confirmed.** The system gain (+.0497) is under half the RGB gain (+.1258).
+  Morphometrics add RGB transfer (+.0148 cross, CI > 0) but ≈ 0 at system level (equal morph vs
+  HSI −.0047; + morph at system +.0106 F1, cross n.s.), as predicted.
+
+## S33–S35: measured nuisance, strong-RGB fusion, class-conditional rendering (registered 2026-10-05, before scoring)
+
+| ID | Study / plan | Statement and gate | Recorded prediction |
+|---|---|---|---|
+| H52-screen | S33 `2873190a…` | ViT-B trained with measured-nuisance blur (σ ~ U(0,1), p = .5) and scored on σ = 0.5 rendered crops vs S32 ViT-B: from-session-8 bridge recall Δ ≥ .03 (cell-bootstrap CI > 0) and F1 Δ ≥ −.01 | partial: from-s8 rises a little (+.01–.03), F1 falls slightly; likely fail on the CI |
+| H53-screen | S33 | same contrast after equal fusion with v5 TTA; F1 Δ ≥ −.005 | fail (HSI dominates the from-s8 direction) |
+| H54-screen | S34 `cb8063a7…` | calib-selected strong-RGB fixed fusion (equal or tri) − S29 learned system: F1 ≥ .01, CI > 0, both folds, cross ≥ 0 | pass on F1; cross is the risk |
+| H55-screen | S35 `37da5f94…` | CCAR on the S33 branch vs the same branch unrendered: from-s8 Δ ≥ .03 (CI > 0) and F1 Δ ≥ −.005 | the most likely of the three to move from-s8; F1 cost ≈ 0 by construction |
+| H56-screen | S35 | same after equal fusion | uncertain; HSI's from-s8 errors are not rendered |
+
+S35 was frozen before S33's held-out scoring; S34 before S32's. Each resolves its inputs from sealed
+outputs, so no design choice depends on a held-out outcome.
+
+**S32 / S34 outcomes (2026-10-05):**
+- **H50-screen: pass** (plan `251465cc…`). Fine-tuned ViT-B TTA − frozen ViT-L probe:
+  +.1692 [.1511, .1868], folds +.1739 / +.1644, cross +.1053 [.0549, .1539]. The prediction
+  (≥ +.05, cross ≈ 0, attraction rising) was right on F1 and **wrong on transfer**: cross rose
+  and session attraction is .479, below HSI's .549.
+- **H51-screen: pass.** Equal fusion +.0773 [.0646, .0898], cross +.0619 [.0221, .0999].
+  The prediction "well below the RGB gain" was right (.077 vs .169).
+- **H54-screen: pass** (plan `cb8063a7…`). Calib chose `equal_trained` (.8511 vs `tri` .8408).
+  Versus the S29 learned system: +.0706 [.0556, .0847], folds +.0691 / +.0720, cross +.0473
+  [.0008, .0938]. Predicted pass on F1 with cross as the risk; cross passed narrowly.
+
+| ID | Study / plan | Statement and gate | Recorded prediction |
+|---|---|---|---|
+| H57-screen | S37 `96f31458…` (frozen before S33 scoring) | Trained ViT-B with multi-layer readout + metric morphometrics vs S32 ViT-B: RGB F1 ≥ .01, CI > 0, both folds, cross ≥ 0 | modest pass (+.01–.02); morphometrics should help cross (F117) |
+| H58 (descriptive) | S37 | the same contrast after equal fusion with v5 | ≈ half the RGB gain; v5 already holds morphometrics |
+| H59-screen | S38 (frozen before scoring) | Role specialization: equal(trained RGB, HSI spectral shape `snvmean214_own`) − equal(trained RGB, v5): cross Δ ≥ .02 (CI > 0) and F1 Δ ≥ −.01 | likely fail: v5 alone transfers better (.209) than spectral shape alone (.150); F1 cost probably > .01 |
+
+**S33 / S35 / S38 outcomes (2026-10-05):**
+- **H52-screen: fail** (`2873190a…`). RGB from-s8 −.0307 [−.0539, −.0062], F1 −.0072. Predicted a
+  small rise; the sign was wrong.
+- **H53-screen: fail.** System from-s8 −.0282 [−.0392, −.0172]. Predicted fail.
+- **H55-screen: fail** (`37da5f94…`). RGB from-s8 −.0025 [−.0086, .0037]; F1 +.0001. Predicted the
+  likeliest to move from-s8; it did not move.
+- **H56-screen: fail.** System from-s8 +.0037 [−.0037, .0110].
+- **H59-screen: fail** (`e5ea3571…`). Cross −.0368 [−.0674, −.0061], F1 −.0179. Predicted fail.

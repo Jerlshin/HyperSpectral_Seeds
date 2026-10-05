@@ -1,0 +1,145 @@
+{
+  "study": "S32_rgb_finetune",
+  "frozen_at": "2026-10-05",
+  "parent_plan": "configs/research/s31_rgb_readout_audit.json",
+  "scope": "Trained RGB branch development screen on reused acquisitions; S21 corrected folds; seed 0; both folds. Fusion uses the saved S22 seed-0 v5 TTA. No HSI training.",
+  "input_hashes": {
+    "/Users/jerlshin/FieldOfInterest/ResearchWork/HSI_RGB_seeds/Code/scripts/run_rgb_finetune.py": "4e6f12d9547d2308cdadc51587dba2ed0d87de18aa56dea5d72befe57a2b6bbd",
+    "configs/research/s31_rgb_readout_audit.json": "29ef87f32804848f8f1361586db2632e8a3e97edde8688878db1c094ac7af75f",
+    "docs/research/evidence/S29_rgb_backbone_screen/screen_results/predictions.csv.gz": "12ff5f06316885c02858251ba687a8672c52a29e078592361adc3978f6fa29a4",
+    "dataset_rgb_hsi_v3/rgb.npy": "6c603fdad271a0d8ad1977503e3e20f34b15c6aa53c226c033b34d3615207802",
+    "src/spectralquadnet/models/rgb_branch.py": "08257b78caa37d23ac991d6528241d9a0514864c78a1974d3af67ae45e06a71b",
+    "src/spectralquadnet/experiments/rgb_finetune.py": "a6aebb2f05f96fa3d14be7e7d3877793ba2842ab11515006ac5d50d2153897a6",
+    "src/spectralquadnet/experiments/rgb_readout.py": "13f91348b73324d9cbcfceb3dd98f6696075ae7cbbd6de1047a38080cb2f50ee",
+    "src/spectralquadnet/experiments/screen_metrics.py": "8f93c6503b9d70f4172c8744522ecc1eaba754056f325f2a2a7dc9f3adf51b93",
+    "dataset_u430k32/labels.npy": "20e037429e52ef5bdb52be64179b23ff7521939951ae4fde95c33a1810f7b8c6",
+    "dataset_u430k32/groups.npy": "e829e057a6b2b95cafae51cac767962fa75f3bd9c6376185afbe9812c5737a9f",
+    "dataset_u430k32/scan_table.csv": "97fc5ed7c73b3233280e28363502e738c90b6014cafe58e6dca1814ca0713deb",
+    "outputs/s22_fusion_analysis/calibration.json": "6b083368fc68cf36dfdacfb61687ccbe8198c65e04a91f49b2f2ecea1d9a8768",
+    "/Users/jerlshin/.cache/torch/hub/checkpoints/dinov2_vitb14_pretrain.pth": "0b8b82f85de91b424aded121c7e1dcc2b7bc6d0adeea651bf73a13307fad8c73",
+    "/Users/jerlshin/.cache/torch/hub/checkpoints/dinov2_vitl14_pretrain.pth": "d5383ea8f4877b2472eb973e0fd72d557c7da5d3611bd527ceeb1d7162cbf428",
+    "outputs/s22_complementary_v5/f0_s0/results/logits_calib_tta.npz": "1b150d9d4e9c6d6e48a2c733dc5d2d9215ba1f8856021b3969dd4425dce091c8",
+    "outputs/s22_complementary_v5/f0_s0/results/logits_val_test_tta.npz": "18159bda952ffa5a999af206c1ba6692b180c943bd254cdafb0c01f775b820ae",
+    "outputs/s22_complementary_v5/f1_s0/results/logits_calib_tta.npz": "0e3ce1376e946a58b4506f7554a31a4029015432070a0a3876f1957582214c35",
+    "outputs/s22_complementary_v5/f1_s0/results/logits_val_test_tta.npz": "cb587630125baaa2fe909e6b0e0b93ffd4cd01644b8d7575547a760f86662e49"
+  },
+  "temperatures": [
+    0.25,
+    0.5,
+    1.0,
+    2.0,
+    4.0,
+    8.0,
+    16.0,
+    32.0,
+    64.0,
+    128.0,
+    256.0
+  ],
+  "cells": [
+    {
+      "arm": "vitb",
+      "backbone": "vitb",
+      "fold": 0,
+      "seed": 0
+    },
+    {
+      "arm": "vitb",
+      "backbone": "vitb",
+      "fold": 1,
+      "seed": 0
+    },
+    {
+      "arm": "vitl",
+      "backbone": "vitl",
+      "fold": 0,
+      "seed": 0
+    },
+    {
+      "arm": "vitl",
+      "backbone": "vitl",
+      "fold": 1,
+      "seed": 0
+    }
+  ],
+  "model": {
+    "vitb": {
+      "checkpoint": "dinov2_vitb14",
+      "readout": "[class, foreground-weighted mean] of final tokens",
+      "foreground_tokens": 128,
+      "trainable_top_blocks": "all"
+    },
+    "vitl": {
+      "checkpoint": "dinov2_vitl14",
+      "readout": "[class, foreground-weighted mean] of final tokens",
+      "foreground_tokens": 128,
+      "trainable_top_blocks": 8
+    }
+  },
+  "recipes": {
+    "vitb": {
+      "epochs": 12,
+      "batch": 32,
+      "lr": 3e-05,
+      "head_lr": 0.001,
+      "layer_decay": 0.8,
+      "weight_decay": 0.05,
+      "warmup_epochs": 1.0,
+      "label_smoothing": 0.1,
+      "drop_path": 0.1,
+      "keep_tokens": 128,
+      "train_blocks": 0,
+      "shift": 8,
+      "exposure": 0.1,
+      "blur_sigma": 0.0,
+      "blur_p": 0.5,
+      "precision": "bf16"
+    },
+    "vitl": {
+      "epochs": 12,
+      "batch": 32,
+      "lr": 3e-05,
+      "head_lr": 0.001,
+      "layer_decay": 0.9,
+      "weight_decay": 0.05,
+      "warmup_epochs": 1.0,
+      "label_smoothing": 0.1,
+      "drop_path": 0.1,
+      "keep_tokens": 128,
+      "train_blocks": 8,
+      "shift": 8,
+      "exposure": 0.1,
+      "blur_sigma": 0.0,
+      "blur_p": 0.5,
+      "precision": "bf16"
+    }
+  },
+  "selection_within_cell": "Epoch with best identity-view calib macro-F1 (first on ties). Temperature: calib log-loss of the 4-view mean logits on the S21 grid.",
+  "candidate_selection": "Before held-out scoring: candidate = argmax over backbones of two-fold mean calib macro-F1 of the 4-view mean logits; tie -> vitb. Written to selection.json first.",
+  "frozen_reference": "Rule fixed before S31 scoring: S31's calib-selected readout if H48-screen passes, else 'cls' (= S29 ViT-L probe). Resolved at scoring from S31's sealed outputs (COMPLETED.json hashes verified).",
+  "arms": {
+    "rgb": [
+      "ft_<b>_id",
+      "ft_<b>_tta",
+      "frozen_ref",
+      "s29_dino_b",
+      "s29_dino_l"
+    ],
+    "fusion": [
+      "equal_ft_<b>",
+      "equal_frozen_ref",
+      "hsi_tta"
+    ]
+  },
+  "H50_screen": "RGB: ft_candidate_tta minus frozen_ref: mean F1 >= .02, paired variety CI lower > 0, positive on each fold, mean cross delta >= 0.",
+  "H51_screen": "System: equal_ft_candidate minus equal_frozen_ref: mean F1 >= .01, CI lower > 0, positive on each fold, mean cross delta >= 0.",
+  "descriptive": [
+    "ft_vitb_tta - s29_dino_b (training effect at matched backbone)",
+    "ft_vitl_tta - s29_dino_l",
+    "ft_<b>_tta - ft_<b>_id (orientation TTA)",
+    "acquisition directions; session attraction",
+    "complementarity: either-modality oracle and both-wrong cross fraction vs HSI"
+  ],
+  "decision": "H50+H51 pass: the trained RGB branch replaces frozen DINOv2 in the multimodal baseline and anchors the next architecture study. H50 pass, H51 fail: RGB gains are redundant with HSI; the system keeps frozen RGB. H50 fail: frozen ViT-L already extracts the usable RGB information under this recipe.",
+  "stop": "Two backbones, one fixed recipe, one seed, both folds; no hyperparameter search. Multi-seed confirmation is reserved for the final system."
+}

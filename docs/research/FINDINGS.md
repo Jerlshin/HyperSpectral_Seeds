@@ -954,6 +954,8 @@ with matched encoder seeds. Descriptive, one seed (E3-descriptive).
 [S29](studies/S29_rgb_backbone_screen/README.md).
 
 ### F113 · No tested system moves transfer away from session 8 (S27–S29 diagnostic)
+**Status (2026-10-05): challenged by [F118](#f118--a-trained-rgb-branch-is-the-strongest-modality-and-the-first-change-to-move-transfer-away-from-session-8-s32).** A fine-tuned RGB branch raises away-from-session-8 recall to .239 (RGB) / .254 (fused). The text below is kept as recorded; its "acquisition-limited" reading still holds for the scan-systematic part (F122).
+
 **Evidence.** Cross-session recall for the 17 bridge varieties, by the test bundle's session:
 - outside session 8: .173–.196 for every system (HSI TTA .178, equal ViT-S .178, head ViT-L .180);
 - in session 8: .240 → .316.
@@ -967,3 +969,121 @@ acquisition-limited (F92/F98: all bridges touch session 8, whose RGB aperture di
 needs crossed acquisitions, not more modelling on these scans. Descriptive, on reused development
 predictions. [Diagnostic](evidence/S27_tta_trained_head/bottleneck_diagnostic.json),
 [S29](studies/S29_rgb_backbone_screen/README.md).
+
+## S31 · Frozen ViT-L readout audit and RGB acquisition audit (2026-10-05)
+
+### F114 · The frozen ViT-L representation holds far more within-acquisition RGB signal than its class token exposes (S31)
+Foreground-weighted patch pooling, four orientation views and blocks 21–24 raise RGB-only macro-F1
+from .4950 to **.6208** (+.1258 [.1068, .1447], both folds), and fixed equal fusion with v5 TTA
+from .6205 to **.6702** (+.0497 [.0398, .0588]), with no training. That exceeds the S29 learned
+system (.6272), descriptively. **None of it transfers:** RGB cross Δ is −.0070 [−.0259, .0123],
+from-session-8 RGB recall goes .104 → .086, and fused cross Δ is +.0011. H48-screen therefore fails
+on its cross clause. **Caveat:** the four candidates were chosen on within-session calib, and the
+screen reuses acquisitions. [S31](studies/S31_rgb_readout_audit/README.md)
+
+### F115 · Intermediate blocks carry the largest share of the unused RGB signal (S31)
+Foreground pooling adds +.038, four views +.035, and intermediate blocks +.062 over `cls_fg`.
+Low-level texture and structure, rather than the final semantic token, separate varieties within
+an acquisition. This sets the readout of any trained RGB branch: multi-layer, foreground-only and
+multi-view. [S31](studies/S31_rgb_readout_audit/README.md)
+
+### F116 · Explicit RGB colour statistics are an acquisition channel (S31)
+15 Lab statistics reach .173 same-session recall but **.0025 cross** (chance). Added to HSI by equal
+fusion they lower F1 by .015 and cross recall by **.040 [.022, .060]**. Session 8's plate background
+is darker and bluer while kernel colour is similar (S31 §3). Background-referenced colour
+correction is therefore unsafe, and colour is the first suspect for RGB session attraction.
+[S31](studies/S31_rgb_readout_audit/README.md)
+
+### F117 · Metric morphometrics are the one RGB cue that adds transfer to the RGB branch (S31)
+The RGB/HSI grid-pitch ratio is 5.43 ± .03 in every session, so pixel morphometrics are metric
+across sessions. Adding them to the view-averaged readout lifts RGB cross recall by **+.0148
+[.0068, .0245]** and F1 by .026. At system level the gain shrinks to +.011 F1 (cross n.s.), because
+v5 already consumes HSI morphometrics, which correlate .99 with RGB's (F33/F63).
+[S31](studies/S31_rgb_readout_audit/README.md)
+
+**Acquisition audit (label-free, descriptive):** session-8 RGB crops carry about half the
+fine-texture energy (Laplacian variance 28.6 vs 48–61; Gaussian σ ≈ 0.5 px equivalent) and clip
+red on 4% of kernel pixels against 14–21% elsewhere. No bridge variety has training rows from two
+sessions in either fold. [acquisition_audit.csv](evidence/S31_rgb_readout_audit/acquisition_audit.csv),
+[acquisition_regimes.csv](evidence/S31_rgb_readout_audit/acquisition_regimes.csv).
+
+## S32–S34 · Trained RGB branch and strong-RGB multimodal reassessment (2026-10-05)
+
+### F118 · A trained RGB branch is the strongest modality and the first change to move transfer away from session 8 (S32)
+Fine-tuned DINOv2 ViT-B on foreground tokens, with one fixed recipe, seed 0 and both folds,
+4-view TTA, reaches RGB-only macro-F1 **.6642**, against .4950 for the frozen ViT-L probe:
+**+.1692 [.1511, .1868]**, cross **+.1053 [.0549, .1539]**. It beats HSI v5 TTA by +.105.
+Away-from-session-8 RGB recall is **.239**, against ≤ .104 for every frozen RGB readout (S29/S31)
+and .178 for HSI. At a matched backbone, training adds +.190 F1 and +.137 cross over the frozen
+ViT-B probe. **Caveat:** one seed; 17 bridges per direction; the ±10% exposure jitter is part
+of the recipe. [S32](studies/S32_rgb_finetune/README.md)
+
+### F119 · Fixed equal fusion with the trained branch supersedes every earlier system (S32, S34)
+Equal probability fusion of v5 TTA with the trained branch: **.6977** F1, same/cross .8108/.2953,
+from/to session 8 .254/.337, with zero learned fusion parameters. Versus the S29 learned system:
+**+.0706 [.0556, .0847]**, cross +.0473 [.0008, .0938] (H54 pass). Versus HSI alone: +.1386.
+[S34](studies/S34_multimodal_reassessment/README.md)
+
+### F120 · Training, not backbone capacity, is the RGB lever under this recipe (S32, S34)
+ViT-L with its top 8 blocks tuned equals ViT-B (−.0053 [−.0141, .0032]). Adding the frozen ViT-L
+probe to the trained branch *hurts*: three-way fusion −.0195 [−.0277, −.0111], RGB ensemble −.0112.
+**Caveat:** full ViT-L fine-tuning was not affordable locally.
+
+### F121 · Kernel-level pairing still carries no cross-modal synergy; errors are positively correlated per kernel (S34)
+Equal fusion with matched kernels is **worse** than with RGB evidence shuffled among kernels of
+the same held-out scan: **−.0225 [−.0284, −.0168]**. This replicates S21's H38 (−.014) with both
+branches trained. The HSI and trained-RGB error φ is .36–.39; the either-oracle is .774/.781
+against .713 fused. A kernel that is atypical is atypical in both modalities, so kernel-level
+cross-attention has no evidence behind it.
+
+### F122 · The residual error splits into kernel-random (same session) and scan-systematic (cross session) parts (S36 diagnostic)
+Averaging fused log-probabilities over the kernels of one held-out scan:
+- same-session scan accuracy goes .804 (1 kernel) → .981 (8) → **1.000** (all);
+- cross-session scans plateau at **.41** (test outside session 8) and **.59** (in session 8).
+
+Within-acquisition errors are kernel noise; cross-acquisition errors are systematic per scan. The
+same holds for HSI and RGB alone. Every variety has exactly **one** training scan and one calib
+scan per fold, so no training signal identifies scan-level acquisition effects within a variety.
+Descriptive, on reused held-out predictions.
+[error_decomposition.csv](evidence/S36_next_generation_architecture/error_decomposition.csv)
+
+### F123 · Both branches interpolate their training rows, and HSI carries more acquisition signal than trained RGB (S34, S36)
+- Training-row accuracy is 1.000/.999 for v5 and .975/.968 for trained RGB, so any fusion learned
+  on training rows sees near-perfect inputs (the mechanism behind F112).
+- A train-only LDA predicts the *test* session of held-out bridge kernels from the v5 embedding at
+  .59/.60, from the trained-RGB embedding at .49/.54, and from frozen ViT-L at .42/.56. The v5
+  representation also points more often to its own class's training session (.11–.15 vs .02–.10).
+
+The session channel is not only RGB colour (F116): the HSI representation encodes acquisition at
+least as strongly.
+
+## S33–S38 · Mechanism screens for acquisition transfer (2026-10-05)
+
+### F124 · The measured session-8 RGB optics do not limit the trained branch's transfer (S33)
+Training ViT-B with blur σ ~ U(0, 1) px (the measured session-8 softness range) and scoring σ = 0.5
+renders lowers away-from-session-8 recall by **−.0307 [−.0539, −.0062]** (RGB) and **−.0282
+[−.0392, −.0172]** (system). F1 changes by −.007 / −.001. Augmentation alone: −.020 from-s8; rendering
+alone: +.006, n.s. Fine texture is discriminative (F115), and simulating its loss costs transfer.
+H52/H53 fail. [S33](studies/S33_rgb_acquisition/README.md)
+
+### F125 · Class-conditional acquisition rendering does not touch session attraction (S35)
+Rendering each candidate variety's RGB evidence into its training regime re-scores 13–23% of the
+held-out kernel × variety pairs, yet changes F1, cross recall and from-s8 recall by ≤ .009
+(all CIs span 0). H55/H56 fail. The scan-systematic cross-session error (F122) is not explained by
+the measured RGB optics. Lot/biological or unmeasured acquisition factors remain, and only crossed
+acquisitions can separate them. [S35](studies/S35_regime_rendering/README.md)
+
+### F126 · The trained v5 encoder is the best HSI partner; hand spectral features transfer worse and encode the session more (S38)
+With trained RGB fixed:
+- swapping v5 for spectral shape (SNV, 214 bands): F1 −.018, cross **−.037 [−.067, −.006]**;
+- quantile features: cross −.10 to −.11.
+
+Session decodability on held-out bridges is .59–.60 for the v5 embedding and .62–.86 for hand
+spectral features. H59 fails. [S38](studies/S38_modality_roles/README.md)
+
+### F127 · Across S31–S38, transfer came only from training encoders on kernels (synthesis)
+- **Gains:** RGB fine-tuning (+.105 cross, F118), and the trained v5 encoder over hand spectra in fusion (F126).
+- **No gain:** frozen readouts (F114), measured-optics treatments (F124, F125), fusion forms and
+  learned heads (F112, F120), role assignment (F126), kernel-level pairing (F121).
+- **What remains:** the residual cross-session error is scan-systematic (F122), and no learning
+  signal for it exists on this design (D56).

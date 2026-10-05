@@ -1,0 +1,51 @@
+{
+  "study": "S38_modality_roles",
+  "frozen_at": "2026-10-05",
+  "scope": "CPU role screen on reused acquisitions; S21 corrected folds; S32 seed-0 trained ViT-B; S22 seed-0 v5 TTA; S21 HSI probes.",
+  "input_hashes": {
+    "/Users/jerlshin/FieldOfInterest/ResearchWork/HSI_RGB_seeds/Code/scripts/run_modality_roles.py": "24f737588285439e98b88302d040ee8f4815b7f69c8b6925d382a7f639752ef6",
+    "docs/research/evidence/S21_complementary_rgb/preregistration.json": "e4d1e4a3d469f98c2c4c7e69b023a9835d56a12cda4159c108d4ea2504bf63ca",
+    "scripts/run_multimodal_reassessment.py": "5db9bb4bd3d1821fa1df18846adb1fdc250436d4a63301c998afe8ad20bef08f",
+    "scripts/run_rgb_acquisition.py": "fcfa5436ae52533d839995913597212a1a6ca2851d15f45784f969f911f1f6aa",
+    "src/spectralquadnet/experiments/screen_metrics.py": "8f93c6503b9d70f4172c8744522ecc1eaba754056f325f2a2a7dc9f3adf51b93",
+    "src/spectralquadnet/experiments/rgb_probe.py": "12bb9369d148331f0f8f5fa7a77ca29f7f95cb6ccb6dea54537f33a3b64f34f7",
+    "outputs/s22_fusion_analysis/calibration.json": "6b083368fc68cf36dfdacfb61687ccbe8198c65e04a91f49b2f2ecea1d9a8768",
+    "outputs/s32_rgb_finetune/screen/COMPLETED.json": "9c1bf73db9e672a68dc611a2e4869921f803f8ddf73d8c0cd272c06f803a523d",
+    "dataset_u430k32/labels.npy": "20e037429e52ef5bdb52be64179b23ff7521939951ae4fde95c33a1810f7b8c6",
+    "dataset_u430k32/groups.npy": "e829e057a6b2b95cafae51cac767962fa75f3bd9c6376185afbe9812c5737a9f",
+    "dataset_u430k32/scan_table.csv": "97fc5ed7c73b3233280e28363502e738c90b6014cafe58e6dca1814ca0713deb",
+    "dataset_rgb_hsi_v3/hsi_summary.npy": "68afbb80b9766ca6133d5fe844515caf5a62239f1fc663cf993b83c8dd933706",
+    "dataset_rgb_hsi_v3/morphology.npy": "fb49f1d66a896e42083d250b8e01ef55f88d92deb4cc85446ab205dc878c222d",
+    "outputs/s21_rgb_study/probabilities_f0.npz": "232124703b15fd50c322e7ec81158e5424095739ccc4af13ce6d0894f8af4676",
+    "outputs/s32_rgb_finetune/vitb_f0/outputs.npz": "807b133dac4989a613af3475db9ea353233221c122bce19d87c6aeb6125f2929",
+    "outputs/s32_rgb_finetune/vitb_f0/selection.json": "ec4ed18623edbcedac307171c3272b2feae0af79fbf6419982b262b9b13c9f22",
+    "outputs/s22_complementary_v5/f0_s0/results/logits_val_test_tta.npz": "18159bda952ffa5a999af206c1ba6692b180c943bd254cdafb0c01f775b820ae",
+    "outputs/s24_branch_multimodal/features_f0_traincal.npz": "ae51dea961ddc8f467c77d576a65b0fa448d76743b41b2a02ed740aa6edbff93",
+    "outputs/s24_branch_multimodal/features_f0_heldout.npz": "a6795bf038e36d306f4989225283e7b1ea7ef2516557f30b65d8598b28321867",
+    "outputs/s21_rgb_study/probabilities_f1.npz": "897dda3ca6e2e53651c7ded936e371d54e4662fc0d59641dad95769d1d67a230",
+    "outputs/s32_rgb_finetune/vitb_f1/outputs.npz": "ede44f8557c68b4982eaf8192241d488c6a6f00fa5d987272233f953305143a7",
+    "outputs/s32_rgb_finetune/vitb_f1/selection.json": "1909b477827d9602f76da4a979746ec8a38bdecf4fa0f75f269d5e5a0e7c41f0",
+    "outputs/s22_complementary_v5/f1_s0/results/logits_val_test_tta.npz": "cb587630125baaa2fe909e6b0e0b93ffd4cd01644b8d7575547a760f86662e49",
+    "outputs/s24_branch_multimodal/features_f1_traincal.npz": "91764fdcf69c9734ed015a11b058bebafd2bbe47b5fcf2b195d65dec06754f41",
+    "outputs/s24_branch_multimodal/features_f1_heldout.npz": "2faa801b528b2bdb31ca53b200c7689d543ba7b632cb9f478ca4b0e53cecd87f"
+  },
+  "arms": {
+    "baseline": "equal(rgb_trained, v5 TTA) = S34 equal_trained",
+    "roles": [
+      "equal(rgb_trained, hsi_snvmean214_own)",
+      "equal(rgb_trained, hsi_snvmean32)",
+      "equal(rgb_trained, hsi_mean214_own)",
+      "equal(rgb_trained, hsi_q214_own)",
+      "equal(rgb_trained, hsi_q32)"
+    ],
+    "tri": "0.5 rgb_trained + 0.25 v5 + 0.25 hsi_snvmean214_own"
+  },
+  "primary": "equal(rgb_trained, hsi_snvmean214_own) minus equal(rgb_trained, v5 TTA): spectral shape only vs the full v5 HSI encoder.",
+  "H59_screen": "cross recall delta >= .02 with paired variety CI lower > 0, AND mean F1 delta >= -.01.",
+  "descriptive": [
+    "all roles and tri vs baseline, with from/to-session-8 cell deltas",
+    "acquisition decodability (S34 method) of v5 embedding vs HSI spectral-shape and quantile features"
+  ],
+  "decision": "H59 pass: the architecture assigns HSI the spectral-shape role (no HSI spatial/spread pathway). Fail: the full v5 HSI encoder stays; role specialization by measured transfer is not supported.",
+  "stop": "Saved components only; one pre-declared primary; no weight search."
+}

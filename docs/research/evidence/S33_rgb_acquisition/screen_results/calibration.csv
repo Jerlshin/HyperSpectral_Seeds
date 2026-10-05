@@ -1,0 +1,9 @@
+fold,arm,temperature,calib_f1
+0,ft_vitb_tta,0.5,0.7892745671177045
+0,ft_vitb_render,0.5,0.7711579772518885
+0,acq_vitb_tta,0.5,0.8001025717202188
+0,acq_vitb_render,0.5,0.8022940748430946
+1,ft_vitb_tta,0.5,0.8172251695290911
+1,ft_vitb_render,0.5,0.8044066362487416
+1,acq_vitb_tta,0.5,0.8036021512982298
+1,acq_vitb_render,0.5,0.8063423867345436

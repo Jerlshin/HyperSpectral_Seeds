@@ -1,5 +1,7 @@
 # S30 · Matched final confirmation of the selected multimodal system
 
+> **Superseded (2026-10-05) by [S39](../S39_final_confirmation/README.md) under [D55/D58](../../DECISIONS.md).** The trained RGB branch retired the S29 system that this brief would confirm. The brief is kept unchanged below; it was never frozen or run.
+
 2026-10-05 · **Proposed design brief; not frozen, not executed.** It needs four GPU encoder
 fits on the private Kaggle research host. That spends the owner's GPU quota, so it runs
 only on explicit authorization.

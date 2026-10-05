@@ -1,0 +1,53 @@
+{
+  "study": "S35_regime_rendering",
+  "frozen_at": "2026-10-05",
+  "parent_plan": "configs/research/s33_rgb_acquisition.json",
+  "scope": "CPU mechanism screen on reused acquisitions; S21 corrected folds; S32/S33 seed-0 ViT-B branches; S22 seed-0 v5 TTA.",
+  "input_hashes": {
+    "/Users/jerlshin/FieldOfInterest/ResearchWork/HSI_RGB_seeds/Code/scripts/run_regime_rendering.py": "a7a9de00ba541b345a7bc5682141774529c2cb33b8a11ec0d426a82f66741830",
+    "configs/research/s33_rgb_acquisition.json": "2873190a0c2ab9749455c8f91609ec70711ee6dacdcd7a84cbdf035aa185c32d",
+    "scripts/run_rgb_acquisition.py": "fcfa5436ae52533d839995913597212a1a6ca2851d15f45784f969f911f1f6aa",
+    "docs/research/evidence/S31_rgb_readout_audit/acquisition_regimes.csv": "f090d17946e7dd17ce947d7628f639c808c0d626400aef02f566a68ef56b37c8",
+    "docs/research/evidence/S31_rgb_readout_audit/code/acquisition_regimes.py": "1ebddfa0718539c32a992f5040955250b77c903968f0ace4fbbd08b08f24803c",
+    "src/spectralquadnet/experiments/screen_metrics.py": "8f93c6503b9d70f4172c8744522ecc1eaba754056f325f2a2a7dc9f3adf51b93",
+    "outputs/s22_fusion_analysis/calibration.json": "6b083368fc68cf36dfdacfb61687ccbe8198c65e04a91f49b2f2ecea1d9a8768",
+    "dataset_u430k32/labels.npy": "20e037429e52ef5bdb52be64179b23ff7521939951ae4fde95c33a1810f7b8c6",
+    "dataset_u430k32/groups.npy": "e829e057a6b2b95cafae51cac767962fa75f3bd9c6376185afbe9812c5737a9f",
+    "dataset_u430k32/scan_table.csv": "97fc5ed7c73b3233280e28363502e738c90b6014cafe58e6dca1814ca0713deb"
+  },
+  "temperatures": [
+    0.25,
+    0.5,
+    1.0,
+    2.0,
+    4.0,
+    8.0,
+    16.0,
+    32.0,
+    64.0,
+    128.0,
+    256.0
+  ],
+  "rule": "logit_c(x) = rendered (\u03c3 = 0.5, S33) 4-view mean logit if regime(scan(x)) = sharp and regime(c) = soft, else the identity 4-view mean logit. regime(c) = majority regime over c's outer-training rows (ties -> sharp). Temperature: calib log-loss of the CCAR logits on the S21 grid.",
+  "arms": {
+    "rgb": [
+      "ccar_ft_vitb",
+      "ccar_acq_vitb",
+      "ft_vitb_tta",
+      "acq_vitb_tta"
+    ],
+    "fusion": [
+      "equal_<rgb arm> with the saved S22 v5 TTA"
+    ]
+  },
+  "primary": "ccar_acq_vitb minus acq_vitb_tta (the measured-nuisance branch with and without class-conditional rendering).",
+  "H55_screen": "RGB: from_session8 bridge recall delta >= .03 with cell-bootstrap CI lower > 0, AND mean F1 delta >= -.005.",
+  "H56_screen": "System (equal fusion with v5 TTA): from_session8 delta >= .03 with CI lower > 0, AND mean F1 delta >= -.005.",
+  "descriptive": [
+    "ccar_ft_vitb - ft_vitb_tta (rendering without augmentation)",
+    "session attraction; to_session8; same recall",
+    "share of test kernels x classes that are re-rendered"
+  ],
+  "decision": "H55 pass: CCAR enters the proposed architecture's RGB scoring rule. Fail: class-conditional rendering does not reach the away-from-session-8 bottleneck; acquisition-limited transfer stands (F113).",
+  "stop": "One rule, one \u03c3, two branches; no \u03c3 or regime-threshold search."
+}

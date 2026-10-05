@@ -734,3 +734,91 @@ confirmation, which needs authorization for the Kaggle quota. Prioritize the
 crossed-session/lot acquisition pilot (FW-42, S19 §5) as the scientific route to the transfer
 bottleneck. **Reverse if.** A specific mechanism with independent evidence predicts
 away-from-session-8 gain on existing data; it would need its own frozen study.
+
+### D53 · Reopen bounded development for a trained RGB branch; S30 deferred until the final architecture is chosen (2026-10-05)
+**Context.** D52 stopped screening on reused acquisitions and named S30 as the next compute. The
+owner then explicitly redirected the project (2026-10-05): treat HSI v5, frozen ViT-L RGB, fixed
+fusion and the S29 learned fusion as *baselines*, measure how much a properly trained RGB branch
+extracts, and design a next-generation RGB–HSI architecture from that evidence. S30 is deferred,
+not cancelled: confirmation belongs to the final selected architecture. **Decision.** Open S31+
+as development screens under D52's own reversal clause narrowed by the owner's directive:
+- every study freezes its arm list, gates and input hashes before any held-out row is scored,
+  selects only on calib, and scores held-out once;
+- one seed first, both corrected folds; replication only for promising candidates; multi-seed
+  confirmation only for the final system (the S30 design is reused for it);
+- every result is labelled a development screen on reused acquisitions. F113 still holds: a
+  transfer claim needs a gain in the away-from-session-8 direction, and broad session/lot claims
+  still need crossed acquisitions (FW-42).
+**Alternatives rejected.** Running S30 now (it would confirm a system the owner considers a
+baseline); a broad backbone/hyperparameter sweep (selects on noise, D52's concern).
+**Reverse if.** S31–S32 show no RGB gain beyond frozen ViT-L: then the S29 system is the
+final architecture and S30 runs as briefed.
+
+### D54 · Keep `cls` as the frozen RGB reference; adopt the multi-layer, foreground, multi-view readout as a design requirement (S31)
+**Context.** F114–F117. H48-screen fails only on its cross-nonnegativity clause (cross Δ −.007,
+CI spanning 0), despite +.126 RGB F1. **Decision.** Honour the frozen rule:
+- S32's frozen reference and S34's frozen component stay `cls` (S29 ViT-L probe);
+- `last4_tta` is recorded as the strongest frozen readout (fused .6702), not as the adopted reference;
+- any trained RGB branch should read out foreground, multi-view and preferably multi-layer
+  features (S32's branch reads out class + foreground mean of the final block; multi-layer
+  readout is deferred to the architecture study);
+- colour is treated as a session channel (F116), and metric morphometrics as the transfer-positive
+  RGB cue (F117).
+**Alternatives rejected.** Overriding the gate because the F1 gain is large (it would redefine the
+gate after seeing outcomes). **Reverse if.** A frozen re-test with a gate that explicitly trades
+F1 against cross recall is pre-registered and passes.
+
+### D55 · The trained foreground-token RGB branch and fixed equal fusion become the development baseline (S32, S34)
+**Context.** F118–F120; H50, H51 and H54 pass. **Decision.**
+- **New baselines:**
+  - RGB: fine-tuned DINOv2 ViT-B on foreground tokens, 4-view TTA (`scripts/run_rgb_finetune.py`, `vitb` arm);
+  - multimodal: equal probability fusion with v5 TTA;
+  - all frozen-DINOv2 systems (S29 ViT-L + head, S31 readouts) are retired as baselines.
+- **The S30 brief is superseded:** its C2/C3 contrasts concern retired components. Final
+  confirmation is redesigned around the architecture S36 selects.
+- **ViT-L** stays out unless fully fine-tuned on GPU (F120).
+**Alternatives rejected.** Keeping the S29 learned head (−.0706 vs the new baseline); adding
+frozen RGB to the trained branch (F120). **Reverse if.** Seed replication (final confirmation)
+puts the trained-branch gain within 2 × seed SD, or crossed acquisitions reverse F118's transfer gain.
+
+### D56 · Reject learned/stacked and kernel-interaction fusion on this acquisition design (S34, S36)
+**Context.** F121–F123: matched kernel pairing is worse than shuffled; both branches interpolate
+training rows; every variety has one training scan per fold. Honest scan-level out-of-fold
+partner evidence therefore cannot exist inside training. **Decision.** Do not build or screen:
+- learned fusion heads;
+- complementary (product-of-experts/boosting) branch training;
+- gated or cross-attention fusion.
+The architecture keeps fixed log-linear/probability fusion. **Alternatives rejected.**
+Within-scan cross-fitting: it reproduces same-acquisition optimism (F21). **Reverse if.** A design
+with ≥ 2 training acquisitions per variety (crossed acquisitions, FW-42) makes scan-level
+cross-fitting possible.
+
+### D57 · Reject measured-optics treatments, class-conditional rendering and modality-role specialization (S33, S35, S38)
+**Context.** F124–F127. **Decision.** The architecture contains:
+- no blur augmentation or test-time rendering (S33);
+- no CCAR (S35; the phase's candidate novel mechanism, recorded as falsified);
+- no HSI role restriction: the HSI branch stays the full trained v5 encoder (S38).
+
+**Implication for the architecture study (S36):** both branches are *trained* encoders combined by
+fixed evidence fusion. Novelty must not be claimed for components these screens falsified.
+**Reverse if.** Crossed acquisitions show an optical or regime effect that these single-scan-per-variety
+folds could not express.
+
+### D58 · Adopt SeedNet-MX as the proposed architecture; S39 replaces S30 as the final confirmation (S36)
+**Context.** F118–F127, D55–D57. **Decision.** The proposed system is two *trained* encoders with
+independent evidence and fixed fusion:
+- RGB: foreground-token DINOv2 ViT-B fine-tuned, readout per S37;
+- HSI: SeedNet v5;
+- fusion: calibrated equal probability fusion; lot-level pooling is a separately reported mode;
+- implementation: `models/acquisition_aware.py`, with CCAR off.
+
+**Novelty claims** are limited to what survived falsification (S36 §5): the trained object-centric
+RGB branch's transfer; the identifiability-driven independence with its controls; and the
+kernel/scan error decomposition. Cross-acquisition, cross-modal consistency learning is the
+mechanism to build next, but it needs ≥ 2 training acquisitions per variety (FW-42).
+
+**Confirmation:** S39 is frozen (seeds 0/1/2 × folds, M1–M4, G3). Its RGB cells run locally; its
+HSI cells need GPU authorization. **S30 is not run in its briefed form.**
+
+**Reverse if.** S39 M1/M2 fail under G3, or crossed acquisitions show that the trained RGB transfer
+gain is session-specific.

@@ -1,0 +1,120 @@
+{
+  "study": "S31_rgb_readout_audit",
+  "frozen_at": "2026-10-05",
+  "scope": "Frozen DINOv2 ViT-L/14 readout development screen on reused acquisitions; S21 corrected folds; S22 seed-0 v5 TTA for fusion. No network training.",
+  "input_hashes": {
+    "/Users/jerlshin/FieldOfInterest/ResearchWork/HSI_RGB_seeds/Code/scripts/run_rgb_readout_audit.py": "0420341cd0c0bbf310262a5b245934a9377d044b95a33e87f6edef04208fe10e",
+    "docs/research/evidence/S21_complementary_rgb/preregistration.json": "e4d1e4a3d469f98c2c4c7e69b023a9835d56a12cda4159c108d4ea2504bf63ca",
+    "scripts/cache_rgb_features.py": "d99193c523907d7a2e1f45f5eef369b9f98d66598a7014ae5a287dfdffb9fcb4",
+    "outputs/s31_rgb_readouts/provenance.json": "f769edecdc88d90e8721cf578cf915353a3b9f9ffb03900635f603dfec7b68a0",
+    "src/spectralquadnet/experiments/rgb_readout.py": "13f91348b73324d9cbcfceb3dd98f6696075ae7cbbd6de1047a38080cb2f50ee",
+    "src/spectralquadnet/experiments/screen_metrics.py": "8f93c6503b9d70f4172c8744522ecc1eaba754056f325f2a2a7dc9f3adf51b93",
+    "src/spectralquadnet/experiments/rgb_probe.py": "12bb9369d148331f0f8f5fa7a77ca29f7f95cb6ccb6dea54537f33a3b64f34f7",
+    "dataset_rgb_hsi_v3/rgb_morphology.npy": "628bbcae41579ac8ccb431883aa70c9e76f04e7977ec20c26a3a9b99587df2bf",
+    "dataset_rgb_hsi_v3/rgb_descriptors.npy": "08ae1c3fb3ef6897619cf9d53222f30894fb10cf690a7acfb099116b3c1131eb",
+    "dataset_u430k32/labels.npy": "20e037429e52ef5bdb52be64179b23ff7521939951ae4fde95c33a1810f7b8c6",
+    "dataset_u430k32/groups.npy": "e829e057a6b2b95cafae51cac767962fa75f3bd9c6376185afbe9812c5737a9f",
+    "dataset_u430k32/scan_table.csv": "97fc5ed7c73b3233280e28363502e738c90b6014cafe58e6dca1814ca0713deb",
+    "outputs/s22_fusion_analysis/calibration.json": "6b083368fc68cf36dfdacfb61687ccbe8198c65e04a91f49b2f2ecea1d9a8768",
+    "docs/research/evidence/S29_rgb_backbone_screen/screen_results/predictions.csv.gz": "12ff5f06316885c02858251ba687a8672c52a29e078592361adc3978f6fa29a4",
+    "outputs/s31_rgb_readouts/readout_id.npy": "f2e32f70dd20f0ae5b058b374ef3fd2535d500ad9f0c378dc3cf18d35cfb7cb8",
+    "outputs/s31_rgb_readouts/readout_hflip.npy": "a8370ab970baf39179e8446da2587b9fdb9ec613d0a0a032e25c70ff1efce68b",
+    "outputs/s31_rgb_readouts/readout_vflip.npy": "ff02433fb3c29d22d83535226a4895e5384127a88d408e49746bca73048c7528",
+    "outputs/s31_rgb_readouts/readout_rot180.npy": "c3aa380e55d5b7152d3da4b12b4e191166d70ecd04a47259ced70424590014f1",
+    "outputs/s22_complementary_v5/f0_s0/results/logits_calib_tta.npz": "1b150d9d4e9c6d6e48a2c733dc5d2d9215ba1f8856021b3969dd4425dce091c8",
+    "outputs/s22_complementary_v5/f0_s0/results/logits_val_test_tta.npz": "18159bda952ffa5a999af206c1ba6692b180c943bd254cdafb0c01f775b820ae",
+    "outputs/s22_complementary_v5/f1_s0/results/logits_calib_tta.npz": "0e3ce1376e946a58b4506f7554a31a4029015432070a0a3876f1957582214c35",
+    "outputs/s22_complementary_v5/f1_s0/results/logits_val_test_tta.npz": "cb587630125baaa2fe909e6b0e0b93ffd4cd01644b8d7575547a760f86662e49"
+  },
+  "temperatures": [
+    0.25,
+    0.5,
+    1.0,
+    2.0,
+    4.0,
+    8.0,
+    16.0,
+    32.0,
+    64.0,
+    128.0,
+    256.0
+  ],
+  "readouts": {
+    "cls": {
+      "layers_from_last4": [
+        -1
+      ],
+      "parts": "cls",
+      "views": [
+        "id"
+      ]
+    },
+    "cls_fg": {
+      "layers_from_last4": [
+        -1
+      ],
+      "parts": "both",
+      "views": [
+        "id"
+      ]
+    },
+    "last4": {
+      "layers_from_last4": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "parts": "both",
+      "views": [
+        "id"
+      ]
+    },
+    "cls_fg_tta": {
+      "layers_from_last4": [
+        -1
+      ],
+      "parts": "both",
+      "views": [
+        "id",
+        "hflip",
+        "vflip",
+        "rot180"
+      ]
+    },
+    "last4_tta": {
+      "layers_from_last4": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "parts": "both",
+      "views": [
+        "id",
+        "hflip",
+        "vflip",
+        "rot180"
+      ]
+    }
+  },
+  "candidates": [
+    "cls_fg",
+    "last4",
+    "cls_fg_tta",
+    "last4_tta"
+  ],
+  "diagnostics": [
+    "morph (8 metric morphometrics, log size terms)",
+    "colour (15 Lab statistics)",
+    "cls_fg_tta_morph (candidate-free concatenation)"
+  ],
+  "probe": "S21 fit_probe on outer-training rows (train-only scaling + shrinkage LDA); calib log-loss temperature on the S21 grid. View-averaged features are averaged before the probe.",
+  "fusion": "Equal probability fusion with the saved S22 seed-0 v5 TTA logits at the S22 calib temperatures (equal_<arm>).",
+  "candidate_selection": "Before held-out scoring: candidate = argmax over CANDIDATES of two-fold mean calib macro-F1 of the RGB probe; tie -> earlier in list. Written to selection.json first.",
+  "replay_audit": "cls RGB-only and equal_cls predictions reproduce S29 dino_l / equal_l exactly; any disagreement stops.",
+  "H48_screen": "RGB-only candidate minus cls: mean F1 >= .02, paired variety CI lower > 0, positive on each fold, mean cross delta >= 0.",
+  "H49_descriptive": "System: equal_candidate minus equal_cls (no gate; the system decision is reserved for the trained-branch study).",
+  "decision": "Pass: the candidate readout becomes the frozen-ViT-L reference and the trained branch's head readout. Fail: the class token already carries the frozen backbone's usable RGB information; any gain must come from adapting the backbone.",
+  "stop": "Five readouts, two diagnostics, one probe recipe; no classifier, resolution or temperature search."
+}

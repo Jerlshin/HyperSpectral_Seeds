@@ -1,0 +1,5 @@
+{
+  "plan_sha256": "251465cc1fe5aa2d94f18b6ce731132055f5a86b3a03797c574dd70b5e230738",
+  "device": "mps",
+  "torch": "2.14.0"
+}

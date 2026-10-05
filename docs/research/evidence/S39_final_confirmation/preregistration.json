@@ -1,0 +1,67 @@
+{
+  "study": "S39_final_confirmation",
+  "frozen_at": "2026-10-05",
+  "scope": "Matched confirmation on reused acquisitions (S21 corrected folds); seeds 0/1/2 for both trained encoders.",
+  "input_hashes": {
+    "/Users/jerlshin/FieldOfInterest/ResearchWork/HSI_RGB_seeds/Code/scripts/run_final_confirmation.py": "7438b5dcf8ab4c2a57c610a649943f0e0e91bd28800a930fb97ef640832c1859",
+    "configs/research/s32_rgb_finetune.json": "251465cc1fe5aa2d94f18b6ce731132055f5a86b3a03797c574dd70b5e230738",
+    "configs/research/s37_rgb_multilayer.json": "96f3145816b04c1598f384fdcea1751952c418002f0e64c14676b799a420e3fc",
+    "configs/research/s39_hsi_seeds_amendment06.json": "ce3ded4bfa923c0d487d130f647c3266d57d73aed207448bc80937aacbb7112b",
+    "scripts/run_rgb_finetune.py": "4e6f12d9547d2308cdadc51587dba2ed0d87de18aa56dea5d72befe57a2b6bbd",
+    "scripts/run_rgb_multilayer.py": "b290e46bfadabd64fee872754c2af0830abb2ff4bd8355a0ace73aac68c5bfd4",
+    "src/spectralquadnet/experiments/rgb_finetune.py": "a6aebb2f05f96fa3d14be7e7d3877793ba2842ab11515006ac5d50d2153897a6",
+    "src/spectralquadnet/experiments/multilayer_finetune.py": "e7011f3578d19a3755c7834c11553b486b18b9d490f965eafd567236d94af075",
+    "src/spectralquadnet/models/rgb_branch.py": "08257b78caa37d23ac991d6528241d9a0514864c78a1974d3af67ae45e06a71b",
+    "src/spectralquadnet/models/rgb_multilayer.py": "edabe8c96b39dd684eb031e0299e81e50ca03ad739a5de849c2842bd92aa528e",
+    "src/spectralquadnet/experiments/screen_metrics.py": "8f93c6503b9d70f4172c8744522ecc1eaba754056f325f2a2a7dc9f3adf51b93",
+    "dataset_rgb_hsi_v3/rgb.npy": "6c603fdad271a0d8ad1977503e3e20f34b15c6aa53c226c033b34d3615207802",
+    "dataset_rgb_hsi_v3/rgb_morphology.npy": "628bbcae41579ac8ccb431883aa70c9e76f04e7977ec20c26a3a9b99587df2bf",
+    "outputs/s22_fusion_analysis/calibration.json": "6b083368fc68cf36dfdacfb61687ccbe8198c65e04a91f49b2f2ecea1d9a8768",
+    "outputs/s31_rgb_readout_audit/probabilities_f0.npz": "448aa7b99ec02dc06804d0e7fccef512b1c96e1cf5941b5f19a414910c2ca62b",
+    "outputs/s31_rgb_readout_audit/probabilities_f1.npz": "145d9cf28bca50587ecf5f41bb676b81524a6438e4a9dff8ea02045d6e5a04cf"
+  },
+  "temperatures": [
+    0.25,
+    0.5,
+    1.0,
+    2.0,
+    4.0,
+    8.0,
+    16.0,
+    32.0,
+    64.0,
+    128.0,
+    256.0
+  ],
+  "rgb_branch_rule": "S37 H57-screen pass -> S37 mlm_vitb (model + recipe of its plan); else S32 vitb. Resolved from S37's sealed hypothesis.json.",
+  "rgb_cells": [
+    {
+      "seed": 1,
+      "fold": 0
+    },
+    {
+      "seed": 1,
+      "fold": 1
+    },
+    {
+      "seed": 2,
+      "fold": 0
+    },
+    {
+      "seed": 2,
+      "fold": 1
+    }
+  ],
+  "hsi_cells": "S22 amendment06 (seeds 1/2 x folds 0/1), GPU; seed-0 cells are the S22 fits",
+  "hsi_temperature": "per seed and fold: calib log-loss of the v5 calib TTA logits on the S21 grid (seed 0 reproduces S22's 1.0)",
+  "frozen_rgb_probe": "S29 dino_l probe (deterministic; no seeds): S31 'cls' held-out probabilities, which replay S29 exactly",
+  "contrasts": {
+    "M1": "threshold 0.02",
+    "M2": "threshold 0.05",
+    "M3": "threshold 0.05",
+    "M4": "threshold 0.01"
+  },
+  "gate": "mean delta >= threshold, paired variety CI lower > 0 (seed-averaged per-class), positive mean each fold, cross delta >= 0, and delta > 2 x seed SD of the fold-averaged delta (G3). M3 may be scored before the HSI seeds exist (--partial).",
+  "decision": "All of M1, M2, M4 pass: SeedNet-MX is the paper's system on these acquisitions. Any fail: report it and keep the simplest passing system. Transfer claims additionally need away-from-session-8 gains; broad claims need FW-42.",
+  "stop": "Exactly 4 RGB + 4 HSI new fits; no further seeds, recipes or components."
+}

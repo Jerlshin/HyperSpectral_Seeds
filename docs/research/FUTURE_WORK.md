@@ -10,7 +10,35 @@ ID and leave the row in place.
 
 ---
 
-## Current priority (2026-10-05, after S27–S29: confirmation, then acquisitions)
+## Current priority (2026-10-05 evening, after S31–S39: confirm SeedNet-MX, then acquisitions)
+
+**Proposed architecture: [SeedNet-MX](studies/S36_next_generation_architecture/README.md)**
+(trained foreground-token RGB + v5, independent evidence, fixed fusion; D58). Its matched
+confirmation [S39](studies/S39_final_confirmation/README.md) is frozen. S30 is superseded.
+
+- **FW-47 · S39 HSI seeds (needs the owner's Kaggle authorization).** Four v5 fits (seeds 1/2 ×
+  folds) from the built bundle `outputs/s39_kaggle_push/`, ≈ 95 min on 2×T4. The RGB seeds run
+  locally (queued). Then score M1–M4.
+- **FW-42 (top scientific priority, now also an architecture prerequisite).** Crossed
+  sessions/lots. The residual is scan-systematic (F122) and has no learning signal on one scan
+  per variety (D56).
+- **FW-48 (new, after FW-42) · cross-acquisition, cross-modal consistency learning.** The
+  mechanism S36 §6 proposes. It needs ≥ 2 training acquisitions per variety.
+- **FW-49 (new, conditional) · the training lever for HSI.** Training was the only transfer lever
+  (F127), and v5 is trained from scratch. Fine-tune a pretrained spectral encoder (S19 §4
+  HyperSL-type) as the HSI branch, matched to v5. Run it only if S39 confirms that the RGB-side
+  training gain is beyond seed noise.
+- **FW-50 (new, conditional, GPU) · full ViT-L fine-tuning.** Partial ViT-L ≈ ViT-B locally
+  (F120). Worth one GPU screen only if S39's seed SD shows headroom.
+- **Closed this phase:**
+  - RGB fine-tuning (FW-40 remainder → S32);
+  - readout/backbone screens (S31);
+  - optics nuisance, CCAR and modality roles (S33/S35/S38, all falsified);
+  - learned/complementary/kernel-level fusion (D56).
+
+### Superseded priority note (2026-10-05, after S27–S29)
+
+### (superseded) Priority (2026-10-05, after S27–S29: confirmation, then acquisitions)
 
 **Development screening is closed (D52). Next compute: [S30 matched final confirmation](studies/S30_final_confirmation/README.md)
 (proposed, not frozen). Next science: the crossed-session/lot acquisition pilot (FW-42).**
@@ -446,3 +474,5 @@ then the band-budget result; publish the negative results (F05, F09, F18, F25).
 | FW-44 corrected-fold neural rebaseline and fixed fusion | S22 (two-fit amended screen complete) |
 | FW-45 learned head against the TTA anchor | S27 + S28 (both gates pass) |
 | FW-40 (part) frozen RGB backbone capacity | S29 (ViT-L adopted) |
+| FW-40 (rest) RGB readouts and fine-tuning | S31 (readouts) + S32 (trained branch adopted, D55) |
+| FW-46 S30 matched confirmation | superseded by S39 (D58) |

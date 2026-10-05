@@ -386,3 +386,43 @@ Zero new encoder fits.
 + TTA-trained head. Development screening on reused scans stops. S30 (four matched encoder fits,
 proposed, needs Kaggle authorization) decides whether the head is kept. Crossed acquisitions
 become the scientific priority.
+
+### S31–S39 · Trained RGB branch, mechanism screens and the SeedNet-MX architecture — 2026-10-05
+**Trigger:** the owner redirected the project (D53): treat v5, frozen ViT-L, fixed fusion and the
+S29 learned fusion as baselines; find out how much a properly trained RGB branch extracts; design
+the next architecture from that evidence; defer S30.
+**Did** (all local; Apple M5 MPS + CPU; every arm list frozen and hashed before scoring):
+- committed and pushed S22–S29 (`aec533a`);
+- **S31:** a label-free RGB acquisition audit (camera geometry locked; session 8 softer and less
+  clipped) and frozen ViT-L readouts (4 views, last 4 blocks), ≈ 1 h extraction;
+- **S32:** fine-tuned foreground-token ViT-B and partial ViT-L, 4 fits, 3.7 h;
+- **S33:** measured-nuisance blur arm, 2 fits plus a rendering pass;
+- **S34:** reassessment against the incumbent;
+- **S35:** class-conditional acquisition rendering;
+- **S38:** HSI role specialization;
+- **S37:** multi-layer + morphometric RGB readout, 2 fits;
+- **S36:** the architecture design study, with a kernel/scan error decomposition;
+- **S39:** froze the matched confirmation and prepared its GPU bundle (not pushed).
+
+**Found:**
+- **Training is the lever** (F118, F127). A fine-tuned RGB branch reaches .664 F1 alone, beats HSI,
+  and is the first change to move away-from-session-8 recall (.104 → .239). Fixed equal fusion
+  reaches .698, +.071 over the S29 learned system (H54).
+- **Frozen readouts:** ViT-L holds +.126 more RGB F1 than its class token exposes, but none of it
+  transfers (F114).
+- **Falsified:**
+  - kernel-level coupling (matched < shuffled, F121);
+  - learned/complementary fusion (unidentifiable: one training scan per variety, D56);
+  - measured-optics treatments (F124);
+  - CCAR (F125);
+  - HSI role specialization (F126).
+- **Residual:** same-session errors are kernel-random, and cross-session errors are scan-systematic (F122).
+
+**Changed:**
+- F113 challenged;
+- D53–D58, H48–H59;
+- new baseline = trained RGB + v5 with equal fusion;
+- proposed architecture = SeedNet-MX;
+- S30 superseded by S39;
+- crossed acquisitions are now a prerequisite for the next novel mechanism
+  (cross-acquisition, cross-modal consistency learning).

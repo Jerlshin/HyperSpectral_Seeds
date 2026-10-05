@@ -1,5 +1,11 @@
 # Research progress and exact resume state
 
+> **IN FLIGHT (2026-10-05 evening, D53):** S31, S32 and S34 complete and archived (H50, H51, H54 pass; H48 fails on cross).
+> Queued on MPS: S33 `vitb_acq` cells → S33 render (log `outputs/s33_train.log`) → S37 `mlm_vitb` cells (log `outputs/s37_train.log`).
+> After S33 render: `run_rgb_acquisition.py run`, then `run_regime_rendering.py run` (S35); after S37 cells: `run_rgb_multilayer.py run`.
+> All plans are frozen: S33 `2873190a…`, S35 `37da5f94…`, S37 `96f31458…`. A cell without `COMPLETED.json` must be deleted and rerun.
+> The block below is the pre-D53 state.
+
 Updated 2026-10-05. **S27–S29 complete; development screening closed (D52). No job is running.
 S30 (matched final confirmation) is proposed, not frozen; it needs authorization to spend
 Kaggle GPU quota.** Read the [master plan](MASTER_RESEARCH_PLAN.md) (direction revision at the

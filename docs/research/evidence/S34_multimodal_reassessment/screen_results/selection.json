@@ -1,0 +1,54 @@
+{
+  "candidate": "equal_trained",
+  "two_fold_calib_f1": {
+    "equal_trained": 0.8510817812749993,
+    "tri": 0.8407677653854796
+  },
+  "calib": [
+    {
+      "fold": 0,
+      "arm": "equal_trained",
+      "calib_f1": 0.8445533831111748
+    },
+    {
+      "fold": 0,
+      "arm": "equal_frozen",
+      "calib_f1": 0.7890387338839353
+    },
+    {
+      "fold": 0,
+      "arm": "tri",
+      "calib_f1": 0.8488718410932032
+    },
+    {
+      "fold": 0,
+      "arm": "rgb_ensemble",
+      "calib_f1": 0.7935881544782475
+    },
+    {
+      "fold": 1,
+      "arm": "equal_trained",
+      "calib_f1": 0.857610179438824
+    },
+    {
+      "fold": 1,
+      "arm": "equal_frozen",
+      "calib_f1": 0.7726337144680796
+    },
+    {
+      "fold": 1,
+      "arm": "tri",
+      "calib_f1": 0.832663689677756
+    },
+    {
+      "fold": 1,
+      "arm": "rgb_ensemble",
+      "calib_f1": 0.8067730389092617
+    }
+  ],
+  "resolved_components": {
+    "rgb_trained": "vitb",
+    "rgb_frozen": "cls"
+  },
+  "selected_before_held_out_scoring": true
+}

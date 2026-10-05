@@ -1,0 +1,9 @@
+{
+  "plan_sha256": "2873190a0c2ab9749455c8f91609ec70711ee6dacdcd7a84cbdf035aa185c32d",
+  "files": {
+    "acq_vitb_f0.npz": "32c12cfa551f6fd17bb1f6d7d2bd8384a857a270e23593c11255cba6486feb7c",
+    "acq_vitb_f1.npz": "aba8bb1c4a4d09179c1308a171b48451ced99f0532e0d093559fef5e52b1ef2a",
+    "ft_vitb_f0.npz": "775efa356c379c38f6810f21af8d589a4cafbae83686b1056bf1e3e3aa745191",
+    "ft_vitb_f1.npz": "f6d8da3ac1485d3c87f088c6258832c11ab1cfca5c220ce86f9e2fbfd5459885"
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "candidate": "vitb",
+  "two_fold_calib_f1_tta": {
+    "vitb": 0.8032498683233977,
+    "vitl": 0.8012879386408799
+  },
+  "cells": {
+    "vitb": [
+      {
+        "best": {
+          "epoch": 11,
+          "calib_f1": 0.7750972810776732
+        },
+        "temperature": 0.5,
+        "calib_f1_tta": 0.7892745671177045,
+        "calib_f1_id": 0.7750972810776732,
+        "train_seconds": 2640.6036188330036,
+        "total_seconds": 2911.812511041062
+      },
+      {
+        "best": {
+          "epoch": 10,
+          "calib_f1": 0.7843548996773972
+        },
+        "temperature": 0.5,
+        "calib_f1_tta": 0.8172251695290911,
+        "calib_f1_id": 0.7843548996773972,
+        "train_seconds": 2620.53648441704,
+        "total_seconds": 2877.2157999579795
+      }
+    ],
+    "vitl": [
+      {
+        "best": {
+          "epoch": 11,
+          "calib_f1": 0.7780044568434661
+        },
+        "temperature": 0.5,
+        "calib_f1_tta": 0.8015511068452246,
+        "calib_f1_id": 0.7780044568434661,
+        "train_seconds": 2981.9157357079675,
+        "total_seconds": 3770.0723368750187
+      },
+      {
+        "best": {
+          "epoch": 10,
+          "calib_f1": 0.7870573641471474
+        },
+        "temperature": 0.5,
+        "calib_f1_tta": 0.8010247704365352,
+        "calib_f1_id": 0.7870573641471474,
+        "train_seconds": 2960.845397499972,
+        "total_seconds": 3675.262650374905
+      }
+    ]
+  },
+  "rule": "Before held-out scoring: candidate = argmax over backbones of two-fold mean calib macro-F1 of the 4-view mean logits; tie -> vitb. Written to selection.json first.",
+  "selected_before_held_out_scoring": true
+}

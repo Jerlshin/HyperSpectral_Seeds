@@ -1,0 +1,141 @@
+{
+  "candidate": "last4_tta",
+  "calib": [
+    {
+      "fold": 0,
+      "arm": "cls",
+      "dimensions": 1024,
+      "temperature": 4.0,
+      "rgb_calib_f1": 0.5806122252742479,
+      "equal_calib_f1": 0.7890387338839353
+    },
+    {
+      "fold": 0,
+      "arm": "cls_fg",
+      "dimensions": 2048,
+      "temperature": 4.0,
+      "rgb_calib_f1": 0.6588318963267363,
+      "equal_calib_f1": 0.7819582997936971
+    },
+    {
+      "fold": 0,
+      "arm": "last4",
+      "dimensions": 8192,
+      "temperature": 8.0,
+      "rgb_calib_f1": 0.7386758684307703,
+      "equal_calib_f1": 0.8280339815556536
+    },
+    {
+      "fold": 0,
+      "arm": "cls_fg_tta",
+      "dimensions": 2048,
+      "temperature": 4.0,
+      "rgb_calib_f1": 0.7086320985134195,
+      "equal_calib_f1": 0.8081640581640583
+    },
+    {
+      "fold": 0,
+      "arm": "last4_tta",
+      "dimensions": 8192,
+      "temperature": 8.0,
+      "rgb_calib_f1": 0.7792373660433517,
+      "equal_calib_f1": 0.8323640641932697
+    },
+    {
+      "fold": 0,
+      "arm": "morph",
+      "dimensions": 8,
+      "temperature": 1.0,
+      "rgb_calib_f1": 0.20391303347993348,
+      "equal_calib_f1": 0.7125145841812508
+    },
+    {
+      "fold": 0,
+      "arm": "colour",
+      "dimensions": 15,
+      "temperature": 1.0,
+      "rgb_calib_f1": 0.19867052964434848,
+      "equal_calib_f1": 0.7068847969673562
+    },
+    {
+      "fold": 0,
+      "arm": "cls_fg_tta_morph",
+      "dimensions": 2056,
+      "temperature": 4.0,
+      "rgb_calib_f1": 0.7356404532668722,
+      "equal_calib_f1": 0.810557378351496
+    },
+    {
+      "fold": 1,
+      "arm": "cls",
+      "dimensions": 1024,
+      "temperature": 4.0,
+      "rgb_calib_f1": 0.6290135409253056,
+      "equal_calib_f1": 0.7726337144680796
+    },
+    {
+      "fold": 1,
+      "arm": "cls_fg",
+      "dimensions": 2048,
+      "temperature": 4.0,
+      "rgb_calib_f1": 0.6589688053413543,
+      "equal_calib_f1": 0.7940091140178859
+    },
+    {
+      "fold": 1,
+      "arm": "last4",
+      "dimensions": 8192,
+      "temperature": 8.0,
+      "rgb_calib_f1": 0.7415656474970199,
+      "equal_calib_f1": 0.8349104303139167
+    },
+    {
+      "fold": 1,
+      "arm": "cls_fg_tta",
+      "dimensions": 2048,
+      "temperature": 4.0,
+      "rgb_calib_f1": 0.7076541958404703,
+      "equal_calib_f1": 0.8029955561157607
+    },
+    {
+      "fold": 1,
+      "arm": "last4_tta",
+      "dimensions": 8192,
+      "temperature": 8.0,
+      "rgb_calib_f1": 0.7909451675679746,
+      "equal_calib_f1": 0.8349214115968502
+    },
+    {
+      "fold": 1,
+      "arm": "morph",
+      "dimensions": 8,
+      "temperature": 1.0,
+      "rgb_calib_f1": 0.19752847714148025,
+      "equal_calib_f1": 0.7096286469521764
+    },
+    {
+      "fold": 1,
+      "arm": "colour",
+      "dimensions": 15,
+      "temperature": 1.0,
+      "rgb_calib_f1": 0.17157153541532327,
+      "equal_calib_f1": 0.7059686643097376
+    },
+    {
+      "fold": 1,
+      "arm": "cls_fg_tta_morph",
+      "dimensions": 2056,
+      "temperature": 4.0,
+      "rgb_calib_f1": 0.7395352631162745,
+      "equal_calib_f1": 0.8181961248627916
+    }
+  ],
+  "two_fold_calib_f1": {
+    "cls_fg": 0.6589003508340453,
+    "last4": 0.7401207579638951,
+    "cls_fg_tta": 0.7081431471769448,
+    "last4_tta": 0.7850912668056631
+  },
+  "rule": "Before held-out scoring: candidate = argmax over CANDIDATES of two-fold mean calib macro-F1 of the RGB probe; tie -> earlier in list. Written to selection.json first.",
+  "selected_before_held_out_scoring": true
+}

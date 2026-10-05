@@ -1,0 +1,16 @@
+{
+  "plan_sha256": "2873190a0c2ab9749455c8f91609ec70711ee6dacdcd7a84cbdf035aa185c32d",
+  "metadata_sha256": "b5d556fc1afb81100ad66d86d44f80a17d82e1b0b2f9c3ac06ee7ad2db45350a",
+  "source_sha256": "88167018d469d622296cab3935b357cb79afa23b2796c1e6c92ba09c00f7af2d",
+  "files": {
+    "summary.csv": "e838773724fc290b165d52424ad417579d32d7cbe420cad2adfdd933c5bb4a8b",
+    "calibration.csv": "0b46802706841a76938ce32e7e4e163bd2293434ec7cecb3f61eb82e33769127",
+    "predictions.csv.gz": "83b18dbdf5bd0252f69501bf24354de59b05819441ac53f906e06afe8b2a9d41",
+    "metrics.csv": "2375ba7647b603a320306b9755d763fdae1e2473cddaa6554f205f0eaf904896",
+    "hypothesis.json": "963c1d4569d1c2ee5e976e4af65b74ad90c3ae71bad2ec42b42eb8ba18d16e85",
+    "COMPLETED.json": "93b67e07d7836a0200264f84ef6626cc7a1cea4519274cf6d0af42f5d556daf6",
+    "coverage.json": "9d6bcc9f3a0125532099a76760907151b2a7c509336c67c8051ff6686291ef4f",
+    "per_class.csv": "fb80c9e42628d10b1ea8df6f02ea4e7d93ea0922a3fb54431c3f393a1d4b0f4d",
+    "acquisition_directions.csv": "2ec01f3f0a870047ec24008cb187a23ba34150d60dadd3328f90f2530031b60a"
+  }
+}

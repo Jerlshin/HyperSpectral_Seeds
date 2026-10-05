@@ -1,7 +1,7 @@
 # Next-generation rice recognition: master research plan
 
 Created: 2026-10-03. Owner: research synthesis initiated in Codex.
-Status: S19–S29 complete; development screening closed (D52); S30 matched confirmation proposed, not frozen (2026-10-05). Resume from [RESEARCH_PROGRESS.md](RESEARCH_PROGRESS.md).
+Status: S19–S38 complete; trained-RGB phase reopened by the owner (D53); proposed architecture SeedNet-MX (S36, D58); S39 matched confirmation frozen (S30 superseded). Resume from [RESEARCH_PROGRESS.md](RESEARCH_PROGRESS.md).
 
 ## Objective and scope
 
@@ -224,3 +224,34 @@ reach the transfer bottleneck. The final selected system needs exactly one match
 
 **Compute this phase:** ≈ 21 min CPU train-row TTA, ≈ 19 min MPS frozen ViT-B/L extraction, and
 ten head fits (seconds). Zero encoder fits. No broad sweep: two backbones and one fixed recipe.
+
+
+## Trained-RGB phase and architecture revision (2026-10-05, D53–D58)
+
+**Why the D52 stop was lifted.** The owner redirected the project: the S29 system and its
+components are baselines, not the final system. Find how much a properly trained RGB branch
+extracts, and derive the next architecture from that. The S30 confirmation was deferred, then
+superseded (D55/D58). Every study below froze its arms before scoring, selected only on calib and
+used one seed with both corrected folds.
+
+| Phase | Study | Outcome |
+|---|---|---|
+| P22 | S31 frozen readouts + RGB acquisition audit | +.126 RGB F1 hidden in frozen ViT-L, none transferable; colour = session channel; camera geometry locked |
+| P23 | S32 trained foreground-token RGB | **H50/H51 pass**; RGB .664, fused .698; first away-from-s8 movement (.239) |
+| P24 | S33 measured-optics nuisance | **fail**; optics not the bottleneck |
+| P25 | S34 strong-RGB reassessment | **H54 pass** (+.071 over S29); pairing/identifiability evidence → D56 |
+| P26 | S35 class-conditional rendering | **fail**; the candidate novel mechanism is falsified |
+| P27 | S38 HSI role specialization | **fail**; the trained v5 is the best HSI partner |
+| P28 | S37 multi-layer + morphometric trained readout | see S37 |
+| P29 | S36 architecture design | SeedNet-MX: two trained encoders, independent evidence, fixed fusion |
+| P30 | **S39 matched confirmation** (seeds 0/1/2) | frozen; RGB cells local; **HSI cells need Kaggle authorization** |
+| P31 | Crossed session/lot acquisition (FW-42) | now also a prerequisite for the next novel mechanism (cross-acquisition, cross-modal consistency learning) |
+
+**Direction after this phase.**
+- **Architecture search on these scans is exhausted for transfer.** The residual cross-session
+  error is scan-systematic (F122), not explained by measured optics (F124/F125), and has no
+  learning signal on a one-scan-per-variety design (D56).
+- **Remaining in-scope work:**
+  - S39 confirmation, the one GPU allocation still needed;
+  - an optional full-ViT-L fine-tune on GPU, only if S39 shows RGB capacity matters;
+  - the crossed acquisition pilot.

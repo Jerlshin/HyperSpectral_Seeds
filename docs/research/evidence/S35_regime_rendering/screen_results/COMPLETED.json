@@ -1,0 +1,11 @@
+{
+  "plan_sha256": "37da5f94c73eadac22e79dc9f5ec19599a489440c43b0b14ed6ab3c6814ebd27",
+  "files": {
+    "summary.csv": "e207e8c4a8503d2c6524a083f9f1d46ff8956e1c806b22f99a782c0462848959",
+    "calibration.csv": "a31ddb87cfe4a08f041a0068ec054029ec16353a625fb88a5186fa48c42b4cd1",
+    "predictions.csv.gz": "f589f30fa34c682199b47ce8e1f8dc762505bb1446e74e3b6a499d98535bd1e2",
+    "metrics.csv": "1d4165ebcdb0e818abe91a55a3f2bf226571de9ab79f45e3e244de7ade68a886",
+    "hypothesis.json": "aee456b587c03c4db99522a6453b542e244d637f4028f527d996dfb317e45b1f",
+    "per_class.csv": "8b9723c64510e8433f9da2748d17ebc5329d8462d197cfa9fcfea60307ecea0d"
+  }
+}
