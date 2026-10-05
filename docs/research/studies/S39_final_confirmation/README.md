@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | **frozen**. RGB seed cells queued locally; HSI seed cells prepared, **not launched** (need Kaggle authorization) |
+| **Status** | **RGB part complete: M3 passes across seeds 0/1/2.** HSI seed cells are prepared, **not launched** (need Kaggle authorization); M1, M2 and M4 are pending |
 | **Plan** | `configs/research/s39_final_confirmation.json`, SHA-256 `d1db0694929387b2b92ce91a0ff47c28e5b4910b58316d94e6ef23e2ccb5a770`. Frozen before S37 was scored |
 | **HSI amendment** | `configs/research/s39_hsi_seeds_amendment06.json`, SHA-256 `ce3ded4bfa923c0d487d130f647c3266d57d73aed207448bc80937aacbb7112b`. It is S22 amendment05 with only the cell list changed |
 | **Code** | `scripts/run_final_confirmation.py` (freeze · train-rgb · run [--partial]); `evidence/S39_final_confirmation/code/{seal_hsi_amendment,build_kaggle_bundle}.py`; test `tests/unit/test_final_confirmation.py` |
@@ -48,3 +48,20 @@ PYTHONPATH=src:scripts python scripts/run_final_confirmation.py run
 
 Transfer claims additionally need away-from-session-8 gains. Broad session/lot claims need the
 crossed acquisition pilot (FW-42), applied to the locked system.
+
+## Result so far: M3 (RGB alone; `--partial`, scored 2026-10-05 21:42)
+
+The rule resolved to S32's `vitb` (S37 H57 failed). The four new cells ran 24–27 min each on MPS.
+
+| Seed | Fold 0 F1 / cross | Fold 1 F1 / cross | Mean F1 |
+|---|---:|---:|---:|
+| 0 (S32) | .6585 / .2588 | .6699 / .3035 | .6642 |
+| 1 | .6472 / .2356 | .6677 / .3136 | .6574 |
+| 2 | .6516 / .2404 | .6574 / .2671 | .6545 |
+| **mean** | | | **.6587** (seed SD .0050) |
+
+**M3: pass.** Trained − frozen ViT-L RGB = **+.1637 F1 [.1466, .1804]**, folds +.1678 / +.1595,
+cross **+.0940 [.0505, .1357]**. The seed deltas are +.1692 / +.1624 / +.1594 (SD .0050), so G3
+holds (.164 ≫ 2 × .005). Seed-mean away-from-session-8 recall is .214 (frozen .104) and toward is
+.325 (frozen .247). Seed 0 was the most favourable seed. The confirmed RGB-alone figure is the
+3-seed mean, **.659**, not S32's .664.

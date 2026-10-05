@@ -23,7 +23,7 @@ combines a fine-tuned foreground-token DINOv2 ViT-B RGB branch (4-view TTA) with
 | | Macro-F1 | Same / cross recall | Cross away from / toward session 8 |
 |---|---:|---:|---:|
 | **SeedNet-MX** | **.6977** | .8108 / .2953 | **.254** / .337 |
-| Trained RGB branch alone | .6642 | .7672 / .2812 | .239 / .323 |
+| Trained RGB branch alone (seed 0; **3-seed mean .6587, SD .005**, S39 M3 pass) | .6642 | .7672 / .2812 | .239 / .323 |
 | S29 learned system (retired baseline) | .6272 | .7408 / .2480 | .180 / .316 |
 | HSI v5 TTA alone | .5591 | .6688 / .2086 | .178 / .240 |
 | Frozen ViT-L RGB probe | .4950 | .5746 / .1758 | .104 / .247 |
@@ -47,8 +47,8 @@ exists in these data. The next mechanism (cross-acquisition, cross-modal consist
 crossed acquisitions (FW-42/48).
 
 **Next:**
-- [S39](studies/S39_final_confirmation/README.md): seeds 0/1/2. RGB cells are running locally;
-  the four v5 GPU cells are bundled but **need the owner's Kaggle authorization**.
+- [S39](studies/S39_final_confirmation/README.md): seeds 0/1/2. The RGB part is done (M3 passes,
+  RGB .659 ± .005). The four v5 GPU cells are bundled but **need the owner's Kaggle authorization**.
 - Then the crossed acquisition pilot.
 
 [S36 architecture study](studies/S36_next_generation_architecture/README.md) ·
@@ -180,7 +180,7 @@ study stays *modular* (it can be read, revised or superseded on its own).
 | [S36](studies/S36_next_generation_architecture/README.md) | Next-generation architecture from first principles | 2026-10-05 | complete (design) | SeedNet-MX: two trained encoders, independent evidence, fixed fusion; kernel/scan error decomposition |
 | [S37](studies/S37_rgb_multilayer/README.md) | Trained RGB with multi-layer readout + metric morphometrics | 2026-10-05 | complete; H57 fails | +.003 (n.s.); trained branch already holds it; S32 readout kept |
 | [S38](studies/S38_modality_roles/README.md) | HSI role specialization (spectral shape only) | 2026-10-05 | complete; H59 fails | trained v5 is the best HSI partner; hand spectra encode the session more |
-| [S39](studies/S39_final_confirmation/README.md) | Matched final confirmation of SeedNet-MX (seeds 0/1/2) | 2026-10-05 → | frozen; RGB cells queued locally; HSI cells need Kaggle authorization | M1–M4 with G3 |
+| [S39](studies/S39_final_confirmation/README.md) | Matched final confirmation of SeedNet-MX (seeds 0/1/2) | 2026-10-05 → | RGB part done (M3 pass, 3 seeds); HSI cells need Kaggle authorization | M3: trained RGB +.164 over frozen, seed SD .005 |
 
 ## 4 · Conventions
 

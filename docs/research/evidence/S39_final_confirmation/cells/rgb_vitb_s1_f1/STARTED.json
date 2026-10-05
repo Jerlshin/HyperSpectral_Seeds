@@ -1,0 +1,6 @@
+{
+  "plan_sha256": "d1db0694929387b2b92ce91a0ff47c28e5b4910b58316d94e6ef23e2ccb5a770",
+  "arm": "vitb",
+  "device": "mps",
+  "torch": "2.14.0"
+}

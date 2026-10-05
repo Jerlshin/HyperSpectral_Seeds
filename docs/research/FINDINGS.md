@@ -1093,3 +1093,10 @@ Same recipe and seed as S32, with a 4-block readout plus 8 metric morphometrics:
 [−.0053, .0108], cross −.0059 [−.0227, .0121], system +.0010. H57 fails. The frozen-probe
 findings F115/F117 describe what a frozen readout misses; fine-tuning recovers it. The simplest
 trained branch is kept. [S37](studies/S37_rgb_multilayer/README.md)
+
+### F129 · The trained RGB branch's gain over frozen DINOv2 is seed-robust (S39 M3)
+Over seeds 0/1/2 × both folds, trained ViT-B RGB averages **.6587** F1 (seed SD .0050), against
+.4950 for the frozen ViT-L probe: **+.1637 [.1466, .1804]**, cross **+.0940 [.0505, .1357]**.
+G3 passes by a factor > 15. Seed-mean away-from-session-8 recall is .214 vs .104. Seed 0 (S32) was
+the best seed, so S32's single-seed numbers were mildly optimistic.
+[S39](studies/S39_final_confirmation/README.md)

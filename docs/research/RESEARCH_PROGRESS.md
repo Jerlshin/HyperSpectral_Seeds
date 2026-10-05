@@ -21,9 +21,9 @@ Before this phase:
 | S37 multi-layer + morphometric trained readout | `96f31458…` | 2 | H57 | **fail**: +.0029 n.s. |
 | S38 HSI role specialization | `e5ea3571…` | 0 | H59 | **fail**: cross −.037 |
 | S36 architecture design | — | — | — | SeedNet-MX; kernel/scan error decomposition |
-| S39 final confirmation | `d1db0694…` (+ HSI amendment06 `ce3ded4b…`) | 4 RGB running, 4 HSI pending | M1–M4 + G3 | frozen |
+| S39 final confirmation | `d1db0694…` (+ HSI amendment06 `ce3ded4b…`) | 4 RGB done, 4 HSI pending | M1–M4 + G3 | **M3 pass** (RGB .6587 ± .005); M1/M2/M4 await the GPU seeds |
 
-The phase used 8 RGB network fits plus one 57-min frozen-feature extraction. No GPU quota was spent.
+The phase used 12 RGB network fits (including 4 S39 seed cells) plus one 57-min frozen-feature extraction. No GPU quota was spent.
 
 ## Current numbers (S21 corrected folds, seed 0, held-out, mean of both folds)
 
@@ -38,10 +38,8 @@ The phase used 8 RGB network fits plus one 57-min frozen-feature extraction. No 
 
 ## Next exact actions
 
-1. **Let the queued S39 RGB cells finish** (log `outputs/s39_train.log`; ≈ 3 h from 20:05).
-   The queue then runs `run_final_confirmation.py run --partial`, which scores M3 (trained vs frozen
-   RGB) over seeds 0/1/2. A cell folder without `COMPLETED.json` must be deleted and rerun with
-   `PYTHONPATH=src:scripts python scripts/run_final_confirmation.py train-rgb --seed <s> --fold <f>`.
+1. **Done (21:42):** the S39 RGB seed cells and M3. Trained RGB averages .6587 over 3 seeds
+   (SD .005), +.1637 [.1466, .1804] over frozen, cross +.094; G3 passes (F129). No job is running.
 2. **S39 HSI seeds: owner authorization required.** `kaggle kernels push -p outputs/s39_kaggle_push`
    runs 4 v5 fits (≈ 95 min on 2×T4). Download `s39_cuda_outputs.tar.gz` and place the cells at
    `outputs/s22_complementary_v5/f{0,1}_s{1,2}/`. Then run
@@ -58,7 +56,7 @@ The phase used 8 RGB network fits plus one 57-min frozen-feature extraction. No 
 | `outputs/s31_rgb_readouts/` | frozen ViT-L 4-view, last-4-block readouts + 4.5 GB identity-view token cache |
 | `outputs/s32_rgb_finetune/<arm>_f<fold>/`, `outputs/s33_rgb_acquisition/`, `outputs/s37_rgb_multilayer/` | checkpoints, traces, 4-view logits + embeddings for all 8,624 rows; S33 rendered logits |
 | `outputs/s3{1,2,4,5,7,8}_*/` and `outputs/s3{2,3,7}_*/screen/` | sealed screens (COMPLETED.json hash manifests) |
-| `outputs/s39_final_confirmation/` | S39 RGB seed cells (in progress) |
+| `outputs/s39_final_confirmation/` | S39 RGB seed cells + `partial_rgb/` (M3) |
 | `outputs/s39_kaggle_push/` | built, **unpushed** S39 HSI Kaggle bundle |
 | `docs/research/evidence/S31…S39*/` | archived evidence with replayed metric arithmetic; S36 search log, error decomposition, validation receipt |
 

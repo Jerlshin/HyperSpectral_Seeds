@@ -27,6 +27,12 @@ which candidate mechanisms did they falsify, and what must the next experiment e
 | 7 | Measured RGB optics do not explain cross-session failure (F124, F125) | No optics augmentation or rendering |
 | 8 | Same-session errors are kernel-random (scan accuracy → 1.00); cross-session errors are scan-systematic (≈ .41 / .59) (F122) | Report a **kernel/scan error decomposition**; offer **lot-level pooling** as an explicit, separately reported inference mode |
 
+![Mechanism ledger](../../figures/S36_next_generation_architecture/mechanism_ledger.png)
+
+Every intervention tested in S31–S38, from archived per-class evidence
+([`mechanism_ledger.csv`](../../evidence/S36_next_generation_architecture/mechanism_ledger.csv)).
+Only training the encoder moved the away-from-session-8 direction.
+
 ## 3 · Proposed system: SeedNet-MX (multimodal, evidence-level)
 
 ```text

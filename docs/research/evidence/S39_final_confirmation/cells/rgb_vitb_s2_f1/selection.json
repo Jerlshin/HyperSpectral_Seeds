@@ -1,0 +1,8 @@
+{
+  "best": {
+    "epoch": 11,
+    "calib_f1": 0.7825785579707147
+  },
+  "temperature": 0.5,
+  "total_seconds": 1450.8524582079845
+}

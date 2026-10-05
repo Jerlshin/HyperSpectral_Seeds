@@ -1,0 +1,34 @@
+{
+  "rgb_arm": "vitb",
+  "partial": true,
+  "contrasts": {
+    "M3": {
+      "delta_f1": 0.16366267580486954,
+      "f1_ci": [
+        0.14659887504298066,
+        0.18043651773044442
+      ],
+      "fold_f1_deltas": [
+        0.16781984589531065,
+        0.15950550571442848
+      ],
+      "delta_cross": 0.09397916376952674,
+      "cross_ci": [
+        0.05049610624391602,
+        0.1356774889329254
+      ],
+      "fold_cross_deltas": [
+        0.09528403560005563,
+        0.09267429193899782
+      ],
+      "seed_deltas": [
+        0.1691571146698946,
+        0.16240118493401776,
+        0.15942972781069625
+      ],
+      "seed_sd": 0.004984880458953655,
+      "pass": true
+    }
+  },
+  "scope": "Matched confirmation on reused acquisitions (S21 corrected folds); seeds 0/1/2 for both trained encoders."
+}
