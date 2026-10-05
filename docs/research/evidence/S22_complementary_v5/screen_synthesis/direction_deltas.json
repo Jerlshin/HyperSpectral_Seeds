@@ -1,0 +1,24 @@
+[
+  {
+    "direction": "to_session8",
+    "fusion_minus_hsi_recall": 0.0017973856209150378,
+    "ci": [
+      -0.06127450980392156,
+      0.06488562091503258
+    ],
+    "improved_classes": 7,
+    "harmed_classes": 6,
+    "unchanged_classes": 4
+  },
+  {
+    "direction": "from_session8",
+    "fusion_minus_hsi_recall": 2.607425949103335e-05,
+    "ci": [
+      -0.05141909157279933,
+      0.05024509803921568
+    ],
+    "improved_classes": 7,
+    "harmed_classes": 7,
+    "unchanged_classes": 3
+  }
+]

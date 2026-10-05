@@ -1,0 +1,14 @@
+[
+  {
+    "fold": 0,
+    "seed": 0,
+    "temperature": 1.0,
+    "float16_argmax_changes": 1
+  },
+  {
+    "fold": 1,
+    "seed": 0,
+    "temperature": 1.0,
+    "float16_argmax_changes": 3
+  }
+]

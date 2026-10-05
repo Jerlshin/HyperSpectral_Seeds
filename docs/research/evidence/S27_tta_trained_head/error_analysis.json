@@ -1,0 +1,22 @@
+[
+ {
+  "fold": 0,
+  "rescued": 139,
+  "harmed": 68,
+  "changed": 447,
+  "equal_tta_cross_errors": 666,
+  "equal_tta_cross_attraction": 0.5645645645645646,
+  "tta_trained_residual_cross_errors": 659,
+  "tta_trained_residual_cross_attraction": 0.5872534142640364
+ },
+ {
+  "fold": 1,
+  "rescued": 202,
+  "harmed": 125,
+  "changed": 630,
+  "equal_tta_cross_errors": 622,
+  "equal_tta_cross_attraction": 0.5964630225080386,
+  "tta_trained_residual_cross_errors": 584,
+  "tta_trained_residual_cross_attraction": 0.5616438356164384
+ }
+]

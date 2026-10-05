@@ -1,0 +1,38 @@
+[
+  {
+    "fold": 0,
+    "head_seed": 1,
+    "selected_epoch": 3,
+    "epochs_completed": 18,
+    "calib_f1": 0.7857959581411595,
+    "anchor_calib_f1": 0.7536016481320919,
+    "parameters": 23514
+  },
+  {
+    "fold": 0,
+    "head_seed": 2,
+    "selected_epoch": 7,
+    "epochs_completed": 22,
+    "calib_f1": 0.7918962267904476,
+    "anchor_calib_f1": 0.7536016481320919,
+    "parameters": 23514
+  },
+  {
+    "fold": 1,
+    "head_seed": 1,
+    "selected_epoch": 5,
+    "epochs_completed": 20,
+    "calib_f1": 0.7860297509317117,
+    "anchor_calib_f1": 0.7685403454856499,
+    "parameters": 23514
+  },
+  {
+    "fold": 1,
+    "head_seed": 2,
+    "selected_epoch": 7,
+    "epochs_completed": 22,
+    "calib_f1": 0.789678507766743,
+    "anchor_calib_f1": 0.7685403454856499,
+    "parameters": 23514
+  }
+]

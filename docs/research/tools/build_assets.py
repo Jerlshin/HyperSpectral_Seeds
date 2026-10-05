@@ -1272,7 +1272,7 @@ def main() -> None:
     if not a.figures:
         snapshot_evidence()
     print("figures:")
-    for f in (fig_s01, fig_s04, fig_s05, fig_s06, fig_s07, fig_s09, fig_s10, fig_s12, fig_s14, fig_s16, fig_s19, fig_s20, fig_s21):
+    for f in (fig_s01, fig_s04, fig_s05, fig_s06, fig_s07, fig_s09, fig_s10, fig_s12, fig_s14, fig_s16, fig_s19, fig_s20, fig_s21, fig_s22, fig_s23, fig_s24):
         f()
 
 
@@ -1281,6 +1281,39 @@ def fig_s21() -> None:
     import runpy
     with plt.rc_context(matplotlib.rcParamsDefault):
         runpy.run_path(str(EVIDENCE / "S21_complementary_rgb" / "code" / "draw_figures.py"),
+                      run_name="__main__")
+
+
+def fig_s22() -> None:
+    """Regenerate S22 only after its compact corrected-fold evidence is archived."""
+    import runpy
+    if not (EVIDENCE / "S22_complementary_v5" / "screen_results" / "ARCHIVED.json").exists():
+        print("  S22 pending: no scientific figure generated")
+        return
+    with plt.rc_context(matplotlib.rcParamsDefault):
+        runpy.run_path(str(EVIDENCE / "S22_complementary_v5" / "code" / "draw_figures.py"),
+                      run_name="__main__")
+
+
+def fig_s23() -> None:
+    """Regenerate S23 only after its guarded head screen is archived."""
+    import runpy
+    if not (EVIDENCE / "S23_frozen_multimodal" / "screen_results" / "ARCHIVED.json").exists():
+        print("  S23 pending: no scientific figure generated")
+        return
+    with plt.rc_context(matplotlib.rcParamsDefault):
+        runpy.run_path(str(EVIDENCE / "S23_frozen_multimodal" / "code" / "draw_figures.py"),
+                      run_name="__main__")
+
+
+def fig_s24() -> None:
+    """Regenerate S24 only after its branch-removal predictions are archived."""
+    import runpy
+    if not (EVIDENCE / "S24_branch_multimodal" / "screen_results" / "ARCHIVED.json").exists():
+        print("  S24 pending: no scientific figure generated")
+        return
+    with plt.rc_context(matplotlib.rcParamsDefault):
+        runpy.run_path(str(EVIDENCE / "S24_branch_multimodal" / "code" / "draw_figures.py"),
                       run_name="__main__")
 
 

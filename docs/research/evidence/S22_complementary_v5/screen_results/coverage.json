@@ -1,0 +1,27 @@
+[
+  {
+    "arm": "dino_rgb",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "fusion32_equal",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "hsi_q32",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "v5_rgb_equal",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "v5_tta",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  }
+]

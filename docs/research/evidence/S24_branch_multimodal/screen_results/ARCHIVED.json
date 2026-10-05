@@ -1,0 +1,22 @@
+{
+  "plan_sha256": "48c8b74076a18fcd76eda245be85f5dfcb5c739b700f7381bc409fcc6c298b1d",
+  "metadata_sha256": "b5d556fc1afb81100ad66d86d44f80a17d82e1b0b2f9c3ac06ee7ad2db45350a",
+  "source_sha256": "aef4f69e22fefdd88c3a25cce59a6cbd9dca5ff3a5ab9be555b87a5fb1ab1395",
+  "files": {
+    "summary.json": "583473cc4ac1ceecb5138b1be810ad5bee4e4021e7024d9ec3e6700adcb4ab01",
+    "selection_f0.json": "a406033f41efdf855b5b1aaac017725a7f1c243f1328fef111a5464ed9574c17",
+    "predictions.csv.gz": "3ba7578cbf6cd68570a59877359bb44c97bca423b92554e1d413fd3afb630efb",
+    "metrics.csv": "1b421ec4c8e6983eba4afc0701b4d259a9f952b0b435d073e1da0096af311f5a",
+    "selection_f1.json": "9b4cf08d1dce6599e729327ac6cdd862661b6856db0e107f4306d84140fd5506",
+    "hypothesis.json": "76767be75497ea264d5427f6085ad155f81c8545aad45c66e47af14376cf4614",
+    "COMPLETED.json": "4fd787bb0da5ab3ac3f90e6d05f265489fc6b9085de8cc2afd6e9bd0cf1e77dc",
+    "paired_deltas.json": "fdafa38c1eb43bbc0baf8139b5a0bff0c4f5f1b8d1177fc206e026629cdf32f2",
+    "selection.json": "1b9ce127b4601f705e828a570e831acbe4e7be70585e9174d611d005d0285075",
+    "coverage.json": "f7f55d4563d48d37fcbfc1e38ca383ae51f040c99b1e119325fce1fd389c7b27",
+    "per_class.csv": "a4f067d287a3bc5bf15ec7641fb848e30c98ad66952ec335f5d6e66a72cb780f",
+    "learning_curves.csv": "4fca694824786b5b983fcf85cbf04de628ad5bf18149e8da2f1f6b33e1566db7",
+    "execution.json": "ab5b29018ab27b276dab797617f55588e82a00509a8dfaf028124aab21a65638",
+    "all_per_class.csv": "2c1c0957ac108a6b5bb2ace5906fb2dc7d22cc24d821081f48ad6cb1a51e1cac",
+    "acquisition_directions.csv": "4144792d81145044d0d62233b2e836e3de705acb83523158bac4724750e6d169"
+  }
+}

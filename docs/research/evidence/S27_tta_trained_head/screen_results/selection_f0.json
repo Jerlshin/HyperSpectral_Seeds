@@ -1,0 +1,10 @@
+{
+  "fold": 0,
+  "head_seed": 0,
+  "selected_epoch": 4,
+  "epochs_completed": 19,
+  "calib_f1": 0.7952708133513088,
+  "anchor_calib_f1": 0.7536016481320919,
+  "s23_single_anchor_head_calib_f1": 0.7894178246551827,
+  "s23_single_anchor_calib_f1": 0.7621542530778856
+}

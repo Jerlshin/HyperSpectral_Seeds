@@ -1,0 +1,149 @@
+[DATA] ✓ Page cache warmed: 2.33 GB in 0.8 s (2853 MB/s)
+[DATA] ✓ Dataset (mmap): 2.3 GB on disk  | num_workers=0 (eval 0) | pin_memory=False | persistent=False
+Spectral: 32 of 215 bands — REDUCED arm via a pre-sliced cube (band_axis.json) of 32. This is the retained band-selection ablation pathway, not the primary protocol.
+Split: frozen_complementary (fold 0)  train: 3,681 (43%)  calib: 630 (7%)  val: 2,156 (25%)  test: 2,157 (25%)
+  180 scans, 2–2 per class  |  train↔val∪test group-disjoint: True  val↔test: False  calib↔train: False
+  90 classes have one eval scan, so their val/test boundary is patch-level (val and test are both held out from train, so the headline contract still holds).
+Samples/class (train): ~40
+Model  : spectral_seed_net  (2,725,700 params)
+Params : 2.73M
+Device : mps
+[GPU] Apple Silicon (Metal / MPS)  |  12.7 GB recommended working set
+Kernels: MPS watermark=unbounded/0.8
+Graph  : torch.compile=off (inductor/default)  |  fused AdamW=False  |  channels_last=False  |  TF32=False
+Precis : AMP=off (fp32)
+[RUN] Single stage
+
+════════════════════════════════════════════════════════════════════════════════════════════════
+ Single stage — 200 epochs max  (CHANGES §17)
+────────────────────────────────────────────────────────────────────────────────────────────────
+ Mixup α=0.35 for epochs 1–30, off after
+ Margin 0 → 0.0 over epochs 31–31  (s=32.0)
+ Label smooth 0.1 → 0.04  |  focal γ=0.0
+ Aux: aux w = 0.648 → 0.250 (legacy: max(0.25, 0.65·(1−0.7·t/T)); model.aux_head_weight=0.2 is NOT applied)
+ AdamW 0.0005 → 5e-06, 5-epoch warm-up, cosine  |  per-group clip 50.0 (legacy groups)
+ Clean fit: 1000 fixed training kernels (seed 0), eval mode, live + EMA
+ Selected on: calib (630 patches)  |  Early stop patience 40
+ Phase B: off (A6 has not earned it)
+ Precision: AMP=off (fp32)  |  head always fp32
+════════════════════════════════════════════════════════════════════════════════════════════════
+[INFO] [ep 1/200] Single class difficulty — macro F1=0.013  hard classes (<0.50 F1): 90/90
+[INFO] [ep 1/200] Single branch influence % (leave-one-out KL) — SPATIAL:   0.0  SPECTRAL: 100.0
+hardest_classes/Single  (ep 1)
+  rank  class   f1
+  ────  ─────  ───
+     1      1  0.0
+     2      2  0.0
+     3      3  0.0
+     4      4  0.0
+     5      5  0.0
+     6      6  0.0
+     7      7  0.0
+     8      8  0.0
+     9      9  0.0
+    10     10  0.0
+[INFO] [ep 2/200] Single class difficulty — macro F1=0.033  hard classes (<0.50 F1): 89/90
+[INFO] [ep 2/200] Single branch influence % (leave-one-out KL) — SPATIAL:   0.2  SPECTRAL:  99.8
+hardest_classes/Single  (ep 2)
+  rank  class   f1
+  ────  ─────  ───
+     1      0  0.0
+     2      1  0.0
+     3      2  0.0
+     4      3  0.0
+     5      4  0.0
+     6      6  0.0
+     7      8  0.0
+     8      9  0.0
+     9     10  0.0
+    10     12  0.0
+[INFO] [ep 3/200] Single class difficulty — macro F1=0.070  hard classes (<0.50 F1): 88/90
+[INFO] [ep 3/200] Single branch influence % (leave-one-out KL) — SPATIAL:   3.3  SPECTRAL:  96.7
+hardest_classes/Single  (ep 3)
+  rank  class   f1
+  ────  ─────  ───
+     1      0  0.0
+     2      1  0.0
+     3      4  0.0
+     4      6  0.0
+     5      8  0.0
+     6      9  0.0
+     7     10  0.0
+     8     12  0.0
+     9     15  0.0
+    10     17  0.0
+[INFO] [ep 4/200] Single class difficulty — macro F1=0.101  hard classes (<0.50 F1): 88/90
+[INFO] [ep 4/200] Single branch influence % (leave-one-out KL) — SPATIAL:   7.0  SPECTRAL:  93.0
+hardest_classes/Single  (ep 4)
+  rank  class   f1
+  ────  ─────  ───
+     1      0  0.0
+     2      6  0.0
+     3      9  0.0
+     4     10  0.0
+     5     11  0.0
+     6     13  0.0
+     7     14  0.0
+     8     17  0.0
+     9     18  0.0
+    10     19  0.0
+[INFO] [ep 5/200] Single class difficulty — macro F1=0.128  hard classes (<0.50 F1): 86/90
+[INFO] [ep 5/200] Single branch influence % (leave-one-out KL) — SPATIAL:  11.2  SPECTRAL:  88.8
+hardest_classes/Single  (ep 5)
+  rank  class   f1
+  ────  ─────  ───
+     1      0  0.0
+     2      1  0.0
+     3      6  0.0
+     4      8  0.0
+     5     10  0.0
+     6     11  0.0
+     7     13  0.0
+     8     17  0.0
+     9     18  0.0
+    10     20  0.0
+[INFO] [ep 6/200] Single class difficulty — macro F1=0.190  hard classes (<0.50 F1): 84/90
+[INFO] [ep 6/200] Single branch influence % (leave-one-out KL) — SPATIAL:  15.5  SPECTRAL:  84.5
+hardest_classes/Single  (ep 6)
+  rank  class   f1
+  ────  ─────  ───
+     1      0  0.0
+     2      6  0.0
+     3     10  0.0
+     4     12  0.0
+     5     13  0.0
+     6     17  0.0
+     7     18  0.0
+     8     20  0.0
+     9     27  0.0
+    10     31  0.0
+Traceback (most recent call last):
+  File "/Users/jerlshin/FieldOfInterest/ResearchWork/HSI_RGB_seeds/Code/scripts/run_complementary_v5.py", line 127, in <module>
+    main()
+    ~~~~^^
+  File "/Users/jerlshin/FieldOfInterest/ResearchWork/HSI_RGB_seeds/Code/scripts/run_complementary_v5.py", line 98, in main
+    resolve_pipeline(str(cfg.pipeline))(ctx)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "/Users/jerlshin/FieldOfInterest/ResearchWork/HSI_RGB_seeds/Code/src/spectralquadnet/engine/pipelines/single.py", line 54, in run
+    best_select_f1 = run_single_stage(
+        cfg,
+    ...<17 lines>...
+        clean_fit=_clean_fit_probe(ctx),
+    )
+  File "/Users/jerlshin/FieldOfInterest/ResearchWork/HSI_RGB_seeds/Code/src/spectralquadnet/engine/stages/single_stage.py", line 322, in run_single_stage
+    tl, ta = train_one_epoch(
+             ~~~~~~~~~~~~~~~^
+        cfg,
+        ^^^^
+    ...<30 lines>...
+        aux_weight=single_stage_aux_weight(cfg, ep, ep_total),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/jerlshin/FieldOfInterest/ResearchWork/HSI_RGB_seeds/Code/src/spectralquadnet/engine/train_epoch.py", line 432, in train_one_epoch
+    loss_value, acc_value = _resolve_step_scalars(loss, _batch_accuracy(logits, ya))
+                            ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jerlshin/FieldOfInterest/ResearchWork/HSI_RGB_seeds/Code/src/spectralquadnet/engine/train_epoch.py", line 208, in _resolve_step_scalars
+    values = torch.stack([loss.detach().float(), accuracy.detach().float()]).cpu().tolist()
+             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+KeyboardInterrupt

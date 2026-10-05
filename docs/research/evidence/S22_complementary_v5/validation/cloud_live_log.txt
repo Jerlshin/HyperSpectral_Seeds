@@ -1,0 +1,9 @@
+     âââââââââââââââââââââââââââââââââââââââ 215.2/215.2 kB 4.8 MB/s eta 0:00:00
+   ââââââââââââââââââââââââââââââââââââââââ 168.8/168.8 kB 6.6 MB/s eta 0:00:00
+S22 launching fixed cell 0 0
+S22 completed fixed cell 0 0
+S22 launching fixed cell 1 0
+Log stream connection lost, reconnecting...
+Log stream connection lost, reconnecting...
+Log stream connection lost, reconnecting...
+Log stream connection failed 5 times with no new data; giving up.

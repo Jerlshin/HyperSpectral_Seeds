@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Once-only S22 v5/RGB fusion analysis after all six frozen GPU cells finish."""
+"""Once-only S22 v5/RGB fusion analysis after the amended two-cell screen finishes."""
 from __future__ import annotations
 
 import argparse
@@ -22,7 +22,7 @@ from spectralquadnet.experiments.rgb_probe import (
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--plan", type=Path, default=Path("configs/research/s22_complementary_v5.json"))
+    p.add_argument("--plan", type=Path, default=Path("configs/research/s22_screening_amendment02.json"))
     p.add_argument("--runs", type=Path, default=Path("outputs/s22_complementary_v5"))
     p.add_argument("--output", type=Path, default=Path("outputs/s22_fusion_analysis"))
     args = p.parse_args()
@@ -47,7 +47,7 @@ def main() -> None:
     y = np.load("dataset_u430k32/labels.npy")
     scans = pd.read_csv("dataset_u430k32/scan_table.csv")
     cross = scans.groupby("label").session_id.nunique().to_numpy() > 1
-    records, selections = [], []
+    records, selections, per_class = [], [], []
     predictions: list[dict[str, int | str]] = []
     deltas, cross_deltas = [], []
     for cell in plan["cells"]:
@@ -73,8 +73,15 @@ def main() -> None:
             pair[arm] = stats
             records.append({"fold": fold, "seed": seed, "arm": arm,
                             "f1": float(stats["f1"].mean()),
+                            "accuracy": float(np.mean(pred == y[te])),
+                            "f1_ci": cluster_interval(stats["f1"]),
+                            "same_ci": cluster_interval(stats["recall"][~cross]),
+                            "cross_ci": cluster_interval(stats["recall"][cross]),
                             "same_recall": float(stats["recall"][~cross].mean()),
                             "cross_recall": float(stats["recall"][cross].mean())})
+            per_class.extend({"fold": fold, "seed": seed, "arm": arm, "label": c,
+                              "f1": float(stats["f1"][c]), "recall": float(stats["recall"][c]),
+                              "cross": bool(cross[c])} for c in range(90))
             predictions.extend({"fold": fold, "seed": seed, "arm": arm,
                                 "index": int(i), "target": int(t), "prediction": int(v)}
                                for i, t, v in zip(te, y[te], pred, strict=True))
@@ -84,13 +91,22 @@ def main() -> None:
                            "float16_argmax_changes": int(np.count_nonzero(logits.argmax(1) != baseline))})
     df, dr = np.mean(deltas, axis=0), np.mean(cross_deltas, axis=0)
     ci, cr = cluster_interval(df), cluster_interval(dr)
+    pd.DataFrame(per_class).to_csv(args.output / "per_class.csv", index=False)
     pd.DataFrame(records).to_csv(args.output / "metrics.csv", index=False)
     pd.DataFrame(predictions).to_csv(args.output / "predictions.csv.gz", index=False)
     write_json(args.output / "calibration.json", selections)
-    write_json(args.output / "hypothesis.json", {"H40": bool(df.mean() >= .02 and ci[0] > 0 and dr.mean() >= 0),
+    fold_gains = [float(v.mean()) for v in deltas]
+    fold_cross = [float(v.mean()) for v in cross_deltas]
+    passes = bool(df.mean() >= .02 and ci[0] > 0 and dr.mean() >= 0 and min(fold_gains) > 0)
+    write_json(args.output / "hypothesis.json", {"H40_screen": passes,
+        "H40_original_confirmatory": "not evaluated: original three-seed design amended before training",
+        "fold_f1_deltas": fold_gains, "fold_cross_deltas": fold_cross,
+        "development_gate": passes,
+        "seed_replication": "defer to final learned candidate and matched controls" if passes else "no automatic replication; diagnose direction disagreement or small gain",
+        "confirmation_required_before_paper_claim": True,
         "delta_f1": float(df.mean()), "ci": ci, "delta_cross": float(dr.mean()), "cross_ci": cr,
         "transfer_gain_supported": bool(cr[0] > 0),
-        "scope": "Three retrained HSI seeds, shared deterministic RGB per fold; existing acquisitions."})
+        "scope": "One retrained HSI seed on both corrected folds; shared frozen RGB probes; existing acquisitions. Class intervals exclude seed uncertainty."})
     write_json(args.output / "COMPLETED.json", {"plan_sha256": sha256(args.plan),
         "files": {f.name: sha256(f) for f in args.output.iterdir() if f.is_file()}})
 

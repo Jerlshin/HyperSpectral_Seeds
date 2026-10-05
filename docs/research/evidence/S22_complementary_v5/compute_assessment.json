@@ -1,0 +1,51 @@
+{
+  "date": "2026-10-05",
+  "stage": "architecture development, reused acquisitions",
+  "historical_s20_seed_deltas": [
+    {
+      "seed": 0,
+      "two_fold_mean_delta_f1": 0.046403510505517664,
+      "fold_f1_deltas": [
+        0.0503371809947355,
+        0.04246984001629983
+      ],
+      "two_fold_mean_delta_cross": 0.015413363927131149
+    },
+    {
+      "seed": 1,
+      "two_fold_mean_delta_f1": 0.03962346625876595,
+      "fold_f1_deltas": [
+        0.04092094673589908,
+        0.03832598578163282
+      ],
+      "two_fold_mean_delta_cross": 0.011205847587261841
+    },
+    {
+      "seed": 2,
+      "two_fold_mean_delta_f1": 0.03666000726708163,
+      "fold_f1_deltas": [
+        0.034633149942767116,
+        0.03868686459139614
+      ],
+      "two_fold_mean_delta_cross": 0.00185127242386314
+    }
+  ],
+  "historical_paired_fusion_delta_seed_sd": 0.004994779683841907,
+  "s21_corrected_fold_linear_fusion_f1_deltas": [
+    0.06266289783508305,
+    0.0512776841425463
+  ],
+  "s21_corrected_fold_linear_fusion_cross_deltas": [
+    0.0564507717980809,
+    0.04338235294117648
+  ],
+  "initial_neural_fits": 2,
+  "parent_neural_fits": 6,
+  "fit_count_reduction_fraction": 0.6666666666666666,
+  "inference_limit": "Historical effect consistency motivates screening allocation; it does not estimate corrected-fold seed variance or runtime-equivalent speedup.",
+  "allocation": "One seed, both acquisition directions. Advance clear consistent improvements; confirm final architecture and matched controls at three seeds per fold. No automatic rejected/intermediate-candidate replication.",
+  "source_hashes": {
+    "outputs/s20_rgb_study/metrics.csv": "dd7c5bf6989b89ad58249215ae5f29b108ba80136649b6b9aa3b85636832e4b4",
+    "outputs/s21_rgb_study/metrics.csv": "b13c1308fad56fa762d981f0035eaadb80d62bad7b92a335b58a1d3f659593a8"
+  }
+}

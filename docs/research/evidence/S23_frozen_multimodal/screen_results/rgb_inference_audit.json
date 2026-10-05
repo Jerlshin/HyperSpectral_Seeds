@@ -1,0 +1,18 @@
+{
+  "prediction_disagreements_vs_s21": 0,
+  "scope": "Post-run arithmetic audit; no fitting or checkpoint selection",
+  "folds": [
+    {
+      "fold": 0,
+      "rows": 8624,
+      "finite_logits": true,
+      "max_abs_logit": 146.73297955461828
+    },
+    {
+      "fold": 1,
+      "rows": 8624,
+      "finite_logits": true,
+      "max_abs_logit": 142.09210745488144
+    }
+  ]
+}

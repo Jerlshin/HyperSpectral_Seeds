@@ -1,0 +1,21 @@
+{
+  "H41_screen": true,
+  "delta_f1": 0.010780103019843577,
+  "ci": [
+    0.0023082925541831533,
+    0.01932911903539838
+  ],
+  "fold_f1_deltas": [
+    0.010284670529367412,
+    0.011275535510319741
+  ],
+  "delta_cross": 0.029276178556528996,
+  "cross_ci": [
+    -0.002957603254067588,
+    0.06557291666666662
+  ],
+  "delta_vs_s22_tta": 0.002716993236294818,
+  "delta_cross_vs_s22_tta": 0.023761472674176054,
+  "adoption_gate": true,
+  "scope": "One learned head seed, fixed seed0 HSI encoders, both corrected folds; same acquisitions."
+}

@@ -1,0 +1,97 @@
+{
+  "candidate": "dino_l",
+  "calib": [
+    {
+      "fold": 0,
+      "arm": "dino_s",
+      "dimensions": 384,
+      "rgb_temperature": 2.0,
+      "rgb_calib_f1": 0.5731216513105057,
+      "anchor_calib_f1": 0.7536016481320919,
+      "head": {
+        "head_seed": 0,
+        "reused": "S27 head_f0.pth",
+        "calib_f1": 0.7952708133513088
+      }
+    },
+    {
+      "fold": 0,
+      "arm": "dino_b",
+      "dimensions": 768,
+      "rgb_temperature": 4.0,
+      "rgb_calib_f1": 0.5767059459861318,
+      "anchor_calib_f1": 0.769207743676268,
+      "head": {
+        "head_seed": 0,
+        "selected_epoch": 8,
+        "epochs_completed": 23,
+        "calib_f1": 0.7887378664984446,
+        "anchor_calib_f1": 0.769207743676268,
+        "parameters": 35802
+      }
+    },
+    {
+      "fold": 0,
+      "arm": "dino_l",
+      "dimensions": 1024,
+      "rgb_temperature": 4.0,
+      "rgb_calib_f1": 0.5806122252742479,
+      "anchor_calib_f1": 0.7890387338839353,
+      "head": {
+        "head_seed": 0,
+        "selected_epoch": 3,
+        "epochs_completed": 18,
+        "calib_f1": 0.8008191865467407,
+        "anchor_calib_f1": 0.7890387338839353,
+        "parameters": 43994
+      }
+    },
+    {
+      "fold": 1,
+      "arm": "dino_s",
+      "dimensions": 384,
+      "rgb_temperature": 2.0,
+      "rgb_calib_f1": 0.5760557702817765,
+      "anchor_calib_f1": 0.7685403454856499,
+      "head": {
+        "head_seed": 0,
+        "reused": "S27 head_f1.pth",
+        "calib_f1": 0.7921093335438021
+      }
+    },
+    {
+      "fold": 1,
+      "arm": "dino_b",
+      "dimensions": 768,
+      "rgb_temperature": 4.0,
+      "rgb_calib_f1": 0.6255384705307306,
+      "anchor_calib_f1": 0.7711488921009045,
+      "head": {
+        "head_seed": 0,
+        "selected_epoch": 19,
+        "epochs_completed": 34,
+        "calib_f1": 0.7807917797907477,
+        "anchor_calib_f1": 0.7711488921009045,
+        "parameters": 35802
+      }
+    },
+    {
+      "fold": 1,
+      "arm": "dino_l",
+      "dimensions": 1024,
+      "rgb_temperature": 4.0,
+      "rgb_calib_f1": 0.6290135409253056,
+      "anchor_calib_f1": 0.7726337144680796,
+      "head": {
+        "head_seed": 0,
+        "selected_epoch": 8,
+        "epochs_completed": 23,
+        "calib_f1": 0.7909419755988383,
+        "anchor_calib_f1": 0.7726337144680796,
+        "parameters": 43994
+      }
+    }
+  ],
+  "rule": "Before held-out scoring: candidate = argmax over {dino_b, dino_l} of the two-fold mean calib macro-F1 of its selected head; tie -> smaller. Written to selection.json first.",
+  "selected_before_held_out_scoring": true
+}

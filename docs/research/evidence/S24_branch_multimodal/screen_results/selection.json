@@ -1,0 +1,38 @@
+[
+  {
+    "fold": 0,
+    "arm": "hsi_correction",
+    "selected_epoch": 10,
+    "epochs_completed": 25,
+    "calib_f1": 0.7831126045341732,
+    "anchor_calib_f1": 0.7621542530778856,
+    "active_trainable_parameters": 11194
+  },
+  {
+    "fold": 0,
+    "arm": "rgb_correction",
+    "selected_epoch": 9,
+    "epochs_completed": 24,
+    "calib_f1": 0.7736778943641689,
+    "anchor_calib_f1": 0.7621542530778856,
+    "active_trainable_parameters": 15290
+  },
+  {
+    "fold": 1,
+    "arm": "hsi_correction",
+    "selected_epoch": 7,
+    "epochs_completed": 22,
+    "calib_f1": 0.7839330298566624,
+    "anchor_calib_f1": 0.7599597502077646,
+    "active_trainable_parameters": 11194
+  },
+  {
+    "fold": 1,
+    "arm": "rgb_correction",
+    "selected_epoch": 0,
+    "epochs_completed": 15,
+    "calib_f1": 0.7599597502077646,
+    "anchor_calib_f1": 0.7599597502077646,
+    "active_trainable_parameters": 15290
+  }
+]

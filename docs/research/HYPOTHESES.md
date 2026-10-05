@@ -257,3 +257,85 @@ reuse historical acquisitions and do not establish independent replication.
 [S20 results](studies/S20_rgb_pathway/results.md) ·
 [S21 results](studies/S21_complementary_rgb/results.md) ·
 [S22 preregistration/runbook](studies/S22_complementary_v5/README.md).
+
+## S22 amendment02 (2026-10-05, before training)
+
+Original H40 three-seed confirmation is superseded for initial development, not
+reported as evaluated. **H40-screen:** at seed0 on both corrected acquisition
+folds, equal v5/RGB gains mean F1 ≥.02, paired variety interval >0, each fold F1
+positive, and mean cross-recall delta ≥0. Positive cross interval is required for
+transfer support. These class intervals do not include initialization uncertainty.
+A clear pass advances a minimal learned multimodal candidate; seed confirmation
+is reserved for the final frozen model and matched controls. See S22 amendment02.
+
+## S23 prospective gate (2026-10-05, before S22 result)
+
+**H41-screen:** one32-D additive residual head over frozen HSI256/RGB384 features,
+seed0 and both corrected folds. Against matched equal single-view fusion: mean
+F1 gain ≥.01, paired variety interval >0, each fold gain positive, mean cross recall
+delta ≥0. Practical adoption additionally requires mean F1 and cross recall at least S22's equal-TTA
+fusion. Epoch0 is eligible for calib checkpoint selection. No attention, encoder
+fine-tuning or hyperparameter sweep. Run only if H40-screen passes; otherwise the
+prospective code is retained unexecuted. [S23](studies/S23_frozen_multimodal/README.md).
+
+## S22 observed screen (2026-10-05)
+
+**H40-screen passes:** seed 0, both corrected folds; F1 gains .045339/.040033,
+mean +.042686 [.027554,.057266]. Cross gain +.000912 [−.047802,.049617] is not
+supported. Original confirmatory H40 is not evaluated. S23's source/input plan
+was sealed after this recorded pass and before its head fitting/evaluation;
+H41 remains subject to the prospective recipe and practical TTA comparator above.
+[S22 results](studies/S22_complementary_v5/results.md).
+
+## S23 observed screen and prospective S24 (2026-10-05)
+
+H41-screen and practical point gates pass. Matched F1 gain +.010780
+[.002308,.019329]; advantage over TTA only +.002717 [−.005946,.011384].
+Cross-recall intervals span zero against both comparators. [S23 results](studies/S23_frozen_multimodal/results.md).
+
+**H42-screen**, frozen before S24 outcomes: both learned feature branches are
+needed only if S23 beats each branch-removal control by mean F1 ≥.005, paired
+interval >0, positive F1 each fold and nonnegative cross delta. Each control retains
+both modalities in the fixed probability anchor and the same head recipe, but fewer
+active parameters. The separate provisional simplification rule requires H41/practical
+gates plus F1 within .005 and cross recall within .01 of S23. One seed, both folds,
+four cheap heads; no new encoders or automatic seed expansion. [S24](studies/S24_branch_multimodal/README.md).
+
+## S24–S26 observed outcomes and proposed S27 (2026-10-05)
+
+| Gate | Outcome | Evidence and limits |
+|---|---|---|
+| H42-screen | fail | S23 versus HSI-only correction +.004767 < .005; versus RGB-only +.008664. Positive class intervals do not meet both practical thresholds. Neither smaller candidate qualifies for simplification. |
+| H43-screen | pass | Full-head matched gain +.010522 [.001851,.018941] across head seeds0/1/2, positive both folds at every seed. Fixed encoder0 only; descriptive seed-delta SD .000279. |
+| S26 calib gate | fail both folds | Fixed TTA-anchor substitution reduces calib F1 .002395/.005613; no new test scores or fits. |
+| H44-screen | not evaluated | Calib gate never opens held-out or conditional head-seed evaluation. |
+| H45-screen | proposed, not frozen | S27 head trained against intended equal-TTA anchor; mean matched F1 gain≥.01, paired variety CI>0, positive each fold, nonnegative cross delta; positive cross CI additionally required for transfer support. |
+
+H43's exact plan was frozen before its four additional head fits; seed0 was reused,
+not retrained. S26's plan was frozen before its fixed calibration intervention.
+H45 is a design brief, not a preregistration or outcome. Freeze source/runtime,
+train-TTA cache and exact gates before S27 execution. All class intervals are
+conditional on reused acquisitions and omit encoder/new-session uncertainty.
+[S24](studies/S24_branch_multimodal/results.md),
+[S25](studies/S25_head_seed_screen/results.md),
+[S26](studies/S26_tta_anchor/results.md), [S27](studies/S27_tta_trained_head/README.md).
+
+## S27–S29 observed outcomes and proposed S30 (2026-10-05)
+
+| Gate | Frozen plan | Outcome | Evidence and limits |
+|---|---|---|---|
+| H45-screen | `s27_tta_trained_head.json` `780d564e…` | **pass** | TTA-trained head − equal TTA +.013124 [.004438, .021629], folds +.0125/+.0137, cross +.0274 [−.0028, .0629]: transfer unsupported |
+| H46-screen | `s28_tta_head_seeds.json` `b0396c94…` | **pass** | head seeds 0/1/2 +.013942 [.006019, .021463], seed SD .000871, every seed positive both folds; encoder seed fixed |
+| H47-screen | `s29_rgb_backbone_screen.json` `ee51803a…` | **pass** | calib-selected ViT-L head − S27 ViT-S head +.012431 [.005679, .019846], folds +.0132/+.0117; cross +.0111 [−.0074, .0331] |
+| H44-screen | S26 | still not evaluated | superseded as a question by H45 (train against the anchor rather than substitute it) |
+
+H45 was frozen after a train-only TTA cache and before any head fit. H46 after S27's outcome, as
+S27's pre-declared pass path. H47 after S28; its first unfrozen draft (conditional on S27
+failing) was replaced before freezing, as disclosed in S29 §2.
+
+**Proposed for S30 (not frozen):** C1 equal ViT-L − HSI TTA ≥ .02; **C2 head ViT-L − equal
+ViT-L ≥ .01** (decides whether the final system keeps a learned fusion component); C3 equal
+ViT-L − equal ViT-S ≥ .01; C4 head ViT-S − equal ViT-S ≥ .01. All are means over encoder seeds
+0/1/2 × both folds, with paired CI > 0, positive in each fold, and Δ > 2 × seed SD.
+Transfer claims additionally need a gain in the away-from-session-8 direction (F113).
+[S30 brief](studies/S30_final_confirmation/README.md).

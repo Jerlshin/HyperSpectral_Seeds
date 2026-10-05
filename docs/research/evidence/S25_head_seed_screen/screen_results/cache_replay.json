@@ -1,0 +1,22 @@
+[
+  {
+    "fold": 0,
+    "arm": "learned_residual",
+    "prediction_disagreements": 0
+  },
+  {
+    "fold": 0,
+    "arm": "equal_single",
+    "prediction_disagreements": 0
+  },
+  {
+    "fold": 1,
+    "arm": "learned_residual",
+    "prediction_disagreements": 0
+  },
+  {
+    "fold": 1,
+    "arm": "equal_single",
+    "prediction_disagreements": 0
+  }
+]

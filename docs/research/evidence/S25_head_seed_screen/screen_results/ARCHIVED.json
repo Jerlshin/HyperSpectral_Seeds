@@ -1,0 +1,23 @@
+{
+  "plan_sha256": "b45f08b1931ca41b1131974968ef8eba6c44a7bde08ce3381b40e684dc86c566",
+  "metadata_sha256": "b5d556fc1afb81100ad66d86d44f80a17d82e1b0b2f9c3ac06ee7ad2db45350a",
+  "source_sha256": "b23db18adc2816f6ed7dc6b0fc1b1708fffa50c33b9d61860b1449d01d628235",
+  "files": {
+    "summary.json": "3990374f19107eeb7de6b9cefd31de1bcf0cda54459717b66a0acdd89986f21a",
+    "selection_f0.json": "e224d024f107ae1069aad0e417dcbb1f06df25ad6c9297afeb3514e1609323cd",
+    "predictions.csv.gz": "37086c210f63b3bfb4bff45e2e52845b6fc2cb5f5c91baafbb4f04a690211127",
+    "metrics.csv": "64a39bffaee58126fe8a3f6b2d8e46348e549e6579f65510b2cdf76748c67aa0",
+    "selection_f1.json": "6fdc8c7aadd699591a8d80220fd791232dc22a740e6a1a632855a16974796d6c",
+    "hypothesis.json": "8a589ef8454b72354982243007f61612e479905df8f75ba734e57785c4149630",
+    "COMPLETED.json": "54b1dc83fc465447394043d1fece018371d0bc410545168769f41328e976f616",
+    "paired_deltas.json": "5c262fb551ad654ecfc11a51ab77c6ee9a164d2df4e1f3f03657fd15546f3875",
+    "selection.json": "05b86a53d7055accea65708bfee101d14b831769ebcc2c1399f7cfdcc85c7cd0",
+    "coverage.json": "4f68f61351609fa40d2eeeabbe89938b026bb7491cb8cccf4fbc20144cdac67a",
+    "per_class.csv": "25313f185530cd602a1acdbad22a1d58fc6d93b3945779c3a7993674435ffcd4",
+    "cache_replay.json": "1906836616271dc25cb4ab06e81046ab1d142070d8abb245f013ba45e9892e35",
+    "learning_curves.csv": "3f182ae642a806491dbd8e20a14348472486d7a41e50a5a2d10107c4906fcb90",
+    "execution.json": "c3ec441e51a6114d666f6c9033cd24852d44fa47fa12de1cefa64b7646c60dd1",
+    "all_per_class.csv": "fa99cb6ffe4d30ffaa593526cfc7d68354b49094f8307996c075481377c62a50",
+    "acquisition_directions.csv": "843064dfb04a0a643ca63ca60fa6c935b8fbde7bcae9c7d0ae19bc0cd934e987"
+  }
+}

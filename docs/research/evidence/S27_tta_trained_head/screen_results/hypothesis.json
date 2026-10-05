@@ -1,0 +1,40 @@
+{
+  "H45_screen": true,
+  "delta_f1_equal_tta": 0.013124054076063329,
+  "f1_ci": [
+    0.004437553559227182,
+    0.021628744346174896
+  ],
+  "fold_f1_deltas": [
+    0.012517618712812813,
+    0.013730489439313844
+  ],
+  "delta_cross_equal_tta": 0.027397093589208728,
+  "cross_ci": [
+    -0.0027908149075232926,
+    0.06294039424280345
+  ],
+  "fold_cross_deltas": [
+    0.008552357113057987,
+    0.046241830065359465
+  ],
+  "transfer_gain_supported": false,
+  "descriptive_delta_f1_vs_s23_head_seed0": 0.010407060839768438,
+  "descriptive_ci_vs_s23": [
+    0.0061830014761092515,
+    0.014614192988723868
+  ],
+  "replay_audit": [
+    {
+      "fold": 0,
+      "anchor_vs_s22_equal_tta_disagreements": 0
+    },
+    {
+      "fold": 1,
+      "anchor_vs_s22_equal_tta_disagreements": 0
+    }
+  ],
+  "new_encoder_fits": 0,
+  "new_head_fits": 2,
+  "scope": "Architecture-development screen on reused acquisitions; fixed S22 seed0 encoders, head seed0, both corrected folds."
+}

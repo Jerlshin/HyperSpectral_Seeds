@@ -1,0 +1,94 @@
+{
+  "H42_screen": false,
+  "branch_gates": {
+    "hsi_correction": {
+      "H41_style_screen": false,
+      "practical_gate": false,
+      "simplification_gate": false,
+      "both_better_than_this_branch": false
+    },
+    "rgb_correction": {
+      "H41_style_screen": false,
+      "practical_gate": false,
+      "simplification_gate": false,
+      "both_better_than_this_branch": true
+    }
+  },
+  "comparisons": [
+    {
+      "arm": "hsi_correction",
+      "control": "equal_single",
+      "delta_f1": 0.00601261725317119,
+      "f1_ci": [
+        -0.0032916483171362867,
+        0.015349430145379305
+      ],
+      "fold_f1_deltas": [
+        0.006100457783623989,
+        0.005924776722718388
+      ],
+      "delta_cross": 0.026130753719927704,
+      "cross_ci": [
+        -0.008400257266026962,
+        0.06536425740508968
+      ]
+    },
+    {
+      "arm": "hsi_correction",
+      "control": "learned_residual",
+      "delta_f1": -0.004767485766672388,
+      "f1_ci": [
+        -0.007867552429850102,
+        -0.0017006541310490512
+      ],
+      "fold_f1_deltas": [
+        -0.004184212745743427,
+        -0.005350758787601351
+      ],
+      "delta_cross": -0.0031454248366012925,
+      "cross_ci": [
+        -0.007516339869281039,
+        0.001225490196078447
+      ]
+    },
+    {
+      "arm": "rgb_correction",
+      "control": "equal_single",
+      "delta_f1": 0.0021157889532689824,
+      "f1_ci": [
+        -0.0013182336271649454,
+        0.005412826363087182
+      ],
+      "fold_f1_deltas": [
+        0.004231577906537958,
+        5.51256571254852e-18
+      ],
+      "delta_cross": 0.0110294117647059,
+      "cross_ci": [
+        0.0006127450980392429,
+        0.020220588235294136
+      ]
+    },
+    {
+      "arm": "rgb_correction",
+      "control": "learned_residual",
+      "delta_f1": -0.008664314066574596,
+      "f1_ci": [
+        -0.01680581538318887,
+        -0.00014041403202899626
+      ],
+      "fold_f1_deltas": [
+        -0.006053092622829461,
+        -0.011275535510319732
+      ],
+      "delta_cross": -0.01824676679182309,
+      "cross_ci": [
+        -0.04903153681685439,
+        0.009219662599082195
+      ]
+    }
+  ],
+  "scope": "S23-informed development ablation on reused acquisitions, not final validation",
+  "new_encoder_fits": 0,
+  "head_fits": 4
+}

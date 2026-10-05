@@ -44,13 +44,15 @@ def prepare_output(output: Path, plan: Path, action: str, fold: int, seed: int, 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("action", choices=["profile", "train"])
-    p.add_argument("--plan", type=Path, default=Path("configs/research/s22_complementary_v5.json"))
+    p.add_argument("--plan", type=Path, default=Path("configs/research/s22_screening_amendment02.json"))
     p.add_argument("--fold", type=int, choices=[0, 1], default=0)
     p.add_argument("--seed", type=int, choices=[0, 1, 2], default=0)
     p.add_argument("--output", type=Path)
     p.add_argument("--resume", action="store_true", help="Resume an unfinished matching GPU cell")
     args = p.parse_args()
     spec = json.loads(args.plan.read_text()) if args.action == "profile" else verify_plan(args.plan)
+    if args.action == "train" and {"fold": args.fold, "seed": args.seed} not in spec["cells"]:
+        raise ValueError("Cell is not authorized by the frozen screening plan")
     output = args.output or Path("outputs/s22_complementary_v5") / (
         "cpu_profile" if args.action == "profile" else f"f{args.fold}_s{args.seed}"
     )
@@ -63,9 +65,13 @@ def main() -> None:
                       "runtime.prewarm_cache=off"]
         torch.set_num_threads(4)
     else:
-        overrides += ["runtime=kaggle_t4x2", "tracking=console_jsonl", "device=cuda"]
-        if not torch.cuda.is_available():
+        overrides += spec.get("runtime_overrides", ["runtime=kaggle_t4x2", "tracking=console_jsonl", "device=cuda"])
+        torch.set_num_threads(4)
+        device = next((v.split("=", 1)[1] for v in overrides if v.startswith("device=")), "cuda")
+        if device == "cuda" and not torch.cuda.is_available():
             raise RuntimeError("GPU training requested but CUDA is unavailable")
+        if device == "mps" and not torch.backends.mps.is_available():
+            raise RuntimeError("MPS training requested but Metal is unavailable")
     cfg = load_experiment_config("experiment/seednet_full256", overrides=overrides)
     rows = load_frozen_rows(Path(spec["partition_plan"]), Path(cfg.data.labels_path),
                             Path(cfg.data.groups_path), args.fold)

@@ -1,0 +1,19 @@
+{
+  "training_plan_sha256": "1dd50dae26f356ac963b4713ae5820a5476ede2129f8c554178a09abc7ea7f95",
+  "source_sha256": "c160688e80dc8e8f11716e55f0b60fdcf034f6733e0296096bb7ab875ea8a76f",
+  "files": {
+    "f1_provenance.json": "bcd63fab82f488d53a3d2a3043f38bd91244ea79abb3463f29990457e2a9e133",
+    "f1_last_stage1.json": "063a8730adc40da7f9c91ee986ab2118eea4d23ce628df397994d66505043b5c",
+    "f0_run.json": "34e42755b99be6469fa38ffb8c42462453f2ab6f4dcd372614328954b52d354b",
+    "f1_run.json": "ca0dcee1286c6f1b29c47a54b9854ba928c1ed5466a930ad82b8b1a44242aa85",
+    "f0_last_stage1.json": "34c4aafbb9042fc076130ccca28ff929b2deeef841c0de20fefb81c267e58ff1",
+    "direction_deltas.json": "17b1f620c33366cfbd39aaf8737a033162f11e6e795d5b32c8f046fb8b67a215",
+    "comparisons.json": "415dfa7ee867b78f70c259f71dafa679fcf79fded1299706facd82d28b43fe48",
+    "f0_provenance.json": "10420605650e874943df0d5b13f74ebc32e2c2f6592a6e16a21a164a35bf425d",
+    "f0_resolved_config.yaml": "c1dda40c9e4f539f6b6500c624648cb5ba69441def9b8081bbf95bb2971a1361",
+    "CUDA_COMPLETE.json": "061bfe7d4fe7733a3785379e696048c08df59b5e480639bf02dcd0ecdc3b2c38",
+    "f1_resolved_config.yaml": "88244853f58e2f8b5345f83bdd0372ad39f261e5bbcdf60760b83433e2735da8",
+    "execution.json": "6673b297e5d67ed968fd8b7d5e922c5a9f805f88a8ed099c7152339c7f9f4ad9",
+    "cuda_launch_receipt.json": "3139bb8c49ed728594dd005ab3e1c13aafebef75e4829ff98948a057fc34b853"
+  }
+}

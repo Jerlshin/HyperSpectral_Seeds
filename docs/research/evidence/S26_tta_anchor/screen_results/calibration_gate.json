@@ -1,0 +1,19 @@
+{
+  "passes": false,
+  "folds": [
+    {
+      "fold": 0,
+      "head_seed": 0,
+      "tta_anchor_calib_f1": 0.7870227941228972,
+      "single_anchor_calib_f1": 0.7894178246551827,
+      "passes": false
+    },
+    {
+      "fold": 1,
+      "head_seed": 0,
+      "tta_anchor_calib_f1": 0.7776297050806854,
+      "single_anchor_calib_f1": 0.7832424840190578,
+      "passes": false
+    }
+  ]
+}

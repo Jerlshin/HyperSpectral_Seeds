@@ -1,0 +1,31 @@
+{
+  "device": "mps",
+  "torch": "2.14.0",
+  "transform": "S20 cache_rgb_features.transform_rgb(view='rgb'): 224 masked crop, ImageNet normalization; class token; eval; no TTA",
+  "asset_manifest_sha256": "b3029ed3dd6427e09e2ecd8670999cbf03c2062f1953f7cfed75b4707368ae15",
+  "source_sha256": {
+    "scripts/cache_rgb_features.py": "d99193c523907d7a2e1f45f5eef369b9f98d66598a7014ae5a287dfdffb9fcb4",
+    "/Users/jerlshin/FieldOfInterest/ResearchWork/HSI_RGB_seeds/Code/scripts/run_rgb_backbone_screen.py": "a69542772a6c506b0c93787aa7628187ad66b8bd7ab2639e45463d75fa05ad3f"
+  },
+  "vits14_audit": {
+    "rows": 512,
+    "max_abs_difference_vs_s20_cpu": 6.341934204101562e-05,
+    "max_relative_norm_difference": 5.941122253716458e-06
+  },
+  "dino_b": {
+    "model": "dinov2_vitb14",
+    "dimensions": 768,
+    "seconds": 284.628052999964,
+    "checkpoint_sha256": "0b8b82f85de91b424aded121c7e1dcc2b7bc6d0adeea651bf73a13307fad8c73",
+    "checkpoint_url": "https://dl.fbaipublicfiles.com/dinov2/dinov2_vitb14/dinov2_vitb14_pretrain.pth",
+    "sha256": "4fefa135ca584ec1d919f2910a14a7fe8ab421b768fe43c3ab358e6d797269e4"
+  },
+  "dino_l": {
+    "model": "dinov2_vitl14",
+    "dimensions": 1024,
+    "seconds": 839.0140406249557,
+    "checkpoint_sha256": "d5383ea8f4877b2472eb973e0fd72d557c7da5d3611bd527ceeb1d7162cbf428",
+    "checkpoint_url": "https://dl.fbaipublicfiles.com/dinov2/dinov2_vitl14/dinov2_vitl14_pretrain.pth",
+    "sha256": "ddd822fb68cf5bce48a329e0517f6cd988feb1e91d387e3e3f1760933a25d6a0"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "H44_screen": "not evaluated: calib gate failed",
+  "held_out_rows_scored": 0,
+  "new_encoder_fits": 0,
+  "new_head_fits": 0,
+  "decision": "Reject this fixed anchor substitution; retain prior S23/S25 outcomes."
+}

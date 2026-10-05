@@ -1,0 +1,25 @@
+{
+  "kind": "engineering_training_only",
+  "checkpoint_epoch": 2,
+  "checkpoint_source": "live",
+  "training_rows": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+  ],
+  "held_out_rows_scored": 0,
+  "hsi_feature_shape": [
+    8,
+    256
+  ],
+  "finite_features": true,
+  "anchor_max_error": 2.2351741790771484e-08,
+  "finite_head_gradients": true,
+  "encoder_has_gradients": false,
+  "trainable_head_parameters": 23514
+}

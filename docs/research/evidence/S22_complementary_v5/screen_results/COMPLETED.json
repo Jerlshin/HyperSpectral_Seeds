@@ -1,0 +1,11 @@
+{
+  "plan_sha256": "1dd50dae26f356ac963b4713ae5820a5476ede2129f8c554178a09abc7ea7f95",
+  "analysis_code_receipt_sha256": "303c08406ebb304599c804e96ed4088b092dc681cef51589a2838a213207917c",
+  "files": {
+    "calibration.json": "6b083368fc68cf36dfdacfb61687ccbe8198c65e04a91f49b2f2ecea1d9a8768",
+    "predictions.csv.gz": "f4b098a3f3a688e530bec01bf86dd8fb7f2f01bfa0d533254ced16e8c0c9db35",
+    "metrics.csv": "e0854f6d0d2442c08981154e466c5aebd760365470ccc9e3c0fa6015d6ea592b",
+    "hypothesis.json": "dd53f6ef2224e8f98f75de7dba4ae34b06b19be01dd9d448f4885f9cf8f804b0",
+    "per_class.csv": "6d5f4f6ca0bc2cc49300c2112ce3d7146469bb9f14c8ccce11e7340bb5108d6d"
+  }
+}

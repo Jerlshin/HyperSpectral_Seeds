@@ -1,0 +1,72 @@
+{
+  "H46_screen": true,
+  "delta_f1": 0.013941625632520611,
+  "f1_ci": [
+    0.006018508019509024,
+    0.02146251845414262
+  ],
+  "fold_mean_deltas": [
+    0.011364277544381516,
+    0.016518973720659705
+  ],
+  "delta_cross": 0.03155883511797154,
+  "cross_ci": [
+    0.003566075070690225,
+    0.06403443395679785
+  ],
+  "per_seed": [
+    {
+      "head_seed": 0,
+      "delta_f1": 0.013124054076063336,
+      "fold_deltas": [
+        0.012517618712812824,
+        0.013730489439313846
+      ],
+      "delta_cross": 0.027397093589208724
+    },
+    {
+      "head_seed": 1,
+      "delta_f1": 0.014857800998322854,
+      "fold_deltas": [
+        0.012751054292126916,
+        0.016964547704518787
+      ],
+      "delta_cross": 0.0349264705882353
+    },
+    {
+      "head_seed": 2,
+      "delta_f1": 0.013843021823175643,
+      "fold_deltas": [
+        0.008824159628204814,
+        0.018861884018146466
+      ],
+      "delta_cross": 0.0323529411764706
+    }
+  ],
+  "seed_sd_delta_f1": 0.0008710692458261239,
+  "replay": [
+    {
+      "fold": 0,
+      "arm": "tta_trained_residual",
+      "disagreements": 0
+    },
+    {
+      "fold": 0,
+      "arm": "equal_tta",
+      "disagreements": 0
+    },
+    {
+      "fold": 1,
+      "arm": "tta_trained_residual",
+      "disagreements": 0
+    },
+    {
+      "fold": 1,
+      "arm": "equal_tta",
+      "disagreements": 0
+    }
+  ],
+  "new_head_fits": 4,
+  "new_encoder_fits": 0,
+  "scope": "Head-initialization sensitivity only; fixed S22 seed0 encoders; reused acquisitions."
+}

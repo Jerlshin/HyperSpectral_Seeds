@@ -1,0 +1,42 @@
+[
+  {
+    "fold": 0,
+    "split": "calib",
+    "rows": 630,
+    "source_sha256": "a7ba491c2cf5edd63d3af9021436196726f0ca52ebd414acd5e59ef3d4817f63",
+    "max_abs_logit_difference": 0.003902435302734375,
+    "mean_abs_logit_difference": 0.00018933761748485267,
+    "argmax_disagreements": 0,
+    "scope": "CPU fp32 versus saved CUDA/fp16 single-view; diagnostic only"
+  },
+  {
+    "fold": 0,
+    "split": "val_test",
+    "rows": 4313,
+    "source_sha256": "449750b16900d191ec7121a9dfb8ba461aa0896bcc7e057b46c388e42c0bcc85",
+    "max_abs_logit_difference": 0.0039043426513671875,
+    "mean_abs_logit_difference": 0.00019112738664261997,
+    "argmax_disagreements": 2,
+    "scope": "CPU fp32 versus saved CUDA/fp16 single-view; diagnostic only"
+  },
+  {
+    "fold": 1,
+    "split": "calib",
+    "rows": 630,
+    "source_sha256": "ea3bbfb04be7330f77f9f907ff4a85acd9360757d0f0100394cff143db9e2092",
+    "max_abs_logit_difference": 0.0038995742797851562,
+    "mean_abs_logit_difference": 0.00019723059085663408,
+    "argmax_disagreements": 0,
+    "scope": "CPU fp32 versus saved CUDA/fp16 single-view; diagnostic only"
+  },
+  {
+    "fold": 1,
+    "split": "val_test",
+    "rows": 4311,
+    "source_sha256": "168c860161e09b0cb20730a9a298be2c59c073683cf3b09aa2dbe1c247560a98",
+    "max_abs_logit_difference": 0.0039005279541015625,
+    "mean_abs_logit_difference": 0.00019652314949780703,
+    "argmax_disagreements": 0,
+    "scope": "CPU fp32 versus saved CUDA/fp16 single-view; diagnostic only"
+  }
+]

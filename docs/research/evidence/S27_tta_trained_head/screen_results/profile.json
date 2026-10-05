@@ -1,0 +1,30 @@
+{
+  "scope": "Fold-0 outer-training rows only (first 256 of the S24 train cache), 12-view fp32 TTA. No calib/held-out rows.",
+  "torch": "2.14.0",
+  "threads": 4,
+  "timings": {
+    "cpu": {
+      "rows": 256,
+      "seconds": 29.63322858302854,
+      "rows_per_second": 8.638950672645086,
+      "max_abs_vs_cpu": 0.0,
+      "argmax_disagreements_vs_cpu": 0
+    },
+    "mps": {
+      "rows": 256,
+      "seconds": 24.241756041999906,
+      "rows_per_second": 10.56029107612785,
+      "max_abs_vs_cpu": 1.239776611328125e-05,
+      "argmax_disagreements_vs_cpu": 0
+    }
+  },
+  "projected_rows": {
+    "train_both_folds": 7364,
+    "calib_audit_both_folds": 1260
+  },
+  "projected_seconds": {
+    "cpu": 998.2693878907739,
+    "mps": 816.6441566648718
+  },
+  "note": "Projection = measured throughput x row count; wall time, not a billing estimate."
+}

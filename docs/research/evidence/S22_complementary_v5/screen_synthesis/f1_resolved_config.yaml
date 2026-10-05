@@ -1,0 +1,221 @@
+data:
+  patches_data: ./dataset_u430k32/patches.npy
+  labels_path: ./dataset_u430k32/labels.npy
+  wavelength_path: ./dataset_u430k32/wavelengths.csv
+  masks_path: ./dataset_u430k32/masks.npy
+  morphology_path: ./dataset_u430k32/morphology.npy
+  band_indices_path: ''
+  num_bands: 32
+  num_classes: 90
+  max_cutout_bands: 2
+  noise_std: 0.02
+  groups_path: ./dataset_u430k32/groups.npy
+  scan_table_path: ./dataset_u430k32/scan_table.csv
+  split_scheme: grouped
+  split_eval_frac: 0.3
+  split_fold: 1
+  calib_frac: 0.15
+  single_group_policy: error
+  gain_path: ''
+  cutmix_bands: 6
+  cutmix_spatial: 24
+model:
+  arch: spectral_seed_net
+  branch_drop_prob: 0.0
+  branch_drop_profile:
+  - 1.0
+  - 1.0
+  - 1.0
+  - 1.0
+  enabled_branches:
+  - a
+  - b
+  - c
+  - d
+  fusion_mode: concat_mlp
+  subcenter_K: 1
+  subcenter_tau_init: 0.0
+  subcenter_tau_final: 0.0
+  subcenter_balance_weight: 0.0
+  aux_head_hidden: 128
+  wl_embed_dim: 16
+  specf_tokens: 10
+  specf_dim: 192
+  specf_heads: 8
+  specf_layers: 4
+  specf_drop: 0.15
+  fusion_drop: 0.1
+  grid_size_a: 8
+  grid_size_d: 4
+  index_bank_size: 64
+  continuum_depths: 16
+  n_morphometrics: 8
+  stem_channels: 192
+  stem_folded_depth: 8
+  fusion_rank: 128
+  fusion_gate_hidden: 128
+  spatial_width_mult: 1.0
+  spectral_hidden: 256
+  aux_head_weight: 0.2
+  per_class_margin: false
+  pairwise_penalty: false
+  pathways:
+  - spatial
+  - spectral
+  spectral_descriptor: snv_morph
+  spatial_tail_strides:
+  - 2
+  - 2
+  - 2
+  - 1
+  cbam_min_hw: 3
+  spatial_mixstyle: false
+stage1:
+  epochs: 400
+  phase1_frac: 0.3
+  phase2_frac: 0.38
+  batch: 128
+  max_lr: 0.0005
+  mid_lr: 0.00025
+  min_lr: 5.0e-06
+  dropout: 0.15
+  mixup: 0.35
+  patience: 50
+  accum: 1
+  focal_gamma: 1.5
+  label_smooth_hi: 0.1
+  label_smooth_lo: 0.04
+  ema_reinit_phases: true
+  p3_supcon_weight: 0.35
+  p3_proto_weight: 0.15
+  p3_oversample: true
+  p3_oversample_power: 0.65
+  p3_oversample_max_w: 7.0
+  p3_hard_f1_thresh: 0.8
+  p3_oversample_eps: 0.05
+  p3_dropout: 0.25
+  aux_loss_weight_init: 0.65
+  aux_loss_weight_final: 0.25
+  arcface_m: 0.0
+stage2:
+  epochs: 150
+  batch: 128
+  head_lr: 0.00025
+  back_lr: 7.0e-05
+  min_lr: 1.0e-06
+  warmup_ep: 3
+  sgdr_T0: 25
+  sgdr_Tmult: 2
+  dropout: 0.1
+  patience: 30
+  arcface_s: 48.0
+  arcface_m: 0.35
+  arcface_m0: 0.18
+  arcface_m_delta: 0.2
+  margin_warmup_ep: 20
+  focal_gamma: 1.5
+  arcface_m_min: 0.2
+  arcface_m_max: 0.5
+  pairwise_margin_delta: 0.1
+  cdws_max_weight: 3.0
+  cdws_eps: 0.05
+  supcon_weight: 0.4
+  supcon_temp: 0.1
+  proto_weight: 0.18
+  proto_temp: 0.1
+  bal_n_cls: 16
+  bal_n_spc: 8
+stage3:
+  epochs: 120
+  swa_lr: 4.0e-05
+  cycle_len: 8
+  sam_rho: 0.015
+  greedy: true
+  aux_loss_weight: 0.1
+  margin_kappa_final: 0.85
+  swa_warmup_cycles: 3
+  sam_adaptive: true
+single:
+  epochs: 200
+  batch: 128
+  accum: 1
+  patience: 40
+  max_lr: 0.0005
+  min_lr: 5.0e-06
+  warmup_ep: 5
+  dropout: 0.15
+  label_smooth_hi: 0.1
+  label_smooth_lo: 0.04
+  focal_gamma: 0.0
+  aux_loss_weight: 0.2
+  aux_weight_schedule: legacy
+  clean_fit_kernels: 1000
+  clean_fit_seed: 0
+  mixup: 0.35
+  mixup_epochs: 30
+  aug_profile: medium
+  arcface_m: 0.0
+  arcface_s: 32.0
+  margin_warmup_start: 31
+  margin_warmup_end: 31
+  supcon_epochs: 0
+  supcon_weight: 0.3
+  supcon_temp: 0.1
+  bal_n_cls: 16
+  bal_n_spc: 8
+tracking:
+  backend: multi
+  project: null
+  entity: null
+  log_dir: null
+  watch_model: false
+  backends:
+  - console
+  - jsonl
+  log_grad_norms: true
+  show_diagnostics: false
+runtime:
+  num_workers: 4
+  pin_memory: 1
+  persistent_workers: 1
+  prefetch_factor: 4
+  eval_num_workers: 2
+  prewarm_cache: 'on'
+  compile: auto
+  compile_backend: inductor
+  compile_mode: default
+  channels_last: false
+  allow_tf32: false
+  amp_dtype: fp16
+  cudnn_benchmark: true
+  fused_optimizer: auto
+  decompose_conv3d: auto
+  checkpoint_branch_a: auto
+  multi_gpu: ddp
+  sync_batchnorm: true
+  dist_timeout_s: 1800
+  checkpoint_every: 1
+  empty_cache_interval: 0
+  progress: auto
+  diagnostics_interval: 25
+evaluation:
+  select_split: calib
+  report_split: val_test
+  tta: true
+  bootstrap_samples: 2000
+  save_artifacts: true
+  save_logits: true
+  session_probe: true
+run_name: s22_v5_f1_s0
+output_root: outputs
+output_dir: outputs/s22_complementary_v5/f1_s0
+pipeline: single
+weight_decay: 0.0002
+grad_clip: 50.0
+clip_partition: legacy
+ema_decay: 0.999
+aux_gradnorm_alpha: 0.0
+tta_spatial: 8
+tta_spectral: 4
+device: cuda
+seed: 0

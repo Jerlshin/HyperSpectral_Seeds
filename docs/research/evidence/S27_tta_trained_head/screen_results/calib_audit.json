@@ -1,0 +1,36 @@
+{
+  "runtime": "cpu",
+  "profile": {
+    "cpu": 998.2693878907739,
+    "mps": 816.6441566648718
+  },
+  "total_seconds": 1278.2605005829828,
+  "folds": [
+    {
+      "fold": 0,
+      "split": "calib",
+      "rows": 630,
+      "max_abs_logit_difference": 0.0038862228393554688,
+      "mean_abs_logit_difference": 0.00018198305863925159,
+      "argmax_disagreements": 0,
+      "train_rows": 3681,
+      "train_seconds": 414.2997302080039,
+      "calib_seconds": 74.65053895895835,
+      "train_tta_accuracy": 1.0,
+      "scope": "CPU fp32 TTA versus saved CUDA fp32 TTA (float16-serialized); diagnostic only."
+    },
+    {
+      "fold": 1,
+      "split": "calib",
+      "rows": 630,
+      "max_abs_logit_difference": 0.003875732421875,
+      "mean_abs_logit_difference": 0.00019103506695756025,
+      "argmax_disagreements": 0,
+      "train_rows": 3683,
+      "train_seconds": 672.6241483340273,
+      "calib_seconds": 116.38044304098003,
+      "train_tta_accuracy": 0.9991854466467553,
+      "scope": "CPU fp32 TTA versus saved CUDA fp32 TTA (float16-serialized); diagnostic only."
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "cells": [
+    {
+      "fold": 0,
+      "seed": 0,
+      "epochs_completed": 189,
+      "selected_epoch": 149,
+      "selected_source": "live",
+      "calib_f1": 0.7224715897755113,
+      "environment": {
+        "python": "3.13.15",
+        "torch": "2.11.0+cu128",
+        "cuda": "12.8",
+        "world_size": 2,
+        "device": "cuda:0",
+        "gpu": "Tesla T4"
+      },
+      "checkpoint_sha256": "00247d414b16ceb9c4e29437688813321319c9e3b938e1b4a2a708951131b8ed",
+      "run_manifest_sha256": "34e42755b99be6469fa38ffb8c42462453f2ab6f4dcd372614328954b52d354b"
+    },
+    {
+      "fold": 1,
+      "seed": 0,
+      "epochs_completed": 177,
+      "selected_epoch": 137,
+      "selected_source": "live",
+      "calib_f1": 0.7168317673993628,
+      "environment": {
+        "python": "3.13.15",
+        "torch": "2.11.0+cu128",
+        "cuda": "12.8",
+        "world_size": 2,
+        "device": "cuda:0",
+        "gpu": "Tesla T4"
+      },
+      "checkpoint_sha256": "8b064c0ebee46f3e97f93dabc9e40b6bed564d1136fdda24911b5767c379e68b",
+      "run_manifest_sha256": "ca0dcee1286c6f1b29c47a54b9854ba928c1ed5466a930ad82b8b1a44242aa85"
+    }
+  ],
+  "cuda_bootstrap_wall_seconds": 2839.982183298,
+  "scope": "Two complete seed-0 CUDA fits. Earlier failed/interrupted local attempts remain preserved separately. Wall time is not a billed GPU-hour claim."
+}

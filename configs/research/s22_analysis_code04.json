@@ -1,0 +1,9 @@
+{
+  "kind": "S22 analysis engineering receipt04",
+  "frozen_at": "2026-10-05",
+  "training_plan_sha256": "1808076bcabd9189c55f78abc621e7fdd27b938834bea9f4c1f47263b82b8e76",
+  "change": "Additional analysis entry point: default selects active amendment03, per-class local list is typed, and analysis code is independently hashed. No scoring/statistical rule changes. Previously sealed training drivers and analysis source remain unchanged.",
+  "input_hashes": {
+    "scripts/analyze_s22_screening.py": "7ad905d28bd8d5a5acd62f73c88a8b6c719bc46d5ab1a3cd62bf75d254b49e7b"
+  }
+}

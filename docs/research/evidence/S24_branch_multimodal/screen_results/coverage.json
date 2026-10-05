@@ -1,0 +1,12 @@
+[
+  {
+    "arm": "hsi_correction",
+    "rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "rgb_correction",
+    "rows": 8624,
+    "unique_rows": 8624
+  }
+]

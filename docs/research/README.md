@@ -14,7 +14,29 @@ describes *what we have learned and why the code is the way it is*.
 
 ## 1 · Where the research stands today
 
-*Last revised 2026-10-04 after completed S20/S21 and preparation of S22.*
+*Last revised 2026-10-05: S27–S29 complete; development screening closed (D52); S30 confirmation proposed, not frozen.*
+
+**Selected development system (S29, D51):** frozen v5 HSI encoder (k32 reflectance, R1 TTA) +
+frozen DINOv2 **ViT-L/14** RGB probe + calibrated equal probability fusion + a 43,994-parameter
+additive head trained against that TTA anchor. On S21's corrected folds (seed-0 encoders, both
+folds) its macro-F1 is **.627150**, against HSI TTA alone .559098, fixed equal fusion with ViT-S .601595,
+and fixed equal fusion with ViT-L .620455. Same/cross-session recall .7408/.2480.
+- [S27](studies/S27_tta_trained_head/results.md): training the head against the TTA anchor adds
+  +.0131 [.0044, .0216] over fixed fusion.
+- [S28](studies/S28_tta_head_seeds/README.md): stable across head seeds (SD .0009).
+- [S29](studies/S29_rgb_backbone_screen/README.md): ViT-L adds +.0124 [.0057, .0198] at system level.
+- On ViT-L, the head's own margin over fixed fusion is only +.0067 [.0001, .0133]. Whether the
+  head is kept is S30's C2 test with matched encoder seeds.
+
+**Dominant bottleneck (F113):** away-from-session-8 cross recall is ≈ .18 for *every* system;
+all cross gains go to session-8 destinations, and 57% of cross errors land on a class trained in
+the test kernel's session (14% chance). This is acquisition-limited: next compute is the
+[S30 matched confirmation](studies/S30_final_confirmation/README.md) (four GPU fits, needs
+authorization); next science is crossed sessions/lots (FW-42).
+
+![S27–S29 system progression](figures/S29_rgb_backbone_screen/system_progression.png)
+
+*Earlier state (2026-10-05, before S27), retained below.*
 
 **RGB is now an established data pathway and a measured research candidate.** All
 8,624 retained kernels in 180 scans have validated grid identities, native RGB masks,
@@ -44,15 +66,23 @@ matched comparisons/records remain intact. All17 cross-session bridges still tou
 session8;73 classes remain same-session, and calibration shares training acquisitions.
 New session/lot claims require new crossed acquisitions. [F102](FINDINGS.md).
 
-**Next run:** [S22](studies/S22_complementary_v5/README.md), six exact-v5 fits on S21
-partitions followed by fixed RGB fusion. Config, source/input hashes, safe resume,
-exact-row analysis and CPU forward/backward validation are ready; **GPU unrun**.
-Keep k32 and simple fusion/unimodal controls; defer learned fusion and spectrum
-expansion until evidence earns them. S17/S18 remain reserved and unchanged.
+**Complete:** [S22's corrected-fold screen](studies/S22_complementary_v5/results.md),
+seed 0 on both folds under explicit amendments. v5 F1 .558909→.601595 with fixed
+RGB fusion; no supported cross-session gain. [S23](studies/S23_frozen_multimodal/results.md)
+implemented a 23,514-parameter frozen-feature additive head. [S24](studies/S24_branch_multimodal/results.md)
+found no qualifying smaller branch correction. [S25](studies/S25_head_seed_screen/results.md)
+selectively tested three head seeds on encoder0: F1 .604054, gain+.010522 over
+single-view fusion, but only+.002459 with an interval spanning zero over TTA.
+[S26](studies/S26_tta_anchor/results.md) rejected a fixed TTA-anchor swap on calib,
+without new test scores. **Next proposed:** [S27](studies/S27_tta_trained_head/README.md),
+train the same head against TTA from the outset, seed0 both folds first. No job is
+running. Preserve matched controls; independent encoder-seed and new-acquisition
+confirmation remain necessary for final claims. All frozen parents remain preserved.
+S17/S18 remain reserved and unchanged.
 
 Read the [master plan](MASTER_RESEARCH_PLAN.md), [current handoff](RESEARCH_PROGRESS.md),
 [S19 rationale/prior art](studies/S19_next_generation_strategy/README.md) and
-[decisions D41–D44](DECISIONS.md). Earlier optimistic scores, SNV-era band preferences
+[decisions D41–D46](DECISIONS.md). Earlier optimistic scores, SNV-era band preferences
 and architecture proposals remain dated evidence, not current generalization claims.
 
 ![Completed complementary-fold CPU screen](figures/S21_complementary_rgb/rgb_and_fusion.png)
@@ -71,7 +101,7 @@ docs/research/
 ├── GLOSSARY.md        the project's vocabulary (bundle, session, grouped, calib, uniform430 …)
 ├── studies/
 │   ├── _TEMPLATE.md   copy this to start a new study
-│   └── S00 … S16, S19 … S22/     one folder per study, each with its own README.md
+│   └── S00 … S16, S19 … S30/     one folder per study, each with its own README.md
 ├── figures/<study>/   every figure the log shows (generated or copied — never hand-edited)
 ├── evidence/<study>/  snapshot of the raw results each claim rests on (outputs/ is git-ignored)
 └── tools/build_assets.py   regenerates evidence/ and figures/ from outputs/ and dataset/
@@ -106,7 +136,15 @@ study stays *modular* (it can be read, revised or superseded on its own).
 | [S19](studies/S19_next_generation_strategy/README.md) | Whole-project and current prior-art reassessment; next-generation strategy | 2026-10-03 | complete synthesis; no new training | paired RGB/full-spectrum opportunity; controlled band/geometry tests; crossed acquisition and paper plan; S17/S18 reserved |
 | [S20](studies/S20_rgb_pathway/README.md) | RGB identity/preprocessing and 30-arm CPU screen | 2026-10-04 | complete | all 8,624 pairs; useful RGB/simple fusion; uncertain v5 transfer gain; legacy fold defect |
 | [S21](studies/S21_complementary_rgb/README.md) | Complementary-fold 24-arm RGB/HSI follow-up | 2026-10-04 | complete | exhaustive coverage; appearance/fusion gates pass; coupling/band transfer gates fail |
-| [S22](studies/S22_complementary_v5/README.md) | v5 rebaseline and fixed RGB fusion | 2026-10-04 | prepared; GPU unrun | six frozen GPU fits; CPU forward/backward passed; H40 unresolved |
+| [S22](studies/S22_complementary_v5/README.md) | v5 rebaseline and fixed RGB fusion | 2026-10-04 → 05 | complete amended screen | seed 0, both folds; F1 .558909→.601595; H40-screen pass, transfer unsupported |
+| [S23](studies/S23_frozen_multimodal/README.md) | Small additive learned head over frozen HSI/RGB | 2026-10-05 | complete | H41-screen pass; F1 .604312; TTA advantage uncertain |
+| [S24](studies/S24_branch_multimodal/README.md) | Learned-branch removal controls | 2026-10-05 | complete | no qualifying simplification; strict H42 fails |
+| [S25](studies/S25_head_seed_screen/README.md) | Selective full-head seed sensitivity | 2026-10-05 | complete | H43 pass; F1 .604054; three heads on fixed encoder0 |
+| [S26](studies/S26_tta_anchor/README.md) | Fixed TTA-anchor inference substitution | 2026-10-05 | complete, calib rejection | no new fits/test scores; H44 unevaluated |
+| [S27](studies/S27_tta_trained_head/README.md) | Train the small head against equal TTA | 2026-10-05 | complete | H45 pass: +.0131 over equal TTA; F1 .614719 |
+| [S28](studies/S28_tta_head_seeds/README.md) | Head-seed sensitivity of the TTA-trained head | 2026-10-05 | complete | H46 pass: +.0139, seed SD .0009 |
+| [S29](studies/S29_rgb_backbone_screen/README.md) | Frozen RGB backbone capacity (DINOv2 B/L) at system level | 2026-10-05 | complete | H47 pass: ViT-L head .627150; head over fixed ViT-L only +.0067; away-from-session-8 recall flat |
+| [S30](studies/S30_final_confirmation/README.md) | Matched final confirmation (encoder seeds 0/1/2) | — | proposed, not frozen | 4 GPU fits; decides head vs fixed ViT-L fusion |
 
 ## 4 · Conventions
 

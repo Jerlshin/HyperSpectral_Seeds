@@ -1,0 +1,22 @@
+[
+  {
+    "arm": "equal_single",
+    "rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "hsi_single",
+    "rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "learned_residual",
+    "rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "rgb",
+    "rows": 8624,
+    "unique_rows": 8624
+  }
+]

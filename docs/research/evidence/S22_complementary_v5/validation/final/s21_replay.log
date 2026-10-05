@@ -1,0 +1,11 @@
+{
+  "unchanged_historical_files": 40,
+  "frozen_plan_and_copied_result_hashes": true,
+  "all_8624_rows_held_once": true,
+  "prediction_arithmetic_verified": 48,
+  "identity_and_exclusion_evidence": true,
+  "local_frozen_inputs_and_native_shards": true,
+  "local_links": 73,
+  "figure_files_valid": true,
+  "scope": "Evidence integrity and arithmetic; no independent-session validation or new GPU results."
+}

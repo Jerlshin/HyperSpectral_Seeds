@@ -1,0 +1,8 @@
+{
+  "scope": "execution bookkeeping, no training or scoring changes",
+  "collector_correction": "Before collection, corrected an overescaped CLI output filename regex and retained status history; restarted only the local polling process, not the Kaggle job.",
+  "source_builder_sha256": "fd487d62e063706512f97b5aced2b6957501aad81ca93b395fdbf31746a8719d",
+  "cloud_live_log": "validation/cloud_bootstrap_stream.txt",
+  "observed_progress": "fold0 seed0 completed; fold1 seed0 launched",
+  "log_stream_end": "CLI gave up after five idle reconnects; does not indicate job completion. Status collector continues independently."
+}

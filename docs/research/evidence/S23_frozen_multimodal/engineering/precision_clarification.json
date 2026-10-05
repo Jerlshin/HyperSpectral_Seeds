@@ -1,0 +1,18 @@
+{
+  "clarification": "CUDA training used fp16/GradScaler; final single-view and TTA evaluation disable autocast and run fp32. Saved logit arrays are serialized float16. The frozen S23 audit label saved CUDA/fp16 refers to stored precision, not CUDA forward precision. No scientific recipe is changed.",
+  "source": "src/spectralquadnet/engine/stages/final_eval.py and src/spectralquadnet/engine/tta.py",
+  "source_hashes": {
+    "src/spectralquadnet/engine/stages/final_eval.py": "f2a3f5879b70d4174fdefdf7a226b3a0eda14a5ec2a9f0f758a44c4931076742",
+    "src/spectralquadnet/engine/tta.py": "f0a2dcd7b6125a252907c2d87b33880076c54c82d0cac7ccdc5c1ea83d310ec7"
+  },
+  "prediction_audit": [
+    {
+      "fold": 0,
+      "cpu_vs_original_cuda_fp32_prediction_disagreements": 0
+    },
+    {
+      "fold": 1,
+      "cpu_vs_original_cuda_fp32_prediction_disagreements": 0
+    }
+  ]
+}

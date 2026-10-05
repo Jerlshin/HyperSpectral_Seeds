@@ -1,0 +1,50 @@
+{
+  "H43_screen": true,
+  "head_seed_results": [
+    {
+      "head_seed": 0,
+      "f1": 0.6043119699538435,
+      "cross_recall": 0.2332516339869281,
+      "delta_f1_anchor": 0.010780103019843577,
+      "delta_cross_anchor": 0.029276178556529,
+      "delta_f1_tta": 0.002716993236294818,
+      "delta_cross_tta": 0.023761472674176054
+    },
+    {
+      "head_seed": 1,
+      "f1": 0.6040909514801157,
+      "cross_recall": 0.23508986928104575,
+      "delta_f1_anchor": 0.010559084546115791,
+      "delta_cross_anchor": 0.03111441385064666,
+      "delta_f1_tta": 0.0024959747625670214,
+      "delta_cross_tta": 0.025599707968293695
+    },
+    {
+      "head_seed": 2,
+      "f1": 0.6037584858550469,
+      "cross_recall": 0.23690029203170632,
+      "delta_f1_anchor": 0.010226618921046898,
+      "delta_cross_anchor": 0.0329248366013072,
+      "delta_f1_tta": 0.0021635091374981874,
+      "delta_cross_tta": 0.027410130718954262
+    }
+  ],
+  "mean_delta_f1_anchor": 0.010521935495668756,
+  "f1_ci": [
+    0.0018513463789357786,
+    0.018941352973373907
+  ],
+  "fold_mean_f1_deltas": [
+    0.008976003217053951,
+    0.01206786777428356
+  ],
+  "mean_delta_cross_anchor": 0.031105143002827608,
+  "cross_ci": [
+    -0.0013807406827979342,
+    0.06821048011403144
+  ],
+  "paired_f1_gain_head_seed_sd": 0.00027860581628356274,
+  "scope": "Selective head-initialization sensitivity on fixed S22 seed0 encoders and reused acquisitions. Not full-system multi-seed confirmation.",
+  "new_encoder_fits": 0,
+  "new_head_fits": 4
+}

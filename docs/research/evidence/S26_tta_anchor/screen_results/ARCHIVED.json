@@ -1,0 +1,9 @@
+{
+  "plan_sha256": "da646aaf9f64978fc6c94469ece43baab9c530fc35ad7564d20f0854ebe84af8",
+  "held_out_rows_scored": 0,
+  "files": {
+    "hypothesis.json": "11d65e8d60115f740a4cf632d1daefb66ceddc9e0cfdde3212186c9587fd6f98",
+    "COMPLETED.json": "650cc133b4640f4ab84147fdd671125e827e9112732459559c76ed31c2152c72",
+    "calibration_gate.json": "e1b517f338681f382e17b45958b3479f3819c3e30ce75668657028c4bb5763ac"
+  }
+}

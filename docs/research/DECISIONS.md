@@ -631,3 +631,106 @@ S17/S18 stay reserved with their original plans; they are not the current next r
 **Reversal.** H40 failure retains unimodal HSI. Success permits a bounded mechanism
 study, not a broad unseen-session claim. D40's crossed acquisition requirement remains.
 [Executable runbook](studies/S22_complementary_v5/README.md).
+
+### D45 · S22 is a one-seed/two-direction development screen
+**Context.** User's2026-10-05 instruction and S20/S21 evidence: historical v5
+fusion helps across three seeds; corrected-fold linear fusion helps in both
+acquisition directions. **Decision.** Preserve the original six-cell S22 parent;
+freeze amendment02 with folds0/1 × seed0 and conditional finalist replication.
+Use the available local MPS/fp32 runtime explicitly; preserve R1 and architecture.
+**Deviation.** Initial seed count3→1 and backend T4-DDP/fp16→MPS/fp32, declared
+before any neural fit/held-out scoring. **Reverse if.** Meaningful direction
+conflict or a final paper claim requires bounded, separately recorded replication.
+Do not imply this screen estimates seed uncertainty. S17/S18 stay unchanged.
+[S22 amendment](studies/S22_complementary_v5/amendment02.md).
+
+### D46 · Prepare a minimal additive learned successor, conditional on S22
+**Context.** F99/F100 support appearance and probability complementarity; F101/F103
+warn against unanchored concatenation and pairing-specific interactions.
+**Decision.** Implement S23 with frozen HSI/RGB features and23,514-parameter additive
+residual correction, initialized to equal fusion. Train on outer training rows,
+select on calib, include epoch0 and matched single-view controls plus TTA reference.
+Freeze exact inputs after S22 gate passes, before scoring this candidate. This is
+prospective engineering, not a measured neural result. **Reverse if.** S22 is not
+consistently useful, or H41's gain/transfer/practical-reference gate fails. No automatic
+replication of a rejected head. [S23 specification](studies/S23_frozen_multimodal/README.md).
+
+D45 execution note,2026-10-05: amendment05 restores the original two-T4/fp16 runtime
+for both complete cells after read-only discovery of the configured private Kaggle
+HSI notebook/dataset and available quota. Preserve the interrupted six-epoch local
+MPS fit; its partial calibration progress is not a screening outcome. The two-fit
+allocation and H40-screen gates remain unchanged.
+
+### D47 · Advance S23 after the corrected-fold classification gain; defer S22 seed expansion
+**Context.** F104: equal v5/RGB fusion gains .045339/.040033 F1 on the corrected
+folds, mean +.042686 [.027554,.057266]; transfer gain is unsupported.
+**Decision.** H40-screen passes. Retain fixed fusion as an anchor and execute the
+prospectively specified S23 additive frozen-feature head, seed 0 on both folds.
+Its exact source/checkpoint/probe plan is frozen before fitting/evaluation. Use
+matched single-view and stronger TTA controls; reject a learned F1 improvement
+that fails the recorded cross-recall/practical-reference gate. Do not purchase
+three seeds for the now-intermediate S22 baseline. Eventual final systems and
+matched controls share encoder fits where possible; see the confirmation queue.
+**Reverse if.** H41 or its practical reference fails, or later matched confirmation
+does not reproduce the useful effect. This is architecture development on reused
+acquisitions, not a paper validation result.
+
+### D48 · Retain the full small head provisionally; selectively assess cheap head variance
+**Context.** F105–F107: S23 passes its matched gate, S24 offers no qualifying
+simplification, but H42's strict both-branch necessity criterion fails. The full
+head's practical margin over equal TTA remains uncertain.
+**Decision.** Keep the 23,514-parameter additive model as the current learned
+candidate. S25 explicitly extends its allocation with head seeds1/2 on both existing
+encoders, using verified caches; four fits cost9.76s. The gain is stable across these
+three head initializations. Do not expand rejected branch variants or buy S22 GPU
+seeds merely to repeat an intermediate effect. Do not claim learned interaction
+or both-branch necessity. **Reverse if.** A separately frozen matched candidate
+provides a useful practical gain or final independent encoder confirmation fails.
+Confirm the final system and matched controls, including mechanism controls needed
+for a paper claim; head-only sensitivity does not replace encoder-seed confirmation.
+
+### D49 · Reject the fixed anchor swap; propose training against equal TTA
+**Context.** F108: the unchanged S23 correction with a substituted TTA anchor
+fails calib on both folds. Its sealed gate prevents any new held-out evaluation.
+**Decision.** Retain this rejection with zero test scores and zero fits. Propose S27:
+the same small architecture/recipe trained against equal TTA from the outset, fixed
+encoders and cached single-view features. First profile outer-training-only frozen
+TTA inference and seal runtime/source/cache hashes. Initial head seed0 on both
+corrected folds; a practical matched-TTA gain gate must be frozen before execution.
+S27 is not yet frozen or executed. No attention, band sweep, broad RGB tuning or
+new encoder fit is justified now. **Reverse if.** A meaningful practical gain earns
+selective sensitivity and eventual finalist confirmation; a weak gain stops expansion.
+The final matched seed0/1/2 allocation can share HSI encoder fits: four additional
+fits for seeds1/2 across both folds, plus matching heads. New crossed acquisitions
+remain independently required. [S27 brief](studies/S27_tta_trained_head/README.md),
+[confirmation queue](studies/S22_complementary_v5/confirmation_queue.md).
+
+### D50 · Retain the TTA-trained head; confirm head seeds cheaply, defer encoder seeds (S27/S28)
+**Context.** F109/F110: H45 and H46 pass; gain over equal TTA +.0139 across three head seeds,
+seed SD .0009. **Decision.** Close the S23-era question in favour of learning against the
+deployment anchor. The TTA-trained head replaces the S23 single-anchor head as the learned
+component. Encoder-seed confirmation is deferred to one shared final allocation (S30), because
+every fusion control reuses the same HSI fits. **Alternatives rejected.** Closing the learned
+line (its pre-declared gate passed); immediate GPU encoder seeds while the RGB side was still
+open. **Reverse if.** S30 C2/C4 fail with matched encoder seeds.
+
+### D51 · DINOv2 ViT-L/14 replaces ViT-S/14 as the frozen RGB encoder (S29)
+**Context.** F111/F112: H47 passes at the system level; ViT-L also gives the only RGB cross gain with
+a positive interval. **Decision.** The selected development system is v5 TTA (k32) + frozen
+ViT-L/14 probe, equal calibrated fusion, and the TTA-trained additive head (43,994 parameters).
+Fixed equal ViT-L fusion is its mandatory matched control. Whether the head is retained is
+decided by S30 C2, not by the one-seed +.0067. **Deviation.** S29 was drafted as a fixed-fusion
+screen conditional on S27 failing. It was redesigned at the system level and renumbered before
+freezing, after label-free feature extraction only (disclosed in S29 §2). **Reverse if.** S30 C3 fails
+with matched seeds, or a crossed-acquisition test shows ViT-L harms new-session transfer.
+
+### D52 · Stop development screening on reused acquisitions; next compute is S30, next science is crossed acquisitions
+**Context.** F113: across S22–S29, every model change improved same-session or
+session-8-destination recall, while away-from-session-8 recall stayed ≈ .18 and cross-error
+session attraction stayed ≈ 57%. Learned margins (~.01) are now comparable to historical
+encoder σ (.009, F30). **Decision.** No further backbones, resolutions, fusion forms or band
+expansions on the existing test scans. Spend the next GPU compute on S30's matched four-fit
+confirmation, which needs authorization for the Kaggle quota. Prioritize the
+crossed-session/lot acquisition pilot (FW-42, S19 §5) as the scientific route to the transfer
+bottleneck. **Reverse if.** A specific mechanism with independent evidence predicts
+away-from-session-8 gain on existing data; it would need its own frozen study.

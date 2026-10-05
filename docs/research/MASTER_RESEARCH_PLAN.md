@@ -1,7 +1,7 @@
 # Next-generation rice recognition: master research plan
 
 Created: 2026-10-03. Owner: research synthesis initiated in Codex.
-Status: S19–S21 complete; S22 GPU rebaseline prepared and unrun (2026-10-04). Resume from [RESEARCH_PROGRESS.md](RESEARCH_PROGRESS.md).
+Status: S19–S29 complete; development screening closed (D52); S30 matched confirmation proposed, not frozen (2026-10-05). Resume from [RESEARCH_PROGRESS.md](RESEARCH_PROGRESS.md).
 
 ## Objective and scope
 
@@ -116,11 +116,111 @@ from architectural expansion to an identifiable neural baseline comparison.
 
 | Phase | Next action | Gate/status |
 |---|---|---|
-| P11 | S22: six exact-v5 R1 fits on S21 partitions, then fixed RGB fusion | prepared, source/inputs frozen; GPU unrun; H40 |
-| P12 | Conditional bounded adaptation or geometry/measurement study | only after P11; no automatic fusion/extra-band adoption |
+| P11 | S22: seed 0 exact-v5 R1 on both S21 partitions, then fixed RGB fusion | complete under amendment02/05; H40-screen pass; transfer unsupported |
+| P12 | S23: additive learned residual head over frozen HSI/RGB | complete; H41/practical point gates pass; small uncertain margin over TTA |
 | P13 | Crossed session/lot acquisition and locked external evaluation | required for broad transfer claim; current17 bridges all touch session8 |
+| P14 | S24: remove each learned correction branch, retaining fixed multimodal anchor | complete; no qualifying simplification; H42 necessity gate fails |
+| P15 | S25: selectively test full-head seeds1/2 on both existing encoders | complete; H43 passes; 9.76s for four heads, encoder uncertainty unmeasured |
+| P16 | S26: fixed TTA-anchor substitution, calibration gate before test | complete; rejected both calib folds, zero new test scores/fits |
+| P17 | S27: train the same small head against equal TTA from the outset | complete; H45 pass (+.0131 over equal TTA) |
+| P18 | S28: head seeds 1/2 for the TTA-trained head (pre-declared pass path) | complete; H46 pass, seed SD .0009 |
+| P19 | S29: frozen RGB backbone capacity (DINOv2 B/L) at system level | complete; H47 pass, ViT-L adopted (D51); head over fixed ViT-L only +.0067 |
+| P20 | S30: matched final confirmation, encoder seeds 0/1/2 × both folds (4 new GPU fits) | proposed, not frozen; needs Kaggle authorization; C2 decides head vs fixed fusion |
+| P21 | Crossed-session/lot acquisition pilot and locked external test (= P13) | top scientific priority; only route to the away-from-session-8 bottleneck (F113) |
 
 Use [S20](studies/S20_rgb_pathway/README.md), [S21](studies/S21_complementary_rgb/README.md)
 and [S22 runbook](studies/S22_complementary_v5/README.md). S17/S18 stay reserved and
 unchanged. CPU class intervals measure variety heterogeneity on reused scans, not
-independent-session replication. There are no new GPU results in this phase.
+independent-session replication. Corrected-fold results are now recorded in S22/S23;
+the next bounded architecture experiment is S27, using the same learned head and its intended TTA anchor.
+
+## Architecture-development compute amendment (2026-10-05)
+
+The user explicitly reaffirmed a screening phase: preserve acquisition directions,
+use seed0 on both corrected folds first, and spend extra seeds only on meaningful
+finalists. [S22 amendment02](studies/S22_complementary_v5/amendment02.md) preserves
+the six-cell parent and supersedes P11's allocation with two initial fits. Local
+MPS/fp32 replaces unavailable CUDA/T4 hardware as a declared runtime change; v5
+architecture, batch, R1 schedule, calib selection, splits and TTA remain fixed.
+
+At amendment sealing P11 was running, not complete. P12 now means a minimal additive residual head over
+frozen HSI/RGB features if fixed fusion passes the recorded consistency gate. No
+automatic intermediate-baseline seed expansion. P13 remains required for general
+session/lot claims. Final learned architecture and matched HSI/RGB/fixed-fusion
+controls eventually receive seeds0/1/2 on both corrected folds; selective mechanism
+ablations are confirmed when needed for a claimed contribution. This development
+policy does not waive paper validation or rewrite reserved S17/S18.
+
+The local runtime fallback was explicitly superseded by
+[S22 amendment05](studies/S22_complementary_v5/amendment05.md) once the configured
+private Kaggle CUDA context was located. Both complete screening fits use the
+original two-T4/fp16 runtime; the six-epoch MPS attempt is retained as interrupted,
+without held-out scoring. Seed allocation and scientific gates are unchanged.
+
+The [confirmation queue](studies/S22_complementary_v5/confirmation_queue.md) specifies
+which final systems and mechanism controls should receive additional seeds, and
+how shared encoder checkpoints avoid redundant control fits. Deterministic RGB
+refits are not seed replication; new acquisitions remain a separate requirement.
+
+## Observed development outcomes (2026-10-05)
+
+P11 completed two full v5 CUDA fits, 189/177 epochs, 47.33 min total bootstrap wall
+time. Equal fusion gains .045339/.040033 F1, mean +.042686 [.027554,.057266],
+but cross gain +.000912 [−.047802,.049617] is unsupported. Do not expand this
+intermediate baseline merely to repeat an established classification effect.
+
+P12 completed one 23,514-parameter head per fold on existing encoders, 6.85 min CPU
+wall time. Mean F1 .604312; gain over matched equal-single +.010780
+[.002308,.019329], over equal TTA only +.002717 [−.005946,.011384]. Retain it
+provisionally. P14 completed four cheap branch heads in5.65min without new encoder
+fits. Neither smaller correction passes adoption; strict H42 fails because the full
+head's .004767 advantage over HSI-only is below .005. Do not round this into a pass.
+
+P15 selectively repeated only the full head at head seeds1/2 on the same two seed0
+encoders (four fits,9.76s). Mean F1 .604054, matched gain +.010522
+[.001851,.018941], descriptive seed-delta SD .000279. H43 passes; TTA advantage
++.002459 [−.006634,.011215] remains small and uncertain. This is head sensitivity,
+not encoder or fresh-session replication.
+
+P16 substituted TTA probabilities into the fixed trained head. Both calibration
+scores decreased; the predeclared gate stopped it without any new test scoring.
+H44 is unevaluated. P17 therefore proposes training the same23,514-parameter head
+against the TTA anchor from the outset. Profile/cache outer-training-only frozen
+TTA inference, seal runtime/input hashes and gates, then seed0 both folds first.
+[S27 brief](studies/S27_tta_trained_head/README.md). No new encoder fit or expanded
+architecture is planned at this step; additional seeds remain conditional.
+
+Final selected systems and matched controls eventually need independent encoder/head
+seeds0/1/2 on both corrected folds and independent crossed acquisitions. Existing
+three-head results do not meet that obligation. Ten cheap head fits and two full
+HSI fits were completed across S22–S26; S26 used zero fits. No job remains running.
+
+
+## Direction revision after S27–S29 (2026-10-05)
+
+**What changed and why.** S27 was executed as the brief proposed. Against the prediction
+recorded before its outcome, the head trained against the TTA anchor passed its practical gate
+(+.0131 over fixed fusion, F109), and S28 showed it is head-seed stable (F110). The pre-declared
+pass path was to retain the head and define the smallest confirmation.
+
+A descriptive diagnostic of saved predictions showed that representations, not the fusion form,
+limit the system:
+- 69% of cross-session kernels are wrong in both modalities;
+- the either-modality oracle is .697 against .619 fused;
+- RGB was a ViT-S/14 probe.
+
+Before spending GPU seeds, S29 therefore ran the cheapest representation test S19 had planned
+and deferred: frozen DINOv2 ViT-B/L. ViT-L improves the system by +.0124 (H47 pass, D51), and
+improves RGB transfer for the first time. It also shrinks the head's own margin to +.0067 (F112).
+The learned head is now a borderline component whose retention S30 must decide with matched
+encoder seeds.
+
+**Why development screening stops here (D52).** Every S22–S29 gain is within-acquisition or
+toward session-8 destinations. Away-from-session-8 recall is ≈ .18 for every system and
+session attraction ≈ 57% (F113). The remaining learned margins (~.01) are comparable to the
+historical encoder σ (.009). More modelling on reused scans would select on noise and cannot
+reach the transfer bottleneck. The final selected system needs exactly one matched confirmation
+(S30). The paper's transfer claim needs crossed acquisitions (P21).
+
+**Compute this phase:** ≈ 21 min CPU train-row TTA, ≈ 19 min MPS frozen ViT-B/L extraction, and
+ten head fits (seconds). Zero encoder fits. No broad sweep: two backbones and one fixed recipe.

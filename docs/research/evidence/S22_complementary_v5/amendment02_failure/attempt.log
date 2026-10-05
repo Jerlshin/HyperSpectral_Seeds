@@ -1,0 +1,62 @@
+[DATA] ✓ Page cache warmed: 2.33 GB in 0.3 s (8077 MB/s)
+[DATA] ✓ Dataset (mmap): 2.3 GB on disk  | num_workers=2 (eval 2) | pin_memory=False | persistent=True
+Spectral: 32 of 215 bands — REDUCED arm via a pre-sliced cube (band_axis.json) of 32. This is the retained band-selection ablation pathway, not the primary protocol.
+Split: frozen_complementary (fold 0)  train: 3,681 (43%)  calib: 630 (7%)  val: 2,156 (25%)  test: 2,157 (25%)
+  180 scans, 2–2 per class  |  train↔val∪test group-disjoint: True  val↔test: False  calib↔train: False
+  90 classes have one eval scan, so their val/test boundary is patch-level (val and test are both held out from train, so the headline contract still holds).
+Samples/class (train): ~40
+Model  : spectral_seed_net  (2,725,700 params)
+Params : 2.73M
+Device : mps
+[GPU] Apple Silicon (Metal / MPS)  |  12.7 GB recommended working set
+Kernels: MPS watermark=unbounded/0.8
+Graph  : torch.compile=off (inductor/default)  |  fused AdamW=False  |  channels_last=False  |  TF32=False
+Precis : AMP=off (fp32)
+[RUN] Single stage
+
+════════════════════════════════════════════════════════════════════════════════════════════════
+ Single stage — 200 epochs max  (CHANGES §17)
+────────────────────────────────────────────────────────────────────────────────────────────────
+ Mixup α=0.35 for epochs 1–30, off after
+ Margin 0 → 0.0 over epochs 31–31  (s=32.0)
+ Label smooth 0.1 → 0.04  |  focal γ=0.0
+ Aux: aux w = 0.648 → 0.250 (legacy: max(0.25, 0.65·(1−0.7·t/T)); model.aux_head_weight=0.2 is NOT applied)
+ AdamW 0.0005 → 5e-06, 5-epoch warm-up, cosine  |  per-group clip 50.0 (legacy groups)
+ Clean fit: 1000 fixed training kernels (seed 0), eval mode, live + EMA
+ Selected on: calib (630 patches)  |  Early stop patience 40
+ Phase B: off (A6 has not earned it)
+ Precision: AMP=off (fp32)  |  head always fp32
+════════════════════════════════════════════════════════════════════════════════════════════════
+Traceback (most recent call last):
+  File "/Users/jerlshin/FieldOfInterest/ResearchWork/HSI_RGB_seeds/Code/scripts/run_complementary_v5.py", line 127, in <module>
+    main()
+    ~~~~^^
+  File "/Users/jerlshin/FieldOfInterest/ResearchWork/HSI_RGB_seeds/Code/scripts/run_complementary_v5.py", line 98, in main
+    resolve_pipeline(str(cfg.pipeline))(ctx)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "/Users/jerlshin/FieldOfInterest/ResearchWork/HSI_RGB_seeds/Code/src/spectralquadnet/engine/pipelines/single.py", line 54, in run
+    best_select_f1 = run_single_stage(
+        cfg,
+    ...<17 lines>...
+        clean_fit=_clean_fit_probe(ctx),
+    )
+  File "/Users/jerlshin/FieldOfInterest/ResearchWork/HSI_RGB_seeds/Code/src/spectralquadnet/engine/stages/single_stage.py", line 322, in run_single_stage
+    tl, ta = train_one_epoch(
+             ~~~~~~~~~~~~~~~^
+        cfg,
+        ^^^^
+    ...<30 lines>...
+        aux_weight=single_stage_aux_weight(cfg, ep, ep_total),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/jerlshin/FieldOfInterest/ResearchWork/HSI_RGB_seeds/Code/src/spectralquadnet/engine/train_epoch.py", line 432, in train_one_epoch
+    loss_value, acc_value = _resolve_step_scalars(loss, _batch_accuracy(logits, ya))
+                            ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jerlshin/FieldOfInterest/ResearchWork/HSI_RGB_seeds/Code/src/spectralquadnet/engine/train_epoch.py", line 208, in _resolve_step_scalars
+    values = torch.stack([loss.detach().float(), accuracy.detach().float()]).cpu().tolist()
+             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/site-packages/torch/utils/data/_utils/signal_handling.py", line 73, in handler
+    _error_if_any_worker_fails()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+RuntimeError: DataLoader worker (pid 11619) is killed by signal: Terminated: 15. 

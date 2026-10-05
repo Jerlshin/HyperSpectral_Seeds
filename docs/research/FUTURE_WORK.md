@@ -10,11 +10,39 @@ ID and leave the row in place.
 
 ---
 
-## Current priority after S20/S21 (2026-10-04)
+## Current priority (2026-10-05, after S27–S29: confirmation, then acquisitions)
 
-**Next: [S22's six corrected-fold v5 fits](studies/S22_complementary_v5/README.md),
-then fixed RGB fusion.** Legacy two-fold coverage was not complementary (F102).
-Do not reuse old v5 networks on new partitions or silently amend reserved S17/S18.
+**Development screening is closed (D52). Next compute: [S30 matched final confirmation](studies/S30_final_confirmation/README.md)
+(proposed, not frozen). Next science: the crossed-session/lot acquisition pilot (FW-42).**
+S27 (head trained against TTA, +.0131), S28 (head-seed stable) and S29 (ViT-L RGB, head .6272)
+all passed. The selected system's learned head adds only +.0067 over fixed ViT-L fusion (F112).
+That margin is for S30 C2 to decide with encoder seeds 0/1/2, which needs four GPU fits and
+authorization to use the Kaggle quota. No model change has moved away-from-session-8 recall
+(≈ .18; F113). That bottleneck is acquisition-limited.
+
+- FW-45 → S27 complete (H45 pass), S28 complete (H46 pass).
+- FW-40 partially completed by S29: frozen DINOv2 B/L capacity screen done; ViT-L adopted (D51).
+  Higher-resolution crops, DINOv3/ConvNeXt and RGB fine-tuning remain deferred, now behind S30
+  and acquisitions rather than next in line.
+- **FW-46 (new) · S30 matched final confirmation.** 4 HSI fits (seeds 1/2 × 2 folds) exporting
+  embeddings and train-row TTA, plus 12 cheap heads. Contrasts C1–C4 frozen before scoring. Decides
+  head-vs-fixed fusion for the paper system. ≈ 95 min wall on 2×T4 (estimate from S22).
+- **FW-42 (raised to top scientific priority).** Crossed sessions and lots, ≥ 4 sessions with all
+  target varieties, two lots; pilot ≈ 20 varieties allowed (S19 §5). Only this can test
+  away-from-session-8-type transfer; lock the S30 system before applying it.
+
+### Superseded priority note (2026-10-05, before S27)
+
+
+**Next proposed: [S27, the same small learned head trained against equal TTA](studies/S27_tta_trained_head/README.md).**
+S22–S26 are complete and no job is running. S22's corrected fusion effect justifies
+learning; the S23/S25 head adds stable single-view gain but little certain advantage
+over TTA. S24 fails simplification/strict necessity; S26 fails calib and never scores
+a new held-out predictor. Profile outer-training-only TTA inference, then freeze a
+bounded seed0/both-fold candidate. Extra seeds go to a meaningful final candidate
+and matched controls; no automatic intermediate three-seed validation. Legacy
+coverage was defective (F102); never reuse old networks on corrected partitions
+or silently amend reserved S17/S18.
 
 - FW-39 completed: all8,624 retained pairs, native masks/crops, compact full215 and
   strict214 measurements, exact historical k32 parity, audited16 exclusions.
@@ -29,9 +57,15 @@ Do not reuse old v5 networks on new partitions or silently amend reserved S17/S1
   invariance from existing kernels.
 - FW-43 remains open: closest-prior-art matching and a locked independent test are
   still required for a broad final-paper claim.
-- FW-44 / H40 → S22: exactly six GPU fits and one frozen analysis, prepared/unrun.
-  Positive F1 with uncertain cross benefit warrants only a bounded benchmark claim;
-  failure retains unimodal HSI. See D42–D44 and the current resume file.
+- FW-44 / H40 → S22 completed: immutable six-fit parent; explicit amendments02/05
+  ran seed0 on both corrected folds. H40-screen passes, neural transfer gain unsupported.
+  Subsequent learned-head and cheap selective replication are recorded in S23–S26.
+  Finalist confirmation follows the [conditional queue](studies/S22_complementary_v5/confirmation_queue.md).
+- FW-45 → S27 proposed: learn against the intended TTA anchor with the existing
+  23,514-parameter additive architecture. Initially two head fits, no new encoder
+  training. Cache train-only frozen TTA inference after runtime assessment; seal
+  H45 before execution. Weak practical gain stops expansion; a clear gain earns
+  selective sensitivity and matched finalist confirmation. F104–F108; D47–D49.
 
 The dated S19 proposal and reserved HSI queue below are retained as history; this
 section explicitly updates their priority and completion status.
@@ -408,3 +442,7 @@ then the band-budget result; publish the negative results (F05, F09, F18, F25).
 | FW-31 Y1, FW-32 Y2, FW-33 Y3, FW-17 Y4, FW-34 P0 (run S13, read) | S13 → S14 |
 | FW-35 Y3 replication, FW-36 Y3 dissection (run S15, read) | S15 → S16 |
 | FW-37 v5 tier-1 row, FW-03 (k64 screen), FW-38 end-map extent | S17 (frozen in S16) |
+
+| FW-44 corrected-fold neural rebaseline and fixed fusion | S22 (two-fit amended screen complete) |
+| FW-45 learned head against the TTA anchor | S27 + S28 (both gates pass) |
+| FW-40 (part) frozen RGB backbone capacity | S29 (ViT-L adopted) |

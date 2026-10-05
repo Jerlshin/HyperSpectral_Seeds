@@ -1,0 +1,8 @@
+{
+  "training_plan_sha256": "1808076bcabd9189c55f78abc621e7fdd27b938834bea9f4c1f47263b82b8e76",
+  "partition_plan_sha256": "e4d1e4a3d469f98c2c4c7e69b023a9835d56a12cda4159c108d4ea2504bf63ca",
+  "action": "train",
+  "fold": 0,
+  "seed": 0,
+  "gpu_results": "pending"
+}

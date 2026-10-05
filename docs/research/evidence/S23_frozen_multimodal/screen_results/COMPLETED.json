@@ -1,0 +1,19 @@
+{
+  "plan_sha256": "46cdecf0c7e114c5ce78fd3ed055571be2638c224bc9e99cd834496121f2cdb7",
+  "files": {
+    "selection_f0.json": "cbaf51d382e2316c4a859f79fb0dedc5169bef8d661d62c594ed8b499da34ef3",
+    "predictions.csv.gz": "4f6e481d81a5ff647e432db475cd3fa7b5d6558213d28a1f3b70cd044a4275eb",
+    "metrics.csv": "a93d04f3e96db6cd02cbd649b4225f75a9c7b98c4920f1e6882ddfaf8e7da771",
+    "inference_audit.json": "a054c7e896eaaf94c73d7fb1cca1c7f2f1c267ddc4f29928a020f71e533192ba",
+    "selection_f1.json": "2a8566d7ca4b3fe07e9c0d438350dde1f6da3459a493a40e6f34ddb8b6e2c92b",
+    "hypothesis.json": "7ab92537a94fc86a6964ed502ddd220ecb0898197544bb9115eabbc5eff4cb94",
+    "STARTED.json": "c6d90dac334c534f77bb4e9da2c7ba02fb6b6e82ffdbf06e535b352caddd52be",
+    "head_f1.pth": "90e6c5a373141c034ad325c48cf2f5ece3a2398d2a403fcb3208ceb0b4b44933",
+    "head_f0.pth": "9e944324cd08885029cbe6f955368d5ecfaebe6cce0f13a3ada7baebd0ec128b",
+    "selection.json": "d0253730bc646b8f19d399a0faee3e0234e886d3a9e2405e34af6a9801b9d43b",
+    "per_class.csv": "5e9aada127402464d36b28fe904ea51356fb63c258755f43c1790c99a741eb2a",
+    "learning_curves.csv": "001e3fa0742a5e34e0548e2c0797f86d9527b55a2c211d017f362d6d434d6fdf",
+    "scales_f0.npz": "87905352b8d42f8f342939e40cd045d02e1d1ee43048f50e0e4c5e461e421b6b",
+    "scales_f1.npz": "94aa5f1f2e1574ce41a1e27ec5f84cadb7f533cadb6c2a4ad076b466a7d677da"
+  }
+}

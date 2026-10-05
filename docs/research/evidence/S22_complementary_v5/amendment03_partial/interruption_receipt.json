@@ -1,0 +1,17 @@
+{
+  "date": "2026-10-05",
+  "interruption_requested_after_completed_epoch": 5,
+  "actual_last_completed_epoch": 6,
+  "held_out_evaluation": false,
+  "completed_screening_cell": false,
+  "reason": "MPS interruption was delivered after asynchronous GPU work and the sixth epoch completed. The sealed05 motivation describes the five-epoch observation at the time of the stop decision; actual interruption state is six.",
+  "full_partial_output": "outputs/s22_partial_amendment03/f0_s0",
+  "marker": {
+    "stage": 1,
+    "epoch": 6,
+    "best_f1": 0.18991994637914403,
+    "no_improve": 0,
+    "finished": false,
+    "saved_at": "2026-10-05 00:35:14"
+  }
+}

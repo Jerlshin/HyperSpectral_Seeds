@@ -1,0 +1,52 @@
+[
+  {
+    "arm": "dino_b",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "dino_l",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "dino_s",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "equal_b",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "equal_l",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "equal_s",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "head_b",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "head_l",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "head_s",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "hsi_tta",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  }
+]

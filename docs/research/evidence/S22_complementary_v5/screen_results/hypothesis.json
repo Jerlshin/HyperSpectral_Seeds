@@ -1,0 +1,27 @@
+{
+  "H40_screen": true,
+  "H40_original_confirmatory": "not evaluated: original three-seed design amended before training",
+  "fold_f1_deltas": [
+    0.04533927406935472,
+    0.040033087241020636
+  ],
+  "fold_cross_deltas": [
+    0.01963391739674594,
+    -0.01781045751633987
+  ],
+  "development_gate": true,
+  "seed_replication": "defer to final learned candidate and matched controls",
+  "confirmation_required_before_paper_claim": true,
+  "delta_f1": 0.04268618065518767,
+  "ci": [
+    0.027554378345465487,
+    0.057266421342535394
+  ],
+  "delta_cross": 0.0009117299402030331,
+  "cross_ci": [
+    -0.04780228758169934,
+    0.04961749061326651
+  ],
+  "transfer_gain_supported": false,
+  "scope": "One retrained HSI seed on both corrected folds; shared frozen RGB probes; existing acquisitions. Class intervals exclude seed uncertainty."
+}

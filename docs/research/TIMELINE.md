@@ -314,3 +314,75 @@ partitions, rank-safe output/resume preflight, once-only exact-row fusion analys
 and CPU training-only forward/backward profile (2,725,700 parameters, finite gradients).
 **Status:** GPU fits unrun; H40 unresolved. Pre-GPU engineering amendment preserved.
 **Next:** run six frozen cells, return complete outputs, analyze once and update claims.
+
+### S22 amendment02/03 and prospective S23 — 2026-10-05
+**Triggered by:** explicit user instruction to preserve both acquisition directions
+but screen intermediate architectures at one seed, then selectively confirm finalists.
+**Did:** preserve the six-fit parent; seal amendment02 (two fits), declare local
+MPS/fp32 after training-only CPU/MPS profiling. The first attempt failed at epoch0
+from a terminated loader worker; preserve the trace and seal workerless amendment03.
+The retry has completed epochs and saved resumable checkpoints; held-out results pending.
+**Engineering:** separately sealed analysis-code receipt04 keeps all old source
+intact and selects the active03 plan by default, with no scoring rule changes.
+S23's23,514-parameter additive frozen-feature residual head is implemented and
+training-only tested, conditionally frozen/executed only if the S22 gate passes.
+**Changed:** D45/D46, H40-screen/H41-screen; master plan and live handoff. Original
+S22 H40 is not claimed confirmed; S17/S18 and completed historical records remain intact.
+
+### S22 amendment05 and complete corrected-fold screening — 2026-10-05
+**Did:** after training-only runtime assessment, restored original two-T4 DDP/fp16
+training on the configured private research host. Two full fits, seed0 both corrected
+folds,189/177 epochs,47.33min bootstrap wall time. Final inference fp32, saved logits
+float16. Retrieved/verified complete outputs, analyzed fixed RGB fusion once.
+**Found:** F1 .558909→.601595, paired gain+.042686 [.027554,.057266], gains both
+folds; cross+.000912 [−.047802,.049617], transfer unsupported. H40-screen passes.
+**Changed:** F104/D47; advance smallest learned head instead of four more baseline
+GPU fits. Failed epoch0 and interrupted six-epoch MPS attempts retained without
+held-out scores. Original six-cell plan and S17/S18 reservations remain unchanged.
+
+### S23–S25 · Learned system, branch controls and selective head sensitivity — 2026-10-05
+**Did:** froze/executed23,514-parameter additive head on existing HSI/RGB encoders,
+seed0 both folds; then four branch-removal heads; then four additional full-head
+fits at seeds1/2 using validated feature caches. No new encoder fits after S22.
+**Found:** S23 F1 .604312; matched+.010780 but TTA+.002717 uncertain. No S24 smaller
+candidate qualifies; strict H42 fails (.004767 versus HSI-only < .005). S25 head
+seeds0/1/2 mean .604054, matched+.010522 [.001851,.018941], descriptive gain
+SD .000279. H41/H43 pass; transfer/TTA superiority and encoder-seed stability unconfirmed.
+**Compute:** S23/S24 feature+head phases6.85/5.65min; S25 four extra heads9.76s.
+**Changed:** F105–F107/D48; retain full head provisionally, no seed expansion for
+rejected smaller variants, eventual matched independent encoder/head confirmation.
+
+### S26 · Fixed TTA-anchor intervention rejected; S27 proposed — 2026-10-05
+**Did:** fixed learned weights/features and changed anchor; sealed calibration gate
+before any new held-out predictor. Zero fits.
+**Found:** both calibration F1 deltas negative; reject with zero new held-out scores.
+H44 remains unevaluated. F108/D49 propose training the same head against intended
+TTA fusion from the outset. S27 is a design brief, not frozen/executed: profile
+train-only frozen TTA inference, cache it, then one head seed both corrected folds.
+**State:** all S22–S26 computations complete; no job running. Source/input hashes,
+compact prediction/selection evidence, figures, master plan and progress are retained.
+
+### S27–S29 · TTA-trained head, head-seed check, RGB backbone capacity — 2026-10-05
+**Did:**
+- Profiled train-only 12-view TTA (CPU 8.6 vs MPS 10.6 rows/s), cached train-row TTA for both
+  folds (21 min CPU), audited it against saved CUDA calibration TTA (max |Δ| .0039, 0 flips).
+- Froze S27 and trained the S23 head against equal TTA (2 fits, <1 s).
+- S28: head seeds 1/2 (4 fits).
+- Ran a descriptive bottleneck diagnostic on saved predictions.
+- Extracted frozen DINOv2 ViT-B/L features (label-free, MPS, 19 min).
+- S29: ViT-B/L probes and system-level heads (4 fits).
+
+Zero new encoder fits.
+**Found:**
+- S27 passes H45 (+.0131 over equal TTA), against its recorded prediction.
+- S28 passes H46 (+.0139, seed SD .0009).
+- S29 passes H47: ViT-L head .6272, +.0124 over the ViT-S head. RGB-only ViT-L +.0445 F1, with
+  the first positive-interval RGB cross gain.
+- The head's margin over its own anchor shrinks to +.0067 on ViT-L.
+- Every cross gain is toward session 8; away-from-session-8 recall stays ≈ .18 and session
+  attraction ≈ 57% for every system.
+
+**Changed:** F109–F113, D50–D52, H45–H47. The selected development system is v5 TTA + ViT-L
++ TTA-trained head. Development screening on reused scans stops. S30 (four matched encoder fits,
+proposed, needs Kaggle authorization) decides whether the head is kept. Crossed acquisitions
+become the scientific priority.

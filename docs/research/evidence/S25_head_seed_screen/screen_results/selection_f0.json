@@ -1,0 +1,18 @@
+[
+  {
+    "fold": 0,
+    "head_seed": 1,
+    "encoder_seed": 0,
+    "selected_epoch": 7,
+    "epochs_completed": 22,
+    "calib_f1": 0.7926243201243202
+  },
+  {
+    "fold": 0,
+    "head_seed": 2,
+    "encoder_seed": 0,
+    "selected_epoch": 5,
+    "epochs_completed": 20,
+    "calib_f1": 0.7882903120080624
+  }
+]

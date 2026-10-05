@@ -1,0 +1,46 @@
+[
+  {
+    "fold": 0,
+    "refit_seed0": {
+      "head_seed": 0,
+      "selected_epoch": 4,
+      "epochs_completed": 19,
+      "calib_f1": 0.7952708133513088,
+      "anchor_calib_f1": 0.7536016481320919,
+      "parameters": 23514
+    },
+    "s27": {
+      "fold": 0,
+      "head_seed": 0,
+      "selected_epoch": 4,
+      "epochs_completed": 19,
+      "calib_f1": 0.7952708133513088,
+      "anchor_calib_f1": 0.7536016481320919,
+      "s23_single_anchor_head_calib_f1": 0.7894178246551827,
+      "s23_single_anchor_calib_f1": 0.7621542530778856
+    },
+    "identical": true
+  },
+  {
+    "fold": 1,
+    "refit_seed0": {
+      "head_seed": 0,
+      "selected_epoch": 7,
+      "epochs_completed": 22,
+      "calib_f1": 0.7921093335438021,
+      "anchor_calib_f1": 0.7685403454856499,
+      "parameters": 23514
+    },
+    "s27": {
+      "fold": 1,
+      "head_seed": 0,
+      "selected_epoch": 7,
+      "epochs_completed": 22,
+      "calib_f1": 0.7921093335438021,
+      "anchor_calib_f1": 0.7685403454856499,
+      "s23_single_anchor_head_calib_f1": 0.7832424840190578,
+      "s23_single_anchor_calib_f1": 0.7599597502077646
+    },
+    "identical": true
+  }
+]

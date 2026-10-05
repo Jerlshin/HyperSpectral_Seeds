@@ -1,0 +1,20 @@
+[
+  {
+    "head_seed": 0,
+    "encoder_seed": 0,
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "head_seed": 1,
+    "encoder_seed": 0,
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "head_seed": 2,
+    "encoder_seed": 0,
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  }
+]

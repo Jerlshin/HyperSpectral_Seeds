@@ -1,0 +1,10 @@
+........................                                                 [100%]
+=============================== warnings summary ===============================
+tests/unit/test_rgb_pathway.py::test_grid_missing_component_does_not_shift_identity
+  /opt/homebrew/Caskroom/miniforge/base/lib/python3.13/site-packages/joblib/externals/loky/backend/context.py:131: UserWarning: Could not find the number of physical cores for the following reason:
+  invalid literal for int() with base 10: ''
+  Returning the number of logical cores instead. You can silence this warning by setting LOKY_MAX_CPU_COUNT to the number of cores you want to use.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+24 passed, 1 warning in 4.35s

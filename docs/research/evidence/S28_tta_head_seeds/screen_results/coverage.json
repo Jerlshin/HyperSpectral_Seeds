@@ -1,0 +1,12 @@
+[
+  {
+    "arm": "tta_trained_residual_s1",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  },
+  {
+    "arm": "tta_trained_residual_s2",
+    "held_out_rows": 8624,
+    "unique_rows": 8624
+  }
+]

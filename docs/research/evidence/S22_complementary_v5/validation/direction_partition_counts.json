@@ -1,0 +1,16 @@
+[
+  {
+    "fold": 0,
+    "held_out_rows": 4313,
+    "bridge_classes": 17,
+    "bridge_classes_to_session8": 6,
+    "bridge_classes_from_session8": 11
+  },
+  {
+    "fold": 1,
+    "held_out_rows": 4311,
+    "bridge_classes": 17,
+    "bridge_classes_to_session8": 11,
+    "bridge_classes_from_session8": 6
+  }
+]

@@ -1,6 +1,16 @@
 # S22 · v5 rebaseline and fixed RGB fusion on complementary folds
 
-2026-10-04 · **Prepared and frozen; six GPU fits unrun.** CPU engineering profile
+2026-10-05 · **Complete under amendment02/05: one seed × both corrected folds.**
+Read the [corrected-fold results](results.md): mean v5 F1 .558909, equal RGB fusion
+.601595, paired gain +.042686 [.027554,.057266]. H40-screen passes; cross-recall
+gain is unsupported. The small S23 learned screen has advanced; additional S22
+seeds are deferred to the [finalist confirmation queue](confirmation_queue.md).
+See [amendment02](amendment02.md) for compute/scientific scope and
+[amendment05](amendment05.md) for current CUDA execution;
+[amendment03](amendment03.md) preserves the interrupted local runtime attempt; the original
+six-cell contract below is retained as history and is superseded for screening.
+
+Original state (2026-10-04): six GPU fits unrun. CPU engineering profile
 completed on two training rows with finite gradients, 2,725,700 parameters and zero
 held-out predictions. No learning curve, GPU timing or neural result is claimed.
 
@@ -9,7 +19,7 @@ held-out predictions. No learning curve, GPU timing or neural result is claimed.
 fusion against linear HSI. Old v5 checkpoints were trained on different scans and
 cannot serve as the neural control on S21 rows. This study closes that specific gap.
 
-## Frozen contract
+## Original frozen contract (historical; amended for development above)
 
 The executable [configuration](../../../../configs/research/s22_complementary_v5.json)
 and [evidence copy](../../evidence/S22_complementary_v5/preregistration.json) have

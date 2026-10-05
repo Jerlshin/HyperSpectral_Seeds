@@ -1,0 +1,17 @@
+{
+  "plan_sha256": "1dd50dae26f356ac963b4713ae5820a5476ede2129f8c554178a09abc7ea7f95",
+  "files": {
+    "summary.json": "b71ceb9724c69ada884ba8d9c5c7d157829780a33bd00910d9a83eac05511c87",
+    "calibration.json": "6b083368fc68cf36dfdacfb61687ccbe8198c65e04a91f49b2f2ecea1d9a8768",
+    "all_fold_metrics.csv": "e25dc1bcbc5e1a75f21c989d58e619f43cff1d392f1f47b9074174c160f4aa0b",
+    "predictions.csv.gz": "f4b098a3f3a688e530bec01bf86dd8fb7f2f01bfa0d533254ced16e8c0c9db35",
+    "metrics.csv": "e0854f6d0d2442c08981154e466c5aebd760365470ccc9e3c0fa6015d6ea592b",
+    "hypothesis.json": "dd53f6ef2224e8f98f75de7dba4ae34b06b19be01dd9d448f4885f9cf8f804b0",
+    "COMPLETED.json": "0fd29e56cdeb687fd2dd5869f8935083ab7faf40cd35716dd116992c8d9214af",
+    "coverage.json": "963668fbb0d77b106c368ea64f166511cb4fca8ea64b8746de9879448a076fb1",
+    "per_class.csv": "6d5f4f6ca0bc2cc49300c2112ce3d7146469bb9f14c8ccce11e7340bb5108d6d",
+    "complementarity.csv": "319c89d790d6db50c3451551ebd042318db64b50f6b1fd3718b57a863e48ec37",
+    "all_per_class.csv": "4533358649af33dcc5eeeb8abb6f5a2244f2d30024db4a029fede7b2277a641a",
+    "acquisition_directions.csv": "f07b2c25df9a781c6b358a71507c57c3d6f3c1ccf7cc8e61a0ef2f80fd2a4a07"
+  }
+}

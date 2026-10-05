@@ -1,0 +1,10 @@
+{
+  "fold": 0,
+  "chosen_epoch": 6,
+  "calib_f1": 0.7894178246551827,
+  "anchor_calib_f1": 0.7621542530778856,
+  "hsi_temperature": 1.0,
+  "rgb_temperature": 2.0,
+  "parameters": 23514,
+  "encoder_source": "live"
+}

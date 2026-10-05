@@ -1,0 +1,11 @@
+{
+  "plan_sha256": "48c8b74076a18fcd76eda245be85f5dfcb5c739b700f7381bc409fcc6c298b1d",
+  "status": "complete",
+  "python": "3.13.12 | packaged by conda-forge | (main, Feb  5 2026, 06:11:05) [Clang 19.1.7 ]",
+  "torch": "2.14.0",
+  "device": "cpu",
+  "new_encoder_fits": 0,
+  "head_fits": 4,
+  "returncode": 0,
+  "seconds": 338.9356425409205
+}

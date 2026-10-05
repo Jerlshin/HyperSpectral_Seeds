@@ -850,3 +850,120 @@ identity. It is a diagnostic unavailable for ordinary unlabeled deployment.
 individual-kernel interactions; they do not justify cross-attention or a pairing-specific
 novelty claim. Not evidence that alignment could never matter for other models.
 [Contrast ledger](studies/S21_complementary_rgb/results.md).
+
+### F104 · Corrected-fold neural fusion helps classification, not established transfer (S22)
+**Evidence.** The explicitly amended seed-0 screen retrains v5 on both exhaustive
+S21 partitions. HSI TTA F1 .557860/.559958; equal RGB fusion .603199/.599991.
+Mean paired gain +.042686 [.027554,.057266], with positive gains on both folds.
+Same-session recall gains +.046565 [.031891,.062523]; cross recall gains only
++.000912 [−.047802,.049617], with +.019634/−.017810 fold deltas. Destination-session
+averages show negligible gains both toward and away from session 8. v5 substantially
+improves cross recall over linear HSI32 (.208578 versus .077941), explaining why
+RGB's prior transfer benefit against that weaker control does not carry over.
+**Decision implication.** H40-screen passes and justifies a small additive learned
+successor, rather than four more intermediate-baseline fits. H40's original
+three-seed confirmation remains unevaluated. Class intervals exclude seed/new-session
+uncertainty; do not claim that RGB improves neural transfer. The 11–12% RGB-only
+correct cases show usable error complementarity, with both rescues and harms.
+[S22 results](studies/S22_complementary_v5/results.md),
+[archived comparisons](evidence/S22_complementary_v5/screen_synthesis/comparisons.json).
+
+### F105 · A small learned correction passes screening, with uncertain advantage over TTA (S23)
+**Evidence.** A fixed 23,514-parameter additive head, seed 0 on both corrected
+folds, reaches .607767/.600857 F1. Against the matched equal single-view anchor,
+mean gain +.010780 [.002308,.019329], cross gain +.029276 [−.002958,.065573].
+Against stronger equal TTA fusion, F1 gain only +.002717 [−.005946,.011384] and
+cross +.023761 [−.006863,.057479]. H41 and its practical point gate pass, but
+neither stronger-reference superiority nor transfer improvement is established.
+**Decision implication.** Retain a provisional head and test learned-branch necessity
+cheaply on the same frozen encoders before adding encoder seeds. Confirm a selected
+final system and matched controls later; do not treat three heads on one encoder as
+encoder replication. RGB controls exactly match S21; CPU/GPU single-view differences
+are small and audited. This is reused-acquisition development, not final validation.
+[S23 results](studies/S23_frozen_multimodal/results.md).
+
+### F106 · Smaller learned corrections do not qualify; strict branch necessity fails (S24)
+**Evidence.** Four seed-0 heads, both corrected folds, fixed multimodal anchor.
+HSI-only/RGB-only correction mean F1 .599544/.595648 versus full S23 .604312.
+Full-minus-control gains +.004767 [.001701,.007868] and +.008664
+[.000140,.016806]. Both removals miss their own H41/practical adoption rules.
+**Scope.** Retain the full small head provisionally, but H42 fails: the HSI-only
+comparison is below the predeclared .005 practical threshold. Positive class
+intervals do not license rounding a failed gate into a pass. Parameter counts differ;
+these controls test useful learned correction sources, not necessity under matched
+capacity, feature interaction, or modality removal from the entire system.
+[S24 report](studies/S24_branch_multimodal/results.md).
+
+### F107 · Full-head gain is stable over three head initializations on fixed encoders (S25)
+**Evidence.** Selective four-fit replication at head seeds1/2, both corrected
+folds, reused seed-0 encoders and S24 feature caches; 9.76s. Original seed0 replay
+matches predictions exactly. Head-seed mean F1 .604312/.604091/.603758;
+three-head mean .604054, cross recall .235081. Matched single-view gain +.010522
+[.001851,.018941]; descriptive paired-delta SD .000279. H43 passes.
+**Scope.** Only head initialization was sampled. Against equal TTA, gain +.002459
+[−.006634,.011215] remains small and uncertain; cross intervals also include zero.
+Do not call this three full-system seeds or established transfer superiority.
+[S25 report](studies/S25_head_seed_screen/results.md).
+
+### F108 · Post-training TTA-anchor substitution fails calibration (S26)
+**Evidence.** Fixed S23 weights/features/scales, no fit; replace only the probability
+anchor with equal TTA. Calib F1 changes −.002395/−.005613. The prospective strict
+both-fold calib gate rejects the intervention. Zero new held-out scores; H44 is
+not evaluated and conditional head-seed evaluation never opens.
+**Scope.** The residual was learned relative to its single-view anchor. Test a
+separately frozen head trained against the intended deployment anchor (proposed S27),
+not a repaired post-hoc result. No held-out harm, TTA-trained failure, or practical
+superiority is measured by this calibration rejection.
+[S26 report](studies/S26_tta_anchor/results.md), [S27 brief](studies/S27_tta_trained_head/README.md).
+
+### F109 · Training the head against its TTA anchor gives a practical gain over fixed fusion (S27)
+**Evidence.** One 23,514-parameter additive head, head seed 0, both corrected folds,
+trained against the equal v5-TTA/DINOv2-S anchor (train-row TTA cached on CPU; calib/held-out
+anchors exactly S22's). Mean F1 .614719 against equal TTA .601595: **+.013124 [.004438, .021629]**,
++.012518 / +.013730 by fold. Cross +.027397 [−.002791, .062940]. H45-screen passes (E3, one seed).
+**Scope.** The anchor is ~100% correct on training rows, so the head learns confidence reshaping,
+not error correction. The prediction recorded before outcomes (a smaller gain than S23) was wrong. The S26 failure was
+specific to post-hoc anchor substitution. Rescues 341, harms 193 kernels. Session attraction of
+cross errors is unchanged (~57%). [S27](studies/S27_tta_trained_head/results.md).
+
+### F110 · The TTA-trained head is stable across head initializations (S28)
+**Evidence.** Head seeds 0/1/2 on the fixed seed-0 encoders: mean F1 .615537; gain over equal TTA
+**+.013942 [.006019, .021463]**; per-seed gains .0131 / .0149 / .0138; seed SD .000871. H46 passes.
+The shared helper reproduces S27's seed-0 selection exactly.
+**Scope.** Head-only variance. Encoder variance is unmeasured. The head-averaged cross interval
+(+.031559 [.003566, .064034]) is directional (session-8 destination) and is not a transfer
+claim. [S28](studies/S28_tta_head_seeds/README.md).
+
+### F111 · A larger frozen RGB backbone is a real lever, including RGB-only transfer (S29)
+**Evidence.** Same masked 224 crops and S21 probe. RGB-only F1: ViT-S .450520, ViT-B .474417,
+ViT-L .495042. ViT-L − ViT-S +.0445 [.0329, .0563]; cross **+.0338 [.0064, .0638]**. This is the
+first RGB change with a cross interval above zero. Equal fusion ViT-L − ViT-S +.0189 [.0113, .0259].
+The calibration-selected system, TTA-trained head on ViT-L, reaches .627150. H47 passes:
+**+.012431 [.005679, .019846]** over the ViT-S head; cross +.0111 [−.0074, .0331].
+**Scope.** One HSI encoder seed. The ViT-L head has 43,994 parameters against 23,514. ViT-B's head
+is not better than ViT-S's (−.0050). Pretraining overlap is unauditable.
+[S29](studies/S29_rgb_backbone_screen/README.md).
+
+### F112 · The learned head's margin shrinks as the RGB anchor strengthens (S29)
+**Evidence.** Head over its own equal anchor: ViT-S +.0131 (S27), ViT-L **+.0067 [.0001, .0133]**,
++.0041 / +.0093 by fold. Fixed equal ViT-L fusion (.620455) exceeds the S27 learned ViT-S system
+(.614719) with zero learned fusion parameters.
+**Implication.** Part of the learned head's value compensated for weak RGB features. Whether
+the head survives on top of ViT-L is undecided below the .01 threshold. It is S30's C2 contrast,
+with matched encoder seeds. Descriptive, one seed (E3-descriptive).
+[S29](studies/S29_rgb_backbone_screen/README.md).
+
+### F113 · No tested system moves transfer away from session 8 (S27–S29 diagnostic)
+**Evidence.** Cross-session recall for the 17 bridge varieties, by the test bundle's session:
+- outside session 8: .173–.196 for every system (HSI TTA .178, equal ViT-S .178, head ViT-L .180);
+- in session 8: .240 → .316.
+
+69% of cross-session kernels are wrong in both modalities. 57–59% of fused cross errors predict
+a class trained in the test kernel's own session, against 14% chance. This is unchanged by any
+fusion form or RGB backbone. 61% of the fused macro-recall deficit is in the 73 same-session classes.
+**Implication.** Representation and fusion changes raise within-acquisition and
+session-8-destination performance. The away-from-session-8 transfer bottleneck is
+acquisition-limited (F92/F98: all bridges touch session 8, whose RGB aperture differs) and
+needs crossed acquisitions, not more modelling on these scans. Descriptive, on reused development
+predictions. [Diagnostic](evidence/S27_tta_trained_head/bottleneck_diagnostic.json),
+[S29](studies/S29_rgb_backbone_screen/README.md).

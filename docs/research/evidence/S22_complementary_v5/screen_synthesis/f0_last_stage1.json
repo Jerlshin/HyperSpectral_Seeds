@@ -1,0 +1,8 @@
+{
+  "stage": 1,
+  "epoch": 189,
+  "best_f1": 0.7224715897755113,
+  "no_improve": 40,
+  "finished": true,
+  "saved_at": "2026-10-04 23:03:39"
+}
