@@ -1,0 +1,139 @@
+{
+  "study": "S40",
+  "kind": "engineering profile, no held-out row scored",
+  "data": "ablation/u430k32_grouped",
+  "band_geometry": {
+    "stored": 32,
+    "selected": 32,
+    "wavelengths": 32,
+    "configured": 32,
+    "acquired": 215
+  },
+  "banner": "Spectral: 32 of 215 bands \u2014 REDUCED arm via a pre-sliced cube (band_axis.json) of 32. This is the retained band-selection ablation pathway, not the primary protocol.",
+  "patch_dtype_on_disk": "float16",
+  "rows": {
+    "train": 3681,
+    "calib": 630,
+    "val": 2156,
+    "test": 2157
+  },
+  "parameters": {
+    "se": 6,
+    "spatial": 2184980,
+    "spectral": 77392,
+    "fuse": 131840,
+    "embed_net": 263936,
+    "arcface_head": 23040,
+    "aux_head_spatial": 44506,
+    "total": 2725700
+  },
+  "stem": {
+    "num_bands": 32,
+    "spectral_strides": [
+      2,
+      2,
+      1
+    ],
+    "kernel_depths": [
+      7,
+      5,
+      5
+    ],
+    "folded_depth": 8,
+    "fold_in_channels": 512,
+    "bands_never_read": []
+  },
+  "shapes": {
+    "se": [
+      2,
+      32,
+      64,
+      64
+    ],
+    "spatial.stem.stage1": [
+      2,
+      16,
+      16,
+      64,
+      64
+    ],
+    "spatial.stem.stage2": [
+      2,
+      32,
+      8,
+      32,
+      32
+    ],
+    "spatial.stem.stage3": [
+      2,
+      64,
+      8,
+      16,
+      16
+    ],
+    "spatial.stem.fold": [
+      2,
+      192,
+      16,
+      16
+    ],
+    "spatial": [
+      2,
+      256
+    ],
+    "spectral": [
+      2,
+      256
+    ],
+    "fuse": [
+      2,
+      256
+    ],
+    "embed_net": [
+      2,
+      256
+    ],
+    "arcface_head": [
+      2,
+      90
+    ],
+    "<output eval>": [
+      2,
+      90
+    ],
+    "<input x>": [
+      2,
+      32,
+      64,
+      64
+    ]
+  },
+  "host_ms_per_sample": {
+    "train_aug_medium": {
+      "samples": 128,
+      "median_ms": 0.266979041043669,
+      "mean_ms": 0.6162806021166034
+    },
+    "eval_no_aug": {
+      "samples": 128,
+      "median_ms": 0.1302914461120963,
+      "mean_ms": 0.1307158372583217
+    }
+  },
+  "cpu_fp32_saved_activation_bytes": 1296665296,
+  "device_step": {
+    "device": "mps",
+    "autocast": "fp16",
+    "batch": 64,
+    "steps_timed": 8,
+    "step_median_s": 2.511033895541914,
+    "step_min_s": 2.4418864159379154,
+    "forward_held_bytes": 1055501568
+  },
+  "host": {
+    "machine": "arm64",
+    "system": "Darwin",
+    "torch": "2.14.0",
+    "python": "3.13.12"
+  }
+}

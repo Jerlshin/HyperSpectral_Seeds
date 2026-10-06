@@ -1,0 +1,46 @@
+{
+  "set": "all",
+  "bands": 215,
+  "source_n_bands": 215,
+  "storage_dtype": "float16",
+  "total_bytes": 15260388712,
+  "build_seconds": 452.3,
+  "files": {
+    "band_axis.json": {
+      "bytes": 6493,
+      "sha256": "b2b6502b74b22be61272d21dd1be9c47e17ce00d181015a67851468995721495"
+    },
+    "groups.npy": {
+      "bytes": 69120,
+      "sha256": "e829e057a6b2b95cafae51cac767962fa75f3bd9c6376185afbe9812c5737a9f"
+    },
+    "labels.npy": {
+      "bytes": 69120,
+      "sha256": "20e037429e52ef5bdb52be64179b23ff7521939951ae4fde95c33a1810f7b8c6"
+    },
+    "masks.npy": {
+      "bytes": 70647936,
+      "sha256": "3d10dc4b736f4775491f796a0f54433eb46eeb891ae30d7c5f9ffa029e528e8e"
+    },
+    "morphology.npy": {
+      "bytes": 276096,
+      "sha256": "fb49f1d66a896e42083d250b8e01ef55f88d92deb4cc85446ab205dc878c222d"
+    },
+    "patches.npy": {
+      "bytes": 15189278848,
+      "sha256": "4185aa93dcb93b4206e152e77d52a32dc1adabfc988558d2f814dc161dc2f4af"
+    },
+    "radiometry.json": {
+      "bytes": 2187,
+      "sha256": "ad552413a5d7ab9080d34785c2dcc4457ed0b4abb216a702ad712c7da25ee7ea"
+    },
+    "scan_table.csv": {
+      "bytes": 35763,
+      "sha256": "97fc5ed7c73b3233280e28363502e738c90b6014cafe58e6dca1814ca0713deb"
+    },
+    "wavelengths.csv": {
+      "bytes": 3149,
+      "sha256": "82b315ac65ccd88ccd64593acf81e3809e12cd0fac1cabb8d8cf4dff24e235ea"
+    }
+  }
+}

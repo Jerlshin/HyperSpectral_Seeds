@@ -1,0 +1,45 @@
+Zip exists. Skipping download.
+Radiometry: tile  (per-scan division by the in-scene Spectralon tile — reflectance)
+Cubes: 180
+Classes: 90
+Scans: 180  Sessions: 9
+Pass 1 — Counting patches and measuring white tiles...
+Total patches: 8624
+White tiles: found in 180/180 scans; values {'own': 40391, 'session_shape': 104, 'session_gain': 0, 'unresolved': 5585}  → dataset_refl215_f16/white_tiles.csv
+Dropping 41 band(s) unresolved in 147 scan(s), 608.0-705.8 nm, from every scan: 215 of 256 bands kept  → dataset_refl215_f16/wavelengths.csv
+Pass 2 — Writing patches...
+Saved:
+patches   : (8624, 215, 64, 64)
+labels    : (8624,)
+groups    : (8624,) (180 scans)
+masks     : (8624, 64, 64)
+gain      : (8624, 2, 64, 64)
+morphology: (8624, 8) (area, major_axis, minor_axis, axis_ratio, eccentricity, solidity, equivalent_diameter, perimeter_over_sqrt_area)
+scan table: dataset_refl215_f16/scan_table.csv
+wavelength: dataset_refl215_f16/wavelengths.csv (215 bands)
+radiometry: dataset_refl215_f16/radiometry.json
+cube (8624, 215, 64, 64) float16; rows written 8624
+✓ side arrays, scan table, wavelengths and gain equal dataset
+k32 comparison: {'reference': 'dataset_u430k32', 'set': 'uniform430_k32', 'bands': 32, 'rows_compared': 8624, 'rows_not_bit_identical': 0, 'max_abs_difference': 0.0}
+✓ the uniform430_k32 bands are bit-identical to dataset_u430k32/patches.npy
+dataset_refl215_f16  (15.26 GB, 215 bands)
+         0.0 MB  b2b6502b74b22be6…  band_axis.json
+         0.1 MB  e829e057a6b2b95c…  groups.npy
+         0.1 MB  20e037429e52ef5b…  labels.npy
+        70.6 MB  3d10dc4b736f4775…  masks.npy
+         0.3 MB  fb49f1d66a896e42…  morphology.npy
+     15189.3 MB  4185aa93dcb93b42…  patches.npy
+         0.0 MB  ad552413a5d7ab90…  radiometry.json
+         0.0 MB  97fc5ed7c73b3233…  scan_table.csv
+         0.0 MB  82b315ac65ccd88c…  wavelengths.csv
+{
+  "max_abs": 0.0026254653930664062,
+  "max_rel_normal_range": 0.00048804294783622026,
+  "rms": 4.6775585483479534e-05,
+  "nonzero_values": 1961575239,
+  "below_normal_range": 169332,
+  "flushed_to_zero": 163761,
+  "max_flushed_magnitude": 3.35729280171533e-15,
+  "source_min": 0.0,
+  "source_max": 9.237000465393066
+}

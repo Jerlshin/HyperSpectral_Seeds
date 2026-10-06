@@ -426,3 +426,16 @@ the next architecture from that evidence; defer S30.
 - S30 superseded by S39;
 - crossed acquisitions are now a prerequisite for the next novel mechanism
   (cross-acquisition, cross-modal consistency learning).
+
+### S40 · SeedNet v5 on all 215 bands prepared for Kaggle T4 x2 — 2026-10-06
+
+**Did:** rebuilt the 215-band reflectance cube as float16 (15.26 GB) from the archive, and showed it
+identical to the data every prior study used. Froze a two-cell plan (fold 0/1 × seed 0, `744c65bc…`).
+Wrote a driver around the unchanged S22 runner (link · check · run · status · archive), profiled the
+network at 215 vs 32 bands, and smoke-tested two DDP ranks with a real kill and resume.
+
+**Found (engineering only):** no model adaptation (2,761,782 parameters; stem (8,2,2), every band read);
+1.56× training FLOPs, 1.8× activations, 6× host cost per sample; DDP scores every held-out row once.
+Expected ≈ 1.2–2 h on T4 x2 (extrapolated).
+
+**Changed:** D59; README §10 Kaggle workflow for S40; no result yet.

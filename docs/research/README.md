@@ -50,6 +50,8 @@ crossed acquisitions (FW-42/48).
 - [S39](studies/S39_final_confirmation/README.md): seeds 0/1/2. The RGB part is done (M3 passes,
   RGB .659 ± .005). The four v5 GPU cells are bundled but **need the owner's Kaggle authorization**.
 - Then the crossed acquisition pilot.
+- [S40](studies/S40_full215_v5/README.md): v5 on all 215 bands, seed 0, both folds. It is prepared and
+  frozen, and runs on Kaggle T4 x2 (README §10) once the 15.3 GB cube is uploaded (D59).
 
 [S36 architecture study](studies/S36_next_generation_architecture/README.md) ·
 [S32](studies/S32_rgb_finetune/README.md) · [S34](studies/S34_multimodal_reassessment/README.md)
@@ -181,6 +183,7 @@ study stays *modular* (it can be read, revised or superseded on its own).
 | [S37](studies/S37_rgb_multilayer/README.md) | Trained RGB with multi-layer readout + metric morphometrics | 2026-10-05 | complete; H57 fails | +.003 (n.s.); trained branch already holds it; S32 readout kept |
 | [S38](studies/S38_modality_roles/README.md) | HSI role specialization (spectral shape only) | 2026-10-05 | complete; H59 fails | trained v5 is the best HSI partner; hand spectra encode the session more |
 | [S39](studies/S39_final_confirmation/README.md) | Matched final confirmation of SeedNet-MX (seeds 0/1/2) | 2026-10-05 → | RGB part done (M3 pass, 3 seeds); HSI cells need Kaggle authorization | M3: trained RGB +.164 over frozen, seed SD .005 |
+| [S40](studies/S40_full215_v5/README.md) | SeedNet v5 on all 215 bands (seed 0, both corrected folds, T4 x2) | 2026-10-06 → | prepared and frozen; GPU cells not run | engineering only: no adaptation, 2.76 M params, cube identical to prior data |
 
 ## 4 · Conventions
 

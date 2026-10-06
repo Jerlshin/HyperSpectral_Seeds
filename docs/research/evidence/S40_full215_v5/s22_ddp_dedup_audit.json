@@ -1,0 +1,52 @@
+{
+  "f0_s0": {
+    "val": 2156,
+    "test": 2157,
+    "calib": 630,
+    "val_test_tta": {
+      "n": 4313,
+      "unique": true,
+      "equals_frozen": true
+    },
+    "val_test_no_tta": {
+      "n": 4313,
+      "unique": true,
+      "equals_frozen": true
+    },
+    "calib_tta": {
+      "n": 630,
+      "unique": true,
+      "equals_frozen": true
+    },
+    "calib_no_tta": {
+      "n": 630,
+      "unique": true,
+      "equals_frozen": true
+    }
+  },
+  "f1_s0": {
+    "val": 2154,
+    "test": 2157,
+    "calib": 630,
+    "val_test_tta": {
+      "n": 4311,
+      "unique": true,
+      "equals_frozen": true
+    },
+    "val_test_no_tta": {
+      "n": 4311,
+      "unique": true,
+      "equals_frozen": true
+    },
+    "calib_tta": {
+      "n": 630,
+      "unique": true,
+      "equals_frozen": true
+    },
+    "calib_no_tta": {
+      "n": 630,
+      "unique": true,
+      "equals_frozen": true
+    }
+  }
+}

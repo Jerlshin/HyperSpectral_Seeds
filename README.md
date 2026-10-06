@@ -9,6 +9,8 @@ python train.py
 ```
 
 Training on Kaggle's two T4s: [§10 · Kaggle — GPU T4 x2](#kaggle--gpu-t4-x2).
+**Prepared next run — [S40](docs/research/studies/S40_full215_v5/README.md):** SeedNet v5 on all 215
+bands, seed 0, both corrected folds, T4 x2 DDP. Exact workflow: [§10 · Kaggle — S40](#kaggle--s40-seednet-v5-on-all-215-bands).
 **Current reference — SeedNet v5** (S16, D35): the lean network under R1 — grouped 0.571, stratified 0.745 macro-F1 at
 3 seeds. Until the default switch lands (S17 part 1, D36) it is selected with the overrides
 `single.mixup_epochs=30 single.arcface_m=0.0 single.margin_warmup_start=31 single.margin_warmup_end=31 grad_clip=50.0
@@ -597,6 +599,8 @@ failures that no component test could have caught.
 | `tests/unit/test_presliced_dataset.py` | The pre-sliced cube equals its source bands within the float16 bound (bit-exact at float32); a corrupted file fails `--verify`; a pre-sliced cube reports itself as reduced; the loader widens float16 to float32 |
 | `tests/unit/test_resume.py` | Training-state snapshot/restore continues exactly; interruption vs completion; the background writer; the DDP sampler reshuffles per epoch; the T4 profile composes |
 | `tests/smoke/test_kaggle_path.py` | Pre-slice → train → `metrics.jsonl` → simulated interruption → resume at the next epoch, and a two-rank `torchrun` run to the final evaluation |
+| `tests/unit/test_s40_full215.py` | S40: the float16 215-band config is the primary axis with its band-fraction widths; the v5 regime is S22's; every one of 215 bands reaches a stem tap; 2,761,782 parameters; finite train/eval passes with both pathways live; the plan's two cells; the driver's cell states; the float16 stream through the unchanged finaliser |
+| `tests/smoke/test_s40_full215_driver.py` | S40 end to end: the driver and the unchanged S22 runner on two gloo ranks with a 215-band float16 cube; a real SIGKILL after epoch 1, resume at epoch 2, then both cells skipped. Every odd-sized held-out and calib split is scored exactly once |
 
 ### Recorded result of the S15 validation (2026-10-03, macOS CPU, torch 2.13)
 
@@ -843,8 +847,129 @@ split, but the normalisation statistics are all-reduced back to the global batch
 the gradient average over equal shards is the global-batch gradient. The distributed
 sampler is re-seeded every epoch (`set_epoch`), so each epoch draws a new shard order.
 
+### Kaggle — S40, SeedNet v5 on all 215 bands
+
+**The prepared production run** ([S40](docs/research/studies/S40_full215_v5/README.md), D59).
+SeedNet v5 reads all 215 calibrated reflectance bands, seed 0, on **both corrected
+complementary folds**: two cells, on Kaggle **GPU T4 x2** under DDP. These two are the only cells
+the plan authorizes (`configs/research/s40_full215_v5.json`, SHA-256 `744c65bc…`); the runner
+refuses any other fold/seed. Training is the unchanged S22 runner. Only `data=` differs from the
+k32 v5 cells it is compared with (`outputs/s22_complementary_v5/f{0,1}_s0`). No model adaptation
+was needed: 2,761,782 parameters, stem strides (8, 2, 2), every band read.
+
+**0 · On your machine, once: build, verify and upload the 215-band cube.** It is built from
+`dataset/rice_hsi.zip` (the Zenodo archive) in ≈ 8 min and needs ≈ 16 GB free. Its side arrays must
+equal `./dataset/` byte for byte, and its k32 bands must equal `dataset_u430k32/` bit for bit, or the
+build fails. Then upload it as a private Kaggle dataset (Kaggle CLI, token in `~/.kaggle/kaggle.json`):
+
+```bash
+pip install -e ".[prep]"
+python scripts/build_refl215_f16.py --kaggle-id <kaggle-username>/rice-hsi-refl215-f16
+python scripts/build_presliced_dataset.py --verify dataset_refl215_f16    # re-hashes every file
+kaggle datasets create -p dataset_refl215_f16                             # private; 15.26 GB upload
+```
+
+On a cube that is already built, the first command only writes `dataset-metadata.json`.
+`python scripts/build_presliced_dataset.py --set all --out dataset_refl215_f16` writes the same
+layout from a float32 `dataset/patches.npy`, if you have one.
+
+| `dataset_refl215_f16/` | | Size |
+|---|---|---:|
+| `patches.npy` | (8624, 215, 64, 64) float16; max relative cast error 4.9e-4 | 15,189 MB |
+| `masks.npy` · `labels.npy` · `groups.npy` · `morphology.npy` | fill maps, varieties, scans, morphometrics (≡ `./dataset/`) | 71 MB |
+| `wavelengths.csv` · `scan_table.csv` · `radiometry.json` | 215-band axis, sessions, radiometry (≡ `./dataset/`) | < 0.1 MB |
+| `band_axis.json` · `MANIFEST.json` | 215 of 215 bands + cast error + build record; every file's SHA-256 | 7 KB |
+
+**1 · Notebook settings.** *Accelerator*: **GPU T4 x2**. *Internet*: **On**. *Add Input*: the
+dataset from step 0. Nothing else needs attaching.
+
+**2 · Cell 1 — clone and install.** The code must be on GitHub `main`.
+
+```bash
+%%bash
+set -euo pipefail
+cd /kaggle/working
+[ -d HyperSpectral_Seeds ] || git clone --depth 1 https://github.com/Jerlshin/HyperSpectral_Seeds.git
+cd HyperSpectral_Seeds && git log --oneline -1
+pip install -q -e .                     # torch is Kaggle's own; this adds hydra/omegaconf
+```
+
+**3 · Cell 2 — link the dataset and verify the study.** `link` finds the attached 215-band cube
+under `/kaggle/input` by its `band_axis.json`, so the slug does not matter, and symlinks
+`dataset_refl215_f16` to it. `check` verifies the plan's hash and its 172 hashed inputs (code,
+configs, runner, partition, the cube's identity files). It re-hashes the 15 GB cube against its
+MANIFEST (≈ 1–2 min, which also warms the page cache) and loads both frozen folds. It also
+requires two CUDA devices and reports RAM, disk and the cells' states.
+
+```bash
+!cd /kaggle/working/HyperSpectral_Seeds && python scripts/run_full215_v5.py link && python scripts/run_full215_v5.py check
+```
+
+Expect `172 inputs match`, `re-hashed against MANIFEST`, fold 0 `train 3681 · calib 630 · val 2156 ·
+test 2157`, two `Tesla T4` and `{'f0_s0': 'new', 'f1_s0': 'new'}`.
+
+**4 · Cell 3 — the run: two cells, one seed, both T4s.**
+
+```bash
+!cd /kaggle/working/HyperSpectral_Seeds && python scripts/run_full215_v5.py run --nproc-per-node 2 --stream
+```
+
+Each cell is `torchrun --standalone --nproc_per_node=2 scripts/run_complementary_v5.py train --plan
+configs/research/s40_full215_v5.json --fold F --seed 0`. In the banner, look for
+`Spectral: 215 bands — the full acquired cube, no band selection`, `[DDP]  world_size=2`,
+`Precis : AMP=fp16 + GradScaler`, `Model  : spectral_seed_net  (2,761,782 params)` and
+`[DATA] ✓ Page cache warmed`. When a cell finishes, the driver checks its outputs. Every frozen
+val∪test and calib row must be scored exactly once, the band geometry must read 215 of 215, and
+the provenance must name this plan. The run then writes `COMPLETE.json`.
+**Expected:** ≈ 35–60 min per cell, ≈ 1.2–2 h in all. This is extrapolated from the measured k32
+run (47 min for both cells), 1.56× the FLOPs and 6× the host cost per sample, and is not measured
+on a T4. The epoch-1 `ETA` gives the real figure. GPU memory is ≈ 2–4 GB of 15 GB per T4. The
+cube needs 15.3 GB of the ≈ 30 GB of host RAM.
+
+**5 · Cell 4 — archive and download.**
+
+```bash
+!cd /kaggle/working/HyperSpectral_Seeds && python scripts/run_full215_v5.py archive && rm -f dataset_refl215_f16
+```
+
+Download `/kaggle/working/s40_full215_v5_outputs.tar.gz` (≈ 0.15 GB). On your machine, run
+`tar xzf s40_full215_v5_outputs.tar.gz` at the repository root. The cells land in
+`outputs/s40_full215_v5/`. (`rm -f` removes only the symlink, so the version's saved output does
+not try to include the 15 GB input.)
+
+| `outputs/s40_full215_v5/` | What |
+|---|---|
+| `f0_s0/`, `f1_s0/` | per cell: `provenance.json`, `resolved_config.yaml`, `metrics.jsonl`, `clean_fit.json`, `best_stage1.pth` + `stage1_meta.json`, `last_stage1.pth/.json`, `results/` (`run.json` with metrics + CIs, no-TTA and TTA; float16 logits, rows and targets for val∪test and calib; predictions, confusion, per-class and per-session tables, session probe), `figures/` |
+| `logs/f*_s0.log` | the full console output of each cell (appended across attempts) |
+| `checks/f*_s0.json` · `COMPLETE.json` | the driver's output validation; written when both cells are done |
+| `sessions.jsonl` | every session and attempt: host, GPUs, torch/CUDA, commit, plan and cube hashes, return codes, seconds |
+
+**If Kaggle interrupts the run.** Re-run **the same command**. It is safe at any point:
+
+```bash
+!cd /kaggle/working/HyperSpectral_Seeds && python scripts/run_full215_v5.py run --nproc-per-node 2 --stream
+```
+
+- A finished cell (`results/run.json` present) is skipped. It is never retrained.
+- An interrupted cell resumes from `last_stage1.pth` at its next epoch (`[RESUME] … continuing at epoch N`).
+  A cell that finished training but not its final evaluation is re-scored, not retrained.
+- `python scripts/run_full215_v5.py status` prints each cell's state and last saved epoch.
+
+In a **new** session, run Cells 1–2 first, then restore the previous outputs before Cell 3. Either
+attach the previous version's output (or the downloaded archive, as a dataset) as an input:
+
+```bash
+!mkdir -p /kaggle/working/HyperSpectral_Seeds/outputs && cp -rn /kaggle/input/<previous-output>/HyperSpectral_Seeds/outputs/s40_full215_v5 /kaggle/working/HyperSpectral_Seeds/outputs/
+# or, from an archive:  tar xzf /kaggle/input/<archive-dataset>/s40_full215_v5_outputs.tar.gz -C /kaggle/working/HyperSpectral_Seeds
+```
+
+Or run the notebook as *Save Version → Save & Run All*, so that `/kaggle/working` is kept as the
+version's output. `run` re-hashes the cube each session. Within one live session, add `--quick` to
+skip the re-hash.
+
 ### Kaggle — GPU T4 x2
 
+*The k32 path used by S11–S39; S40 (above) uploads the full 215-band cube instead.*
 The full 215-band cube is 30.4 GB. What goes to Kaggle is the **pre-sliced 32-band
 finalist** (`uniform430_k32`, 432–1006 nm, float16): **2.33 GB**, with labels, groups, fill
 maps, morphometrics, wavelengths, the session table, the radiometry record, a provenance

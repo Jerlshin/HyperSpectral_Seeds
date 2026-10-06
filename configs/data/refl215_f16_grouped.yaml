@@ -1,0 +1,55 @@
+# ══════════════════════════════════════════════════════════════════════
+#  THE PRIMARY 215-BAND INPUT, STORED AS FLOAT16 — the Kaggle / remote-GPU copy
+#
+#  Same data as `refl215_grouped`: all 215 bands of the white-tile reflectance
+#  axis (383.2–1006.5 nm, 608.0–705.8 nm absent), the same 8,624 rows, labels,
+#  groups, fill maps, morphometrics and session table. The only difference is
+#  storage precision: the cube is float16, 15.2 GB instead of 30.4 GB, so it can be
+#  uploaded as a Kaggle dataset and fits in the T4×2 host's page cache. The loader
+#  widens each patch to float32 as it is read. The cast error is measured and
+#  recorded in `dataset_refl215_f16/band_axis.json`.
+#
+#  Build it (S40):
+#
+#      python scripts/build_refl215_f16.py          # from dataset/rice_hsi.zip
+#      python scripts/build_presliced_dataset.py --set all --out ./dataset_refl215_f16
+#                                                   # (if ./dataset/patches.npy exists)
+#
+#  `band_axis.json` records 215 of 215 source bands, so the run prints the
+#  full-spectrum banner and records `"band_selection": false`. It is not a reduced arm.
+#
+#      python train.py data=refl215_f16_grouped
+# ══════════════════════════════════════════════════════════════════════
+defaults:
+  - base_data
+  - _self_
+
+# ── Paths (relative to the process CWD) ────────────────────────────────
+# On Kaggle, symlink the attached dataset here:
+#   ln -sfn /kaggle/input/<dataset-slug> dataset_refl215_f16
+patches_data: ./dataset_refl215_f16/patches.npy
+labels_path: ./dataset_refl215_f16/labels.npy
+wavelength_path: ./dataset_refl215_f16/wavelengths.csv
+groups_path: ./dataset_refl215_f16/groups.npy
+scan_table_path: ./dataset_refl215_f16/scan_table.csv
+masks_path: ./dataset_refl215_f16/masks.npy
+morphology_path: ./dataset_refl215_f16/morphology.npy
+
+# The leakage probe's input is not shipped (training never reads it).
+gain_path: ""
+
+# ── Geometry — `band_augmentation_widths(215)`, identical to refl215_grouped ──
+num_bands: 215
+num_classes: 90
+noise_std: 0.02
+max_cutout_bands: 16
+cutmix_bands: 43
+cutmix_spatial: 24
+
+# ── Split protocol — identical to refl215_grouped ─────────────────────
+# (S40 replaces the split with the frozen S21 complementary rows.)
+split_scheme: grouped
+split_eval_frac: 0.30
+split_fold: 0
+single_group_policy: error
+calib_frac: 0.15

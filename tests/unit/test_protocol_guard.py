@@ -248,7 +248,8 @@ def test_no_reduced_band_config_can_be_reached_without_naming_it() -> None:
     primary = sorted(p.stem for p in data_group.glob("*.yaml"))
     reduced = sorted(p.stem for p in (data_group / "ablation").glob("*.yaml"))
 
-    assert primary == ["refl215_grouped", "refl215_stratified"], primary
+    # `refl215_f16_grouped` is the same 215-band axis stored as float16 (S40), not a reduction.
+    assert primary == ["refl215_f16_grouped", "refl215_grouped", "refl215_stratified"], primary
     assert reduced, "the band-selection pathway's arms must still ship"
     for name in primary:
         cfg = load_experiment_config(overrides=[f"data={name}"])

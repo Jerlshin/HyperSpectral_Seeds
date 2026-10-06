@@ -1,5 +1,8 @@
 # Research progress and exact resume state
 
+Updated 2026-10-06. **S40 (v5 on all 215 bands, seed 0, both folds) is prepared and frozen for Kaggle
+T4 x2; it has not run.** The state of 2026-10-05 (evening) follows unchanged.
+
 Updated 2026-10-05 (evening). **S31–S38 complete. Proposed architecture: SeedNet-MX (S36, D58).
 S39 matched confirmation is frozen: its RGB seed cells run locally (queued), and its HSI seed cells
 are bundled but need the owner's authorization to spend Kaggle GPU quota. S30 is superseded.**
@@ -46,7 +49,13 @@ The phase used 12 RGB network fits (including 4 S39 seed cells) plus one 57-min 
    `PYTHONPATH=src:scripts python scripts/run_final_confirmation.py run` for M1–M4.
 3. **Crossed acquisition pilot (FW-42).** Lock SeedNet-MX first. The next novel mechanism,
    cross-acquisition cross-modal consistency (FW-48), needs ≥ 2 training acquisitions per variety.
-4. Do **not** rerun the falsified mechanisms (S33, S35, S37, S38) or build learned/kernel-level
+4. **S40, 215-band v5 (D59).** Plan `configs/research/s40_full215_v5.json` (`744c65bc…`), cells
+   f0_s0 and f1_s0 only. The cube `dataset_refl215_f16/` (15.26 GB) is built and verified locally but
+   **not uploaded**. Upload it as a private Kaggle dataset, then follow README §10 "S40":
+   `run_full215_v5.py link → check → run --nproc-per-node 2 --stream → archive`. Unpack
+   `s40_full215_v5_outputs.tar.gz` at the repo root and compare with S22 f{0,1}_s0 as in the
+   study page §6. The `run` command also resumes after an interruption.
+5. Do **not** rerun the falsified mechanisms (S33, S35, S37, S38) or build learned/kernel-level
    fusion on this design (D56/D57).
 
 ## Saved assets

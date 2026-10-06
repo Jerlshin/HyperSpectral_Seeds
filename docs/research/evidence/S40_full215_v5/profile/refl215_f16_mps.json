@@ -1,0 +1,139 @@
+{
+  "study": "S40",
+  "kind": "engineering profile, no held-out row scored",
+  "data": "refl215_f16_grouped",
+  "band_geometry": {
+    "stored": 215,
+    "selected": 215,
+    "wavelengths": 215,
+    "configured": 215,
+    "acquired": 215
+  },
+  "banner": "Spectral: 215 bands \u2014 the full acquired cube, no band selection (primary methodology)",
+  "patch_dtype_on_disk": "float16",
+  "rows": {
+    "train": 3681,
+    "calib": 630,
+    "val": 2156,
+    "test": 2157
+  },
+  "parameters": {
+    "se": 10,
+    "spatial": 2173844,
+    "spectral": 124606,
+    "fuse": 131840,
+    "embed_net": 263936,
+    "arcface_head": 23040,
+    "aux_head_spatial": 44506,
+    "total": 2761782
+  },
+  "stem": {
+    "num_bands": 215,
+    "spectral_strides": [
+      8,
+      2,
+      2
+    ],
+    "kernel_depths": [
+      15,
+      5,
+      5
+    ],
+    "folded_depth": 7,
+    "fold_in_channels": 448,
+    "bands_never_read": []
+  },
+  "shapes": {
+    "se": [
+      2,
+      215,
+      64,
+      64
+    ],
+    "spatial.stem.stage1": [
+      2,
+      16,
+      27,
+      64,
+      64
+    ],
+    "spatial.stem.stage2": [
+      2,
+      32,
+      14,
+      32,
+      32
+    ],
+    "spatial.stem.stage3": [
+      2,
+      64,
+      7,
+      16,
+      16
+    ],
+    "spatial.stem.fold": [
+      2,
+      192,
+      16,
+      16
+    ],
+    "spatial": [
+      2,
+      256
+    ],
+    "spectral": [
+      2,
+      256
+    ],
+    "fuse": [
+      2,
+      256
+    ],
+    "embed_net": [
+      2,
+      256
+    ],
+    "arcface_head": [
+      2,
+      90
+    ],
+    "<output eval>": [
+      2,
+      90
+    ],
+    "<input x>": [
+      2,
+      215,
+      64,
+      64
+    ]
+  },
+  "host_ms_per_sample": {
+    "train_aug_medium": {
+      "samples": 128,
+      "median_ms": 1.5857085236348212,
+      "mean_ms": 2.499133859600988
+    },
+    "eval_no_aug": {
+      "samples": 128,
+      "median_ms": 1.0904789669439197,
+      "mean_ms": 1.0946285929094302
+    }
+  },
+  "cpu_fp32_saved_activation_bytes": 2372879056,
+  "device_step": {
+    "device": "mps",
+    "autocast": "fp16",
+    "batch": 64,
+    "steps_timed": 8,
+    "step_median_s": 13.739111395494547,
+    "step_min_s": 12.458677917020395,
+    "forward_held_bytes": 1729957632
+  },
+  "host": {
+    "machine": "arm64",
+    "system": "Darwin",
+    "torch": "2.14.0",
+    "python": "3.13.12"
+  }
+}

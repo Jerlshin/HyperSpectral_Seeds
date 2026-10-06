@@ -1,0 +1,21 @@
+{
+  "215": {
+    "train_gflop_per_sample": 4.801880408,
+    "spatial.stem": 4.538,
+    "spatial.stem.stage1": 1.433,
+    "spatial.stem.stage2": 1.982,
+    "spatial.stem.stage3": 0.991,
+    "spatial.stem.fold": 0.132
+  },
+  "32": {
+    "train_gflop_per_sample": 3.075766464,
+    "spatial.stem": 2.812,
+    "spatial.stem.stage1": 0.396,
+    "spatial.stem.stage2": 1.132,
+    "spatial.stem.stage3": 1.132,
+    "spatial.stem.fold": 0.151
+  },
+  "ratio_215_over_32": {
+    "train": 1.5611979856738563
+  }
+}

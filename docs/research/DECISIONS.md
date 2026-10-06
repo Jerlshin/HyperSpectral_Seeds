@@ -822,3 +822,15 @@ HSI cells need GPU authorization. **S30 is not run in its briefed form.**
 
 **Reverse if.** S39 M1/M2 fail under G3, or crossed acquisitions show that the trained RGB transfer
 gain is session-specific.
+
+### D59 · Prepare SeedNet v5 on all 215 bands as a one-seed, two-fold development run (S40)
+**Context.** Every v5 number so far reads `uniform430_k32`, a subset chosen for upload size rather
+than by experiment. **Decision.** S40 trains v5 on the full 215-band reflectance axis, stored as
+float16 (`refl215_f16_grouped`). It runs exactly the cells fold 0/1 × seed 0, on Kaggle T4 x2,
+through the unchanged S22 runner. Only `data=` differs from the matched S22 seed-0 cells. No model
+or regime adaptation is made, because every band-dependent width is derived. The comparison is
+descriptive (no gate, no seed expansion). The 215-band cube is rebuilt from the archive and shown to be
+the prior data: its side arrays are byte-identical, and its k32 bands are bit-identical to `dataset_u430k32`.
+
+**Reverse if.** The cube fails `check` on Kaggle, or a T4 cell shows a memory or numeric problem
+that needs a regime change; that change would need an amendment.
